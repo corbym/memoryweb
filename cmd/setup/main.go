@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 )
@@ -121,6 +122,8 @@ func main() {
 		fatalf("write settings: %v", err)
 	}
 
+	checkOllama()
+
 	fmt.Println("memoryweb hooks installed. Restart Claude Code to activate.")
 }
 
@@ -150,6 +153,36 @@ func containsCommand(entries []interface{}, cmd string) bool {
 		}
 	}
 	return false
+}
+
+// checkOllama prints an advisory when Ollama is not running or the
+// snowflake-arctic-embed model is not available.
+func checkOllama() {
+	resp, err := http.Get("http://localhost:11434/api/tags")
+	if err != nil {
+		fmt.Println("\nNote: Semantic search requires Ollama with snowflake-arctic-embed.")
+		fmt.Println("  Run: ollama pull snowflake-arctic-embed")
+		fmt.Println("  Falling back to text search until available.")
+		return
+	}
+	defer resp.Body.Close()
+
+	var tagsResp struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
+		return
+	}
+	for _, m := range tagsResp.Models {
+		if m.Name == "snowflake-arctic-embed" || m.Name == "snowflake-arctic-embed:latest" {
+			return // model is present
+		}
+	}
+	fmt.Println("\nNote: Semantic search requires Ollama with snowflake-arctic-embed.")
+	fmt.Println("  Run: ollama pull snowflake-arctic-embed")
+	fmt.Println("  Falling back to text search until available.")
 }
 
 func fatalf(format string, args ...interface{}) {

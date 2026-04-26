@@ -3,6 +3,7 @@ package tools_test
 import (
 	"database/sql"
 	"encoding/json"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1411,5 +1412,113 @@ func TestAddEdgesBulkRollsBackOnError(t *testing.T) {
 	json.Unmarshal([]byte(text(t, nodeTr)), &nwe)
 	if len(nwe.Edges) > 0 {
 		t.Errorf("edges should have been rolled back, got %d", len(nwe.Edges))
+	}
+}
+
+// ── semantic search ───────────────────────────────────────────────────────────
+
+// ollamaAvailable returns true if the local Ollama server is reachable.
+func ollamaAvailable() bool {
+	resp, err := http.Get("http://localhost:11434/api/version")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// TestSemanticSearchFindsRelatedConcept verifies that searching for "startup failure"
+// (a phrase that does not literally appear in either node) returns the boot-crash node
+// rather than the unrelated tutorial node, when Ollama is available.
+func TestSemanticSearchFindsRelatedConcept(t *testing.T) {
+	if !ollamaAvailable() {
+		t.Skip("Ollama not running; skipping semantic search test")
+	}
+
+	_, h := newEnv(t)
+
+	bootID := addNode(t, h, "RST $10 boot crash interrupts ROM", "deep-game", map[string]any{
+		"description": "The ROM calls RST $10 during startup, which hangs the boot sequence and prevents the demo from loading",
+		"why_matters": "This crash blocks all further initialisation and must be patched before any progress is possible",
+	})
+	_ = addNode(t, h, "straitjacket tutorial movement", "deep-game", map[string]any{
+		"description": "The player character is wearing a straitjacket and movement is constrained to shuffling",
+		"why_matters": "Understanding this constraint is essential for designing early-game puzzles",
+	})
+
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query":  "startup failure",
+		"domain": "deep-game",
+		"limit":  5,
+	})
+	mustNotError(t, tr)
+
+	ids := searchIDs(t, tr)
+	if !contains(ids, bootID) {
+		t.Errorf("expected boot crash node %q in semantic results for 'startup failure', got %v", bootID, ids)
+	}
+}
+
+// TestSemanticSearchFallsBackToLiteralIfVecUnavailable verifies that when Ollama is
+// not running (embeddings unavailable), search_nodes does not panic or error and
+// still returns results via LIKE matching.
+func TestSemanticSearchFallsBackToLiteralIfVecUnavailable(t *testing.T) {
+	_, h := newEnv(t)
+
+	bootID := addNode(t, h, "RST boot crash", "deep-game", map[string]any{
+		"description": "boot sequence fails on RST instruction",
+		"why_matters": "blocks demo",
+	})
+	_ = addNode(t, h, "unrelated tutorial topic", "deep-game", map[string]any{
+		"description": "something completely different",
+		"why_matters": "irrelevant",
+	})
+
+	// Literal search for "boot" must work regardless of whether Ollama is running.
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query":  "boot",
+		"domain": "deep-game",
+	})
+	mustNotError(t, tr)
+
+	ids := searchIDs(t, tr)
+	if !contains(ids, bootID) {
+		t.Errorf("LIKE fallback should find boot node %q, got %v", bootID, ids)
+	}
+}
+
+// TestSemanticSearchScopedByDomain verifies that when a domain is specified,
+// semantic search only returns nodes from that domain.
+func TestSemanticSearchScopedByDomain(t *testing.T) {
+	if !ollamaAvailable() {
+		t.Skip("Ollama not running; skipping semantic search test")
+	}
+
+	_, h := newEnv(t)
+
+	domainAID := addNode(t, h, "boot failure causes system crash", "domain-a", map[string]any{
+		"description": "The system fails to boot due to a ROM error causing an unrecoverable crash",
+		"why_matters": "Critical startup failure that blocks all further progress",
+	})
+	_ = addNode(t, h, "startup error halts initialisation", "domain-b", map[string]any{
+		"description": "An error during startup sequence halts the initialisation process",
+		"why_matters": "System cannot start without resolving this initialisation failure",
+	})
+
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query":  "startup failure",
+		"domain": "domain-a",
+		"limit":  5,
+	})
+	mustNotError(t, tr)
+
+	ids := searchIDs(t, tr)
+	if !contains(ids, domainAID) {
+		t.Errorf("expected domain-a node %q in results, got %v", domainAID, ids)
+	}
+	for _, id := range ids {
+		if id != domainAID {
+			t.Errorf("result %q is not from domain-a; domain scoping broken", id)
+		}
 	}
 }
