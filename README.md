@@ -1,19 +1,22 @@
 # memoryweb
 
-A memory web MCP server for Claude. Stores knowledge as a graph of nodes connected by typed, narrative edges — designed for how LLMs actually retrieve information, via associative chains and context, rather than spatial hierarchies.
+A memory MCP server for Claude. Stores knowledge as a graph of concepts connected by typed, narrative edges — designed for how humans actually remember things: not by location, but by story.
 
 ## The idea
 
-Memory palaces work for humans because spatial navigation is a mental shortcut. LLMs navigate token relationships. A node with rich contextual edges ("this connects to that *because*...") is reachable from multiple entry points. A room with a label and contents requires the exact label.
+You don't remember facts in isolation. You remember them because of what they connect to. *The boot crash is significant because it blocks the tutorial, which blocks the demo, which is why the fix matters now.* Pull on any of those threads and you get the rest.
+
+memoryweb works the same way. Each concept is a node. What makes it retrievable is the narrative edge — the *because* that links it to something else. A concept with rich connections is reachable from many starting points. A concept filed alone, with no story linking it to anything, is effectively lost.
 
 ## Tools
 
 | Tool | What it does |
 |------|-------------|
-| `add_node` | Add a concept, decision, or finding. Requires a label, domain, and optionally a description and "why it matters". |
-| `add_edge` | Connect two nodes with a typed relationship and a narrative "because". |
-| `get_node` | Retrieve a node and all its connected edges. |
-| `search_nodes` | Text search across label, description, and why_matters. Optionally scope to a domain. |
+| `add_node` | File a concept, decision, or finding. Requires a label, domain, and optionally a description and "why it matters". |
+| `add_edge` | Connect two concepts with a typed relationship and a narrative "because". |
+| `get_node` | Retrieve a concept and all its connections. |
+| `search_nodes` | Text search across label, description, and why_matters. Optionally scope to a domain. Returns matching concepts and any edges between them. |
+| `find_connections` | Look up the specific reasoning linking two named concepts. Use this when asked why or how two things relate. |
 | `recent_changes` | What was filed recently. Good for session orientation. |
 
 ### Relationship types
@@ -50,9 +53,11 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 }
 ```
 
-## Dogfooding conventions
+## Conventions
 
 - Use `domain` to separate concerns: `deep-game`, `sedex`, `general`
 - The `why_matters` field is the most important one for retrieval — don't skip it
-- Add edges immediately after adding related nodes — the narrative edge is what makes the web navigable
+- The `narrative` on an edge is the *because* — the reasoning that makes the connection meaningful, not just the fact that a connection exists
+- Add edges immediately after adding related nodes
 - Call `recent_changes` at the start of a session to orient without needing to know what to search for
+- Use `find_connections` when asking about the relationship between two specific things
