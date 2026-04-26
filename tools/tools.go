@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/corbym/memoryweb/db"
 )
@@ -61,6 +62,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"description": {Type: "string", Description: "What this node is about"},
 					"why_matters": {Type: "string", Description: "Why this is significant - the 'so what'"},
 					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general')"},
+					"occurred_at": {Type: "string", Description: "Optional ISO8601 date or datetime when this event or decision actually happened (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Distinct from when it was filed."},
 				},
 				Required: []string{"label", "domain"},
 			},
@@ -96,9 +98,9 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-				"query":  {Type: "string", Description: "Search text"},
-				"domain": {Type: "string", Description: "Optional domain to scope search"},
-				"limit":  {Type: "integer", Description: "Max results (default 10)"},
+					"query":  {Type: "string", Description: "Search text"},
+					"domain": {Type: "string", Description: "Optional domain to scope search"},
+					"limit":  {Type: "integer", Description: "Max results (default 10)"},
 				},
 				Required: []string{"query"},
 			},
@@ -109,8 +111,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-				"domain": {Type: "string", Description: "Optional domain to scope"},
-				"limit":  {Type: "integer", Description: "Max results (default 10)"},
+					"domain": {Type: "string", Description: "Optional domain to scope"},
+					"limit":  {Type: "integer", Description: "Max results (default 10)"},
 				},
 			},
 		},
@@ -125,6 +127,50 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"domain":     {Type: "string", Description: "Optional domain to scope the search"},
 				},
 				Required: []string{"from_label", "to_label"},
+			},
+		},
+		{
+			Name:        "timeline",
+			Description: "Returns nodes ordered by when they actually occurred, not when they were filed. Use this to understand the sequence of decisions and events, or to answer questions about what was happening at a specific point in time.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"domain": {Type: "string", Description: "Optional domain to scope"},
+					"from":   {Type: "string", Description: "Optional ISO8601 start date (inclusive), e.g. '2026-01-01'"},
+					"to":     {Type: "string", Description: "Optional ISO8601 end date (inclusive), e.g. '2026-04-30'"},
+					"limit":  {Type: "integer", Description: "Max results (default 20)"},
+				},
+			},
+		},
+		{
+			Name:        "add_alias",
+			Description: "Register an alternative name for a domain. After adding, both names will return the same results.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"alias":  {Type: "string", Description: "The alternative name (e.g. 'binder')"},
+					"domain": {Type: "string", Description: "The canonical domain it should resolve to (e.g. 'sedex')"},
+				},
+				Required: []string{"alias", "domain"},
+			},
+		},
+		{
+			Name:        "list_aliases",
+			Description: "List all registered domain aliases and their canonical domains.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]Property{},
+			},
+		},
+		{
+			Name:        "resolve_domain",
+			Description: "Check what canonical domain a name resolves to.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"name": {Type: "string", Description: "Domain name or alias to resolve"},
+				},
+				Required: []string{"name"},
 			},
 		},
 	}
@@ -153,6 +199,14 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.recentChanges(req.Arguments)
 	case "find_connections":
 		result, err = h.findConnections(req.Arguments)
+	case "timeline":
+		result, err = h.timeline(req.Arguments)
+	case "add_alias":
+		result, err = h.addAlias(req.Arguments)
+	case "list_aliases":
+		result, err = h.listAliases(req.Arguments)
+	case "resolve_domain":
+		result, err = h.resolveDomain(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -169,11 +223,23 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		Description string `json:"description"`
 		WhyMatters  string `json:"why_matters"`
 		Domain      string `json:"domain"`
+		OccurredAt  string `json:"occurred_at"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
 	}
-	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain)
+	var occurredAt *time.Time
+	if a.OccurredAt != "" {
+		t, err := time.Parse(time.RFC3339, a.OccurredAt)
+		if err != nil {
+			t, err = time.Parse("2006-01-02", a.OccurredAt)
+			if err != nil {
+				return nil, fmt.Errorf("invalid occurred_at format, expected ISO8601 date or datetime: %s", a.OccurredAt)
+			}
+		}
+		occurredAt = &t
+	}
+	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt)
 	if err != nil {
 		return nil, err
 	}
@@ -268,6 +334,83 @@ func (h *Handler) findConnections(args json.RawMessage) (*ToolResult, error) {
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Domain string `json:"domain"`
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.Limit <= 0 {
+		a.Limit = 20
+	}
+	parseDate := func(s string) (*time.Time, error) {
+		if s == "" {
+			return nil, nil
+		}
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t, err = time.Parse("2006-01-02", s)
+			if err != nil {
+				return nil, fmt.Errorf("invalid date format, expected ISO8601: %s", s)
+			}
+		}
+		return &t, nil
+	}
+	from, err := parseDate(a.From)
+	if err != nil {
+		return nil, err
+	}
+	to, err := parseDate(a.To)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := h.store.Timeline(a.Domain, from, to, a.Limit)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(nodes, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) addAlias(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Alias  string `json:"alias"`
+		Domain string `json:"domain"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if err := h.store.AddAlias(a.Alias, a.Domain); err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q → %q registered", a.Alias, a.Domain)}}}, nil
+}
+
+func (h *Handler) listAliases(_ json.RawMessage) (*ToolResult, error) {
+	aliases, err := h.store.ListAliases()
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(aliases, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) resolveDomain(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	canonical := h.store.ResolveAlias(a.Name)
+	msg := fmt.Sprintf("%q resolves to %q", a.Name, canonical)
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
 }
 
 func errorResult(msg string) *ToolResult {
