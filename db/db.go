@@ -565,8 +565,10 @@ func (s *Store) searchNodesSemantic(embedding []float32, domain string, limit in
 	for rows.Next() {
 		var n Node
 		var oa, aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa)
+		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa); err != nil {
+			return nil, err
+		}
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -655,7 +657,9 @@ func (s *Store) edgesBetween(nodes []Node) []Edge {
 	var edges []Edge
 	for eRows.Next() {
 		var e Edge
-		eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
+		if err := eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+			return nil
+		}
 		edges = append(edges, e)
 	}
 	return edges

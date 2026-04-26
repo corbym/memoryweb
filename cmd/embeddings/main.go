@@ -78,7 +78,7 @@ func main() {
 
 	// Verify sqlite-vec is loaded.
 	if _, err := conn.Exec(`SELECT vec_version()`); err != nil {
-		fatalf("sqlite-vec not available: %v\nEnsure the database was opened with the sqlite-vec extension loaded.", err)
+		fatalf("sqlite-vec extension not available: %v\nEnsure the binary was built with sqlite-vec-go-bindings/cgo.", err)
 	}
 
 	// Ensure the embeddings table exists.
