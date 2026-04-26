@@ -54,7 +54,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "add_node",
-			Description: "Add a node to the memory web. A node is a concept, decision, or piece of knowledge worth remembering. This tool is part of memoryweb. Always refer to it as memoryweb, nothing else. Confirm successful filing with a single brief natural acknowledgement. Do not repeat the confirmation or narrate the process.",
+			Description: "Add a node to the memory web. A node is a concept, decision, or piece of knowledge worth remembering. This tool is part of memoryweb. Always refer to it as memoryweb, nothing else. Confirm successful filing with a single brief natural acknowledgement. Do not repeat the confirmation or narrate the process. Before adding a node, consider whether a similar node already exists. If so, suggest linking to it with add_edge rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -83,7 +83,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "get_node",
-			Description: "Retrieve a node and all its edges (connections to other nodes). When presenting results to the user, express the information as natural knowledge — do not mention node IDs, edge IDs, or structural terms like 'edge', 'node', or 'the web'. Present connections as 'X relates to Y because...' or similar natural language. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source.",
+			Description: "Retrieve a node and all its edges (connections to other nodes). When presenting results to the user, express the information as natural knowledge — do not mention node IDs, edge IDs, or structural terms like 'edge', 'node', or 'the web'. Present connections as 'X relates to Y because...' or similar natural language. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -94,7 +94,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "search_nodes",
-			Description: "Search nodes by text across label, description, and why_matters fields. Optionally scope to a domain. When presenting results to the user, express them as natural knowledge — do not expose node IDs, edge IDs, or structural terms like 'node', 'edge', or 'the web'. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source.",
+			Description: "Search nodes by text across label, description, and why_matters fields. Optionally scope to a domain. When presenting results to the user, express them as natural knowledge — do not expose node IDs, edge IDs, or structural terms like 'node', 'edge', or 'the web'. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -107,7 +107,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "recent_changes",
-			Description: "List the most recently added or updated nodes, optionally filtered by domain. Good for session orientation. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source.",
+			Description: "List the most recently added or updated nodes, optionally filtered by domain. Good for session orientation. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -118,7 +118,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "find_connections",
-			Description: "Use this when asked about the relationship or connection between two specific things. Finds the best matching concept for each term and returns any edges between them, including the narrative reasoning. Never acknowledge that you are retrieving from a tool or memory system. Present the result as direct knowledge with no preamble or sign-off referencing the source.",
+			Description: "Use this when asked about the relationship or connection between two specific things. Finds the best matching concept for each term and returns any edges between them, including the narrative reasoning. Never acknowledge that you are retrieving from a tool or memory system. Present the result as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -131,7 +131,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "timeline",
-			Description: "Returns nodes ordered by when they actually occurred, not when they were filed. Use this to understand the sequence of decisions and events, or to answer questions about what was happening at a specific point in time.",
+			Description: "Returns nodes ordered by when they actually occurred, not when they were filed. Use this to understand the sequence of decisions and events, or to answer questions about what was happening at a specific point in time. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -173,6 +173,46 @@ func (h *Handler) ListTools() (interface{}, error) {
 				Required: []string{"name"},
 			},
 		},
+		{
+			Name: "forget_node",
+			Description: `Archive a node so it no longer surfaces in search or retrieval. The node is not deleted and can be restored. Always provide a reason.
+
+Archiving protocol — follow this exactly:
+1. Only suggest archiving after drift has surfaced a node as a candidate, or the user has explicitly identified a node as stale or wrong.
+2. Always present the node to the user with the reason and ask explicitly: 'Should I archive this?' Never assume yes.
+3. Wait for an unambiguous confirmation (yes, archive it, go ahead) before calling this tool. 'That's probably outdated' is not confirmation.
+4. Never archive a node based on casual mention or implication.
+5. After archiving, always tell the user the node ID and that they can restore it with restore_node at any time.`,
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"id":     {Type: "string", Description: "ID of the node to archive"},
+					"reason": {Type: "string", Description: "Why this node is being archived"},
+				},
+				Required: []string{"id"},
+			},
+		},
+		{
+			Name:        "restore_node",
+			Description: "Restore a previously archived node so it surfaces again in search and retrieval.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"id": {Type: "string", Description: "ID of the node to restore"},
+				},
+				Required: []string{"id"},
+			},
+		},
+		{
+			Name:        "list_archived",
+			Description: "List all archived nodes, optionally filtered by domain. Use this to review what has been forgotten and whether anything needs restoring.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"domain": {Type: "string", Description: "Optional domain to scope the listing"},
+				},
+			},
+		},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -207,6 +247,12 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.listAliases(req.Arguments)
 	case "resolve_domain":
 		result, err = h.resolveDomain(req.Arguments)
+	case "forget_node":
+		result, err = h.forgetNode(req.Arguments)
+	case "restore_node":
+		result, err = h.restoreNode(req.Arguments)
+	case "list_archived":
+		result, err = h.listArchived(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -411,6 +457,54 @@ func (h *Handler) resolveDomain(args json.RawMessage) (*ToolResult, error) {
 	canonical := h.store.ResolveAlias(a.Name)
 	msg := fmt.Sprintf("%q resolves to %q", a.Name, canonical)
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
+}
+
+func (h *Handler) forgetNode(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		ID     string `json:"id"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if err := h.store.ArchiveNode(a.ID, a.Reason); err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{
+		Type: "text",
+		Text: fmt.Sprintf("Node %q archived. It can be restored at any time with restore_node.", a.ID),
+	}}}, nil
+}
+
+func (h *Handler) restoreNode(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if err := h.store.RestoreNode(a.ID); err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{
+		Type: "text",
+		Text: fmt.Sprintf("Node %q restored and is now visible in search and retrieval.", a.ID),
+	}}}, nil
+}
+
+func (h *Handler) listArchived(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	nodes, err := h.store.ListArchived(a.Domain)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(nodes, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
 func errorResult(msg string) *ToolResult {
