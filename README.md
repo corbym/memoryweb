@@ -1,6 +1,6 @@
 # memoryweb
 
-A memory MCP server for agents. Stores knowledge as a graph of concepts connected by typed, narrative edges — designed for how humans actually remember things: not by location, but by story.
+A memory MCP server for agents. Stores knowledge as a graph of concepts connected by typed, narrative edges — designed around how agents navigate context: by following the thread of why things connect, not by knowing where they are stored.
 
 ## The idea
 
