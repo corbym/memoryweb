@@ -12,17 +12,49 @@ memoryweb works the same way. Each concept is a node. What makes it retrievable 
 
 ## Tools
 
+### Core graph
+
 | Tool | What it does |
 |------|-------------|
-| `add_node` | File a concept, decision, or finding. Requires a label, domain, and optionally a description and "why it matters". |
-| `add_edge` | Connect two concepts with a typed relationship and a narrative "because". |
-| `get_node` | Retrieve a concept and all its connections. |
-| `search_nodes` | Text search across label, description, and why_matters. Optionally scope to a domain. Returns matching concepts and any edges between them. |
-| `find_connections` | Look up the specific reasoning linking two named concepts. Use this when asked why or how two things relate. |
+| `add_node` | File a concept, decision, or finding. Requires a label and domain. Optionally a description, why_matters, and occurred_at. |
+| `add_edge` | Connect two nodes with a typed relationship and a narrative "because". |
+| `get_node` | Retrieve a node and all its connections. |
+| `search_nodes` | Text search across label, description, and why_matters. Optionally scope to a domain. |
+| `find_connections` | Look up the reasoning linking two named concepts. Use this when asked why or how two things relate. |
 | `recent_changes` | What was filed recently. Good for session orientation. |
+| `timeline` | Nodes ordered by when they actually occurred (not filed). Supports date range filtering. |
+
+### Archive / forget
+
+Nodes are never hard-deleted via the tools. Archive = soft delete; the node disappears from search and retrieval but can be restored.
+
+| Tool | What it does |
+|------|-------------|
+| `forget_node` | Archive a node with a reason. Strict protocol: only after drift surfaces a candidate or the user explicitly confirms. |
+| `restore_node` | Un-archive a node so it surfaces again. |
+| `list_archived` | Review what's been forgotten. Optionally scope by domain. |
+
+### Domain aliases
+
+| Tool | What it does |
+|------|-------------|
+| `add_alias` | Register an alternative name for a domain so both names return the same results. |
+| `list_aliases` | List all registered aliases and what they map to. |
+| `resolve_domain` | Check what canonical domain a name resolves to. |
 
 ### Relationship types
 `caused_by` `led_to` `blocked_by` `unblocks` `connects_to` `contradicts` `depends_on` `is_example_of`
+
+## CLI
+
+The `purge` subcommand hard-deletes archived nodes from the database. It is intentionally not exposed as an MCP tool — it's a maintenance operation, not an agent operation.
+
+```bash
+memoryweb purge --dry-run              # show what would be deleted (default behaviour without --confirm)
+memoryweb purge --confirm              # actually deletes
+memoryweb purge --domain sedex         # scope to a domain
+memoryweb purge --before 2026-01-01    # only nodes archived before a date
+```
 
 ## Build
 

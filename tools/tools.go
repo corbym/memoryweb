@@ -213,6 +213,24 @@ Archiving protocol — follow this exactly:
 				},
 			},
 		},
+		{
+			Name: "drift",
+			Description: `Surface nodes that may be stale, contradicted, or superseded. Returns candidates for review.
+
+After returning drift candidates, follow this protocol:
+1. Present each candidate clearly with its drift reason.
+2. For each one ask the user: 'Should I archive this?'
+3. Do not archive anything until the user confirms each one individually.
+4. 'That looks stale' or 'probably outdated' is not confirmation — ask explicitly before calling forget_node.
+5. If the user says 'archive all of them', confirm the full list first before acting.`,
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"domain": {Type: "string", Description: "Optional domain to scope drift detection"},
+					"limit":  {Type: "integer", Description: "Max candidates to return (default 10)"},
+				},
+			},
+		},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -253,6 +271,8 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.restoreNode(req.Arguments)
 	case "list_archived":
 		result, err = h.listArchived(req.Arguments)
+	case "drift":
+		result, err = h.drift(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -512,4 +532,23 @@ func errorResult(msg string) *ToolResult {
 		IsError: true,
 		Content: []ContentBlock{{Type: "text", Text: msg}},
 	}
+}
+
+func (h *Handler) drift(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Domain string `json:"domain"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.Limit <= 0 {
+		a.Limit = 10
+	}
+	candidates, err := h.store.FindDrift(a.Domain, a.Limit)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(candidates, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

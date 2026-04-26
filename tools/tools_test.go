@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -156,6 +157,7 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		"recent_changes", "find_connections", "timeline",
 		"add_alias", "list_aliases", "resolve_domain",
 		"forget_node", "restore_node", "list_archived",
+		"drift",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {
@@ -1079,5 +1081,124 @@ func TestCallTool_MalformedParams_ReturnsError(t *testing.T) {
 	_, err := h.CallTool(json.RawMessage(`{not valid json`))
 	if err == nil {
 		t.Error("malformed JSON params should return an error")
+	}
+}
+
+// ── drift ─────────────────────────────────────────────────────────────────────
+
+// TestDriftContradictingEdge: nodes connected by a contradicts edge must both
+// appear as drift candidates with reason containing "contradicting".
+func TestDriftContradictingEdge(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Approach Alpha", "test-drift-1", nil)
+	idB := addNode(t, h, "Approach Beta", "test-drift-1", nil)
+	mustNotError(t, call(t, h, "add_edge", map[string]any{
+		"from_node":    idA,
+		"to_node":      idB,
+		"relationship": "contradicts",
+	}))
+
+	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-1"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, "contradicting") {
+		t.Errorf("drift result should mention 'contradicting'; got:\n%s", body)
+	}
+	if !strings.Contains(body, idA) {
+		t.Errorf("node A (%s) should appear in drift result; got:\n%s", idA, body)
+	}
+	if !strings.Contains(body, idB) {
+		t.Errorf("node B (%s) should appear in drift result; got:\n%s", idB, body)
+	}
+}
+
+// TestDriftSupersededLabel: a node whose label contains "old" must appear with
+// reason containing "superseded".
+func TestDriftSupersededLabel(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "old RST $10 approach", "test-drift-2", nil)
+
+	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-2"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, id) {
+		t.Errorf("superseded node (%s) should appear in drift; got:\n%s", id, body)
+	}
+	if !strings.Contains(body, "superseded") {
+		t.Errorf("reason should mention 'superseded'; got:\n%s", body)
+	}
+}
+
+// TestDriftStaleOpenQuestion: a node whose description contains "open question"
+// with occurred_at > 30 days ago must appear with reason containing "open question".
+func TestDriftStaleOpenQuestion(t *testing.T) {
+	_, h := newEnv(t)
+	staleDate := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+	id := addNode(t, h, "RST handler timing", "test-drift-3", map[string]any{
+		"description": "open question: should we patch at boot or at runtime?",
+		"occurred_at": staleDate,
+	})
+
+	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-3"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, id) {
+		t.Errorf("stale open-question node (%s) should appear in drift; got:\n%s", id, body)
+	}
+	if !strings.Contains(body, "open question") {
+		t.Errorf("reason should mention 'open question'; got:\n%s", body)
+	}
+}
+
+// TestDriftDuplicateLabel: two nodes with identical labels in the same domain
+// must both appear with reason containing "duplicate".
+func TestDriftDuplicateLabel(t *testing.T) {
+	_, h := newEnv(t)
+	id1 := addNode(t, h, "boot crash duplicate label", "test-drift-4", nil)
+	id2 := addNode(t, h, "boot crash duplicate label", "test-drift-4", nil)
+
+	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-4"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, id1) {
+		t.Errorf("first duplicate node (%s) should appear in drift; got:\n%s", id1, body)
+	}
+	if !strings.Contains(body, id2) {
+		t.Errorf("second duplicate node (%s) should appear in drift; got:\n%s", id2, body)
+	}
+	if !strings.Contains(body, "duplicate") {
+		t.Errorf("reason should mention 'duplicate'; got:\n%s", body)
+	}
+}
+
+// TestDriftDoesNotSurfaceArchived: an archived node that would otherwise match
+// a drift rule must NOT appear in drift results.
+func TestDriftDoesNotSurfaceArchived(t *testing.T) {
+	store, h := newEnv(t)
+	id := addNode(t, h, "old archived stale thing", "test-drift-5", nil)
+	store.ArchiveNode(id, "test")
+
+	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-5"})
+	mustNotError(t, tr)
+	if strings.Contains(text(t, tr), id) {
+		t.Errorf("archived node (%s) should NOT appear in drift; got:\n%s", id, text(t, tr))
+	}
+}
+
+// TestDriftScopedByDomain: a drift candidate in domain A must not appear when
+// calling drift scoped to domain B.
+func TestDriftScopedByDomain(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "old deprecated approach", "test-drift-a", nil)
+	addNode(t, h, "fresh new approach", "test-drift-b", nil)
+
+	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-b"})
+	mustNotError(t, tr)
+	if strings.Contains(text(t, tr), idA) {
+		t.Errorf("node from test-drift-a (%s) should NOT appear in test-drift-b drift; got:\n%s", idA, text(t, tr))
 	}
 }

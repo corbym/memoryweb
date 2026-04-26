@@ -39,6 +39,13 @@ type NodeWithEdges struct {
 	Edges []Edge `json:"edges"`
 }
 
+// DriftCandidate is a node flagged as potentially stale or conflicting.
+type DriftCandidate struct {
+	Node          Node   `json:"node"`
+	ConflictsWith *Node  `json:"conflicts_with,omitempty"`
+	Reason        string `json:"reason"`
+}
+
 type DomainAlias struct {
 	Alias     string    `json:"alias"`
 	Domain    string    `json:"domain"`
@@ -686,4 +693,203 @@ func (s *Store) ListArchived(domain string) ([]Node, error) {
 		nodes = append(nodes, n)
 	}
 	return nodes, nil
+}
+
+// ── drift detection ───────────────────────────────────────────────────────────
+
+// FindDrift returns nodes that may be stale, contradicted, or superseded.
+// Rules are applied in order; the first match per node wins:
+//  1. Contradiction: connected by a "contradicts" edge.
+//  2. Superseded label: contains "old", "deprecated", "replaced", "legacy", "previous".
+//  3. Stale open question: contains open-question keywords and is older than 30 days.
+//  4. Duplicate label: identical lowercased label in the same domain.
+func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	domain = s.ResolveAlias(domain)
+
+	var out []DriftCandidate
+	seen := make(map[string]bool)
+
+	add := func(n Node, cw *Node, reason string) {
+		if !seen[n.ID] {
+			seen[n.ID] = true
+			out = append(out, DriftCandidate{Node: n, ConflictsWith: cw, Reason: reason})
+		}
+	}
+
+	// scanSingle scans 9 standard node columns from a *sql.Rows.
+	scanSingle := func(r *sql.Rows) (Node, error) {
+		var n Node
+		var oa, aa sql.NullTime
+		if err := r.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa); err != nil {
+			return Node{}, err
+		}
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		return n, nil
+	}
+
+	var err error
+
+	// ── Rule 1: contradicts edges ─────────────────────────────────────────────
+	rows, err := s.db.Query(`
+		SELECT a.id, a.label, a.description, a.why_matters, a.domain,
+		       a.created_at, a.updated_at, a.occurred_at, a.archived_at,
+		       b.id, b.label, b.description, b.why_matters, b.domain,
+		       b.created_at, b.updated_at, b.occurred_at, b.archived_at
+		FROM edges e
+		JOIN nodes a ON a.id = e.from_node AND a.archived_at IS NULL
+		JOIN nodes b ON b.id = e.to_node   AND b.archived_at IS NULL
+		WHERE e.relationship = 'contradicts'`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var (
+			aID, aLabel, aDesc, aWhy, aDomain string
+			aCreated, aUpdated                time.Time
+			aOA, aAA                          sql.NullTime
+			bID, bLabel, bDesc, bWhy, bDomain string
+			bCreated, bUpdated                time.Time
+			bOA, bAA                          sql.NullTime
+		)
+		if err := rows.Scan(
+			&aID, &aLabel, &aDesc, &aWhy, &aDomain, &aCreated, &aUpdated, &aOA, &aAA,
+			&bID, &bLabel, &bDesc, &bWhy, &bDomain, &bCreated, &bUpdated, &bOA, &bAA,
+		); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		a := Node{ID: aID, Label: aLabel, Description: aDesc, WhyMatters: aWhy, Domain: aDomain, CreatedAt: aCreated, UpdatedAt: aUpdated}
+		if aOA.Valid {
+			a.OccurredAt = &aOA.Time
+		}
+		if aAA.Valid {
+			a.ArchivedAt = &aAA.Time
+		}
+		b := Node{ID: bID, Label: bLabel, Description: bDesc, WhyMatters: bWhy, Domain: bDomain, CreatedAt: bCreated, UpdatedAt: bUpdated}
+		if bOA.Valid {
+			b.OccurredAt = &bOA.Time
+		}
+		if bAA.Valid {
+			b.ArchivedAt = &bAA.Time
+		}
+		if domain == "" || a.Domain == domain {
+			bc := b
+			add(a, &bc, "explicitly marked as contradicting each other")
+		}
+		if domain == "" || b.Domain == domain {
+			ac := a
+			add(b, &ac, "explicitly marked as contradicting each other")
+		}
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// ── Rule 2: superseded labels ─────────────────────────────────────────────
+	const supersededKW = `(LOWER(label) LIKE '%old%' OR LOWER(label) LIKE '%deprecated%' OR ` +
+		`LOWER(label) LIKE '%replaced%' OR LOWER(label) LIKE '%legacy%' OR LOWER(label) LIKE '%previous%')`
+	var rows2 *sql.Rows
+	if domain != "" {
+		rows2, err = s.db.Query(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at `+
+				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+supersededKW, domain)
+	} else {
+		rows2, err = s.db.Query(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at ` +
+				`FROM nodes WHERE archived_at IS NULL AND ` + supersededKW)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for rows2.Next() {
+		n, err := scanSingle(rows2)
+		if err != nil {
+			rows2.Close()
+			return nil, err
+		}
+		add(n, nil, "label suggests this may be superseded")
+	}
+	rows2.Close()
+	if err = rows2.Err(); err != nil {
+		return nil, err
+	}
+
+	// ── Rule 3: stale open questions ──────────────────────────────────────────
+	cutoff := time.Now().UTC().AddDate(0, 0, -30)
+	const staleKW = `(LOWER(label) LIKE '%open question%' OR LOWER(label) LIKE '%unresolved%' OR ` +
+		`LOWER(label) LIKE '%tbd%' OR LOWER(label) LIKE '%todo%' OR ` +
+		`LOWER(description) LIKE '%open question%' OR LOWER(description) LIKE '%unresolved%' OR ` +
+		`LOWER(description) LIKE '%tbd%' OR LOWER(description) LIKE '%todo%')`
+	const ageFilter = `((occurred_at IS NOT NULL AND occurred_at < ?) OR (occurred_at IS NULL AND created_at < ?))`
+	var rows3 *sql.Rows
+	if domain != "" {
+		rows3, err = s.db.Query(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at `+
+				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+staleKW+` AND `+ageFilter,
+			domain, cutoff, cutoff)
+	} else {
+		rows3, err = s.db.Query(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at `+
+				`FROM nodes WHERE archived_at IS NULL AND `+staleKW+` AND `+ageFilter,
+			cutoff, cutoff)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for rows3.Next() {
+		n, err := scanSingle(rows3)
+		if err != nil {
+			rows3.Close()
+			return nil, err
+		}
+		add(n, nil, "open question older than 30 days")
+	}
+	rows3.Close()
+	if err = rows3.Err(); err != nil {
+		return nil, err
+	}
+
+	// ── Rule 4: duplicate labels ──────────────────────────────────────────────
+	const dupExists = `EXISTS (SELECT 1 FROM nodes n2 WHERE n2.archived_at IS NULL ` +
+		`AND n2.domain = nodes.domain AND LOWER(n2.label) = LOWER(nodes.label) AND n2.id != nodes.id)`
+	var rows4 *sql.Rows
+	if domain != "" {
+		rows4, err = s.db.Query(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at `+
+				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+dupExists, domain)
+	} else {
+		rows4, err = s.db.Query(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at ` +
+				`FROM nodes WHERE archived_at IS NULL AND ` + dupExists)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for rows4.Next() {
+		n, err := scanSingle(rows4)
+		if err != nil {
+			rows4.Close()
+			return nil, err
+		}
+		add(n, nil, "possible duplicate of newer node")
+	}
+	rows4.Close()
+	if err = rows4.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
