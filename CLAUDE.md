@@ -159,16 +159,18 @@ and asks the user about each one individually.
 
 ## Testing conventions
 
-**Decision (session 2):** all tests use isolated temp-file SQLite DBs via
-`t.TempDir()`. Never share state between tests. Never use `:memory:` (WAL mode
-and schema stamping behave differently).
-
-Two test files:
+**Decision (session 2):** all tests live in the same directory as the code under
+test — Go convention, no exceptions. There is no top-level `tests/` directory.
 
 | File | Package | What it tests |
 |------|---------|---------------|
 | `db/db_test.go` | `db_test` | DB-layer unit tests: all Store methods |
 | `tools/tools_test.go` | `tools_test` | Outside-in agent-style tests via `CallTool` |
+| `cmd/purge/main_test.go` | `main_test` | CLI integration tests via `exec.Command` |
+
+All tests use isolated temp-file SQLite DBs via `t.TempDir()`. Never share
+state between tests. Never use `:memory:` (WAL mode and schema stamping behave
+differently).
 
 The tools tests call `h.CallTool(params)` with raw JSON exactly as an MCP agent
 would. **No direct Store access in tool tests** — all operations must go through
