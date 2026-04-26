@@ -1,6 +1,6 @@
 # memoryweb
 
-A memory MCP server for Claude. Stores knowledge as a graph of concepts connected by typed, narrative edges — designed for how humans actually remember things: not by location, but by story.
+A memory MCP server for agents. Stores knowledge as a graph of concepts connected by typed, narrative edges — designed for how humans actually remember things: not by location, but by story.
 
 ## The idea
 
@@ -36,9 +36,9 @@ Default DB path: `~/.memoryweb.db`
 
 Override with `MEMORYWEB_DB=/path/to/your.db`
 
-## Claude Desktop config
+## MCP config
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+Add to your MCP host's config (example for Claude Desktop on macOS — `~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
