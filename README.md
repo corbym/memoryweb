@@ -2,9 +2,15 @@
 
 <div style="text-align:center"><img src="web.png" alt="memoryweb" /></div>
 
-A memory MCP server for agents. Stores knowledge as a graph of concepts connected by typed, narrative edges — designed around how agents navigate context: by following the thread of why things connect, not by knowing where they are stored.
+A memory MCP server for agents.
 
 ## The idea
+
+Human memory doesn't work by location. You don't retrieve a fact from a filing cabinet. You pull a thread. A smell connects to a kitchen, connects to a person, connects to a feeling from thirty years ago. The thread is always there. Pull any part of it and the rest follows.
+
+This is why the memory palace works. Place feels like storage — *this fact lives in this room* — but that's not what's actually happening. Place creates a sequence. A sequence creates a story. The story is what holds the memory. Location is just a human shortcut for narrative.
+
+Agents don't navigate by location at all. There is no place. Context is tokens in relation to other tokens. What makes something retrievable is its associative chain — the path of connections that lead to it from something else. The narrative edge, the *because*, is the mechanism. Not the index, not the address.
 
 You don't remember facts in isolation. You remember them because of what they connect to. *The boot crash is significant because it blocks the tutorial, which blocks the demo, which is why the fix matters now.* Pull on any of those threads and you get the rest.
 
