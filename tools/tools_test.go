@@ -157,7 +157,8 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		"recent_changes", "find_connections", "timeline",
 		"add_alias", "list_aliases", "resolve_domain",
 		"forget_node", "restore_node", "list_archived",
-		"drift",
+		"drift", "summarise_domain",
+		"add_nodes", "add_edges",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {
@@ -1200,5 +1201,215 @@ func TestDriftScopedByDomain(t *testing.T) {
 	mustNotError(t, tr)
 	if strings.Contains(text(t, tr), idA) {
 		t.Errorf("node from test-drift-a (%s) should NOT appear in test-drift-b drift; got:\n%s", idA, text(t, tr))
+	}
+}
+
+// ── summarise_domain ──────────────────────────────────────────────────────────
+
+// TestSummariseDomain_ReturnsNodes: the response must contain the labels of
+// all live nodes in the domain.
+func TestSummariseDomain_ReturnsNodes(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Alpha summarise node", "sum-domain", map[string]any{
+		"description": "first node description",
+		"why_matters": "first node why matters",
+	})
+	addNode(t, h, "Beta summarise node", "sum-domain", map[string]any{
+		"description": "second node description",
+		"why_matters": "second node why matters",
+	})
+	addNode(t, h, "Gamma summarise node", "sum-domain", map[string]any{
+		"description": "third node description",
+		"why_matters": "third node why matters",
+	})
+
+	tr := call(t, h, "summarise_domain", map[string]any{"domain": "sum-domain"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	for _, label := range []string{"Alpha summarise node", "Beta summarise node", "Gamma summarise node"} {
+		if !strings.Contains(body, label) {
+			t.Errorf("result should contain label %q; got:\n%s", label, body)
+		}
+	}
+}
+
+// TestSummariseDomain_EmptyDomain: a domain with no nodes returns a clear
+// "nothing filed" message rather than empty content.
+func TestSummariseDomain_EmptyDomain(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "summarise_domain", map[string]any{"domain": "completely-empty-domain-xyz"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "Nothing has been filed") {
+		t.Errorf("empty domain should return 'Nothing has been filed' message; got:\n%s", body)
+	}
+}
+
+// TestSummariseDomain_ExcludesArchived: an archived node's label must not
+// appear in the summarise_domain response.
+func TestSummariseDomain_ExcludesArchived(t *testing.T) {
+	store, h := newEnv(t)
+	addNode(t, h, "Visible summarise node", "sum-archive-domain", nil)
+	hiddenID := addNode(t, h, "Hidden archived summarise node", "sum-archive-domain", nil)
+	store.ArchiveNode(hiddenID, "test archive")
+
+	tr := call(t, h, "summarise_domain", map[string]any{"domain": "sum-archive-domain"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if strings.Contains(body, "Hidden archived summarise node") {
+		t.Errorf("archived node label should NOT appear in summarise_domain result; got:\n%s", body)
+	}
+	if !strings.Contains(body, "Visible summarise node") {
+		t.Errorf("live node label should appear in result; got:\n%s", body)
+	}
+}
+
+// TestSummariseDomain_IncludesRecentChanges: a node with occurred_at set must
+// have that date visible in the response.
+func TestSummariseDomain_IncludesRecentChanges(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Undated node one", "sum-dated-domain", nil)
+	addNode(t, h, "Undated node two", "sum-dated-domain", nil)
+	addNode(t, h, "Dated event node", "sum-dated-domain", map[string]any{
+		"occurred_at": "2026-04-01",
+	})
+
+	tr := call(t, h, "summarise_domain", map[string]any{"domain": "sum-dated-domain"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, "2026-04-01") {
+		t.Errorf("result should include occurred_at date '2026-04-01'; got:\n%s", body)
+	}
+}
+
+// ── add_nodes / add_edges (bulk) ──────────────────────────────────────────────
+
+// TestAddNodesBulk: three nodes inserted in one call; all IDs returned and
+// each node is findable via search.
+func TestAddNodesBulk(t *testing.T) {
+	_, h := newEnv(t)
+
+	tr := call(t, h, "add_nodes", map[string]any{
+		"nodes": []map[string]any{
+			{"label": "Bulk Node Alpha", "domain": "bulk-test"},
+			{"label": "Bulk Node Beta", "domain": "bulk-test", "description": "beta desc"},
+			{"label": "Bulk Node Gamma", "domain": "bulk-test", "why_matters": "gamma why"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var ids []string
+	if err := json.Unmarshal([]byte(text(t, tr)), &ids); err != nil {
+		t.Fatalf("parse add_nodes response: %v", err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 IDs, got %d", len(ids))
+	}
+
+	labels := []string{"Bulk Node Alpha", "Bulk Node Beta", "Bulk Node Gamma"}
+	for i, label := range labels {
+		searchTr := call(t, h, "search_nodes", map[string]any{
+			"query": label, "domain": "bulk-test",
+		})
+		mustNotError(t, searchTr)
+		if !contains(searchIDs(t, searchTr), ids[i]) {
+			t.Errorf("node %q (%s) not found after add_nodes", label, ids[i])
+		}
+	}
+}
+
+// TestAddNodesBulkRollsBackOnError: if any node in the batch is invalid the
+// whole transaction must be rolled back.
+func TestAddNodesBulkRollsBackOnError(t *testing.T) {
+	_, h := newEnv(t)
+
+	// Third node has empty label — required field missing.
+	tr := call(t, h, "add_nodes", map[string]any{
+		"nodes": []map[string]any{
+			{"label": "Rollback Node One", "domain": "rollback-test"},
+			{"label": "Rollback Node Two", "domain": "rollback-test"},
+			{"label": "", "domain": "rollback-test"},
+		},
+	})
+	mustError(t, tr)
+
+	// The two valid nodes must not have been persisted.
+	for _, label := range []string{"Rollback Node One", "Rollback Node Two"} {
+		searchTr := call(t, h, "search_nodes", map[string]any{
+			"query": label, "domain": "rollback-test",
+		})
+		mustNotError(t, searchTr)
+		if len(searchIDs(t, searchTr)) > 0 {
+			t.Errorf("node %q should not exist after rollback", label)
+		}
+	}
+}
+
+// TestAddEdgesBulk: two edges inserted in one call; count returned and both
+// edges visible on the source node.
+func TestAddEdgesBulk(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Edge Bulk Node A", "edge-bulk-test", nil)
+	idB := addNode(t, h, "Edge Bulk Node B", "edge-bulk-test", nil)
+	idC := addNode(t, h, "Edge Bulk Node C", "edge-bulk-test", nil)
+
+	tr := call(t, h, "add_edges", map[string]any{
+		"edges": []map[string]any{
+			{"from_node": idA, "to_node": idB, "relationship": "connects_to", "narrative": "A to B"},
+			{"from_node": idB, "to_node": idC, "relationship": "led_to", "narrative": "B to C"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var result map[string]int
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse add_edges response: %v", err)
+	}
+	if result["edges_created"] != 2 {
+		t.Errorf("expected edges_created=2, got %d", result["edges_created"])
+	}
+
+	// Both edges should appear on get_node for A.
+	nodeTr := call(t, h, "get_node", map[string]any{"id": idA})
+	mustNotError(t, nodeTr)
+	var nwe struct {
+		Edges []struct {
+			Relationship string `json:"relationship"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, nodeTr)), &nwe)
+	if len(nwe.Edges) == 0 {
+		t.Error("expected edges on node A after add_edges")
+	}
+}
+
+// TestAddEdgesBulkRollsBackOnError: if any edge in the batch references a
+// non-existent node the whole transaction must be rolled back.
+func TestAddEdgesBulkRollsBackOnError(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Edge Rollback Node A", "edge-rollback-test", nil)
+	idB := addNode(t, h, "Edge Rollback Node B", "edge-rollback-test", nil)
+
+	// Second edge references a ghost node.
+	tr := call(t, h, "add_edges", map[string]any{
+		"edges": []map[string]any{
+			{"from_node": idA, "to_node": idB, "relationship": "connects_to", "narrative": "valid"},
+			{"from_node": idA, "to_node": "ghost-node-xyz", "relationship": "connects_to", "narrative": "invalid"},
+		},
+	})
+	mustError(t, tr)
+
+	// Node A should have no edges after rollback.
+	nodeTr := call(t, h, "get_node", map[string]any{"id": idA})
+	mustNotError(t, nodeTr)
+	var nwe struct {
+		Edges []any `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, nodeTr)), &nwe)
+	if len(nwe.Edges) > 0 {
+		t.Errorf("edges should have been rolled back, got %d", len(nwe.Edges))
 	}
 }

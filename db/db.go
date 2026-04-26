@@ -46,6 +46,23 @@ type DriftCandidate struct {
 	Reason        string `json:"reason"`
 }
 
+// NodeInput is the input type for AddNodesBatch.
+type NodeInput struct {
+	Label       string
+	Description string
+	WhyMatters  string
+	Domain      string
+	OccurredAt  *time.Time
+}
+
+// EdgeInput is the input type for AddEdgesBatch.
+type EdgeInput struct {
+	FromNode     string
+	ToNode       string
+	Relationship string
+	Narrative    string
+}
+
 type DomainAlias struct {
 	Alias     string    `json:"alias"`
 	Domain    string    `json:"domain"`
@@ -693,6 +710,97 @@ func (s *Store) ListArchived(domain string) ([]Node, error) {
 		nodes = append(nodes, n)
 	}
 	return nodes, nil
+}
+
+// ── batch insert ──────────────────────────────────────────────────────────────
+
+// AddNodesBatch inserts all nodes in a single transaction.
+// If any node fails validation or insertion the transaction is rolled back.
+func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	nodes := make([]*Node, 0, len(inputs))
+	for i, inp := range inputs {
+		if inp.Label == "" {
+			tx.Rollback()
+			return nil, fmt.Errorf("node %d: label is required", i)
+		}
+		if inp.Domain == "" {
+			tx.Rollback()
+			return nil, fmt.Errorf("node %d: domain is required", i)
+		}
+		id := slug(inp.Label) + "-" + shortID()
+		if _, err := tx.Exec(
+			`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, inp.Label, inp.Description, inp.WhyMatters, inp.Domain, now, now, inp.OccurredAt,
+		); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		nodes = append(nodes, &Node{
+			ID:          id,
+			Label:       inp.Label,
+			Description: inp.Description,
+			WhyMatters:  inp.WhyMatters,
+			Domain:      inp.Domain,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+			OccurredAt:  inp.OccurredAt,
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+// AddEdgesBatch inserts all edges in a single transaction.
+// If any edge references a non-existent node the transaction is rolled back.
+func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	edges := make([]*Edge, 0, len(inputs))
+	for _, inp := range inputs {
+		for _, nodeID := range []string{inp.FromNode, inp.ToNode} {
+			var count int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ?`, nodeID).Scan(&count); err != nil {
+				tx.Rollback()
+				return nil, err
+			}
+			if count == 0 {
+				tx.Rollback()
+				return nil, fmt.Errorf("node not found: %s", nodeID)
+			}
+		}
+		id := "edge-" + shortID()
+		if _, err := tx.Exec(
+			`INSERT INTO edges (id, from_node, to_node, relationship, narrative, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			id, inp.FromNode, inp.ToNode, inp.Relationship, inp.Narrative, now,
+		); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		edges = append(edges, &Edge{
+			ID:           id,
+			FromNode:     inp.FromNode,
+			ToNode:       inp.ToNode,
+			Relationship: inp.Relationship,
+			Narrative:    inp.Narrative,
+			CreatedAt:    now,
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return edges, nil
 }
 
 // ── drift detection ───────────────────────────────────────────────────────────

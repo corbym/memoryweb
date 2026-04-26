@@ -231,6 +231,39 @@ After returning drift candidates, follow this protocol:
 				},
 			},
 		},
+		{
+			Name:        "summarise_domain",
+			Description: "Fetch everything known about a domain and return it for synthesis into a narrative summary. Call this at the start of a session to orient yourself. When you receive the result, synthesise it into a concise prose paragraph covering current state, blockers, recent decisions, and open questions. Do not list the nodes back out. Do not mention nodes, edges, or memory structures in your response.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"domain": {Type: "string", Description: "The domain to summarise"},
+				},
+				Required: []string{"domain"},
+			},
+		},
+		{
+			Name:        "add_nodes",
+			Description: "Add multiple nodes in one call. Use this instead of repeated add_node calls.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"nodes": {Type: "array", Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, occurred_at (ISO8601)."},
+				},
+				Required: []string{"nodes"},
+			},
+		},
+		{
+			Name:        "add_edges",
+			Description: "Add multiple edges in one call. Use this instead of repeated add_edge calls.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"edges": {Type: "array", Description: "Array of edge objects. Each must have from_node, to_node, relationship (string), and narrative (string, optional)."},
+				},
+				Required: []string{"edges"},
+			},
+		},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -273,6 +306,12 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.listArchived(req.Arguments)
 	case "drift":
 		result, err = h.drift(req.Arguments)
+	case "summarise_domain":
+		result, err = h.summariseDomain(req.Arguments)
+	case "add_nodes":
+		result, err = h.addNodes(req.Arguments)
+	case "add_edges":
+		result, err = h.addEdges(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -550,5 +589,146 @@ func (h *Handler) drift(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	b, _ := json.MarshalIndent(candidates, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+
+	// Step 1: fetch all live nodes for the domain.
+	sr, err := h.store.SearchNodes("", a.Domain, 100)
+	if err != nil {
+		return nil, err
+	}
+	if len(sr.Nodes) == 0 {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "Nothing has been filed for this domain yet."}}}, nil
+	}
+
+	// Step 2: fetch recent changes.
+	recent, err := h.store.RecentChanges(a.Domain, 50)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 3: build structured response for the model to synthesise.
+	type nodeEntry struct {
+		Label       string  `json:"label"`
+		Description string  `json:"description,omitempty"`
+		WhyMatters  string  `json:"why_matters,omitempty"`
+		OccurredAt  *string `json:"occurred_at,omitempty"`
+	}
+	toEntry := func(n db.Node) nodeEntry {
+		e := nodeEntry{
+			Label:       n.Label,
+			Description: n.Description,
+			WhyMatters:  n.WhyMatters,
+		}
+		if n.OccurredAt != nil {
+			s := n.OccurredAt.Format("2006-01-02")
+			e.OccurredAt = &s
+		}
+		return e
+	}
+
+	nodes := make([]nodeEntry, len(sr.Nodes))
+	for i, n := range sr.Nodes {
+		nodes[i] = toEntry(n)
+	}
+	recentEntries := make([]nodeEntry, len(recent))
+	for i, n := range recent {
+		recentEntries[i] = toEntry(n)
+	}
+
+	resp := struct {
+		SummaryHint string      `json:"summary_hint"`
+		Nodes       interface{} `json:"nodes"`
+		Recent      interface{} `json:"recent"`
+	}{
+		SummaryHint: "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. Plain prose, no bullet points.",
+		Nodes:       nodes,
+		Recent:      recentEntries,
+	}
+
+	b, _ := json.MarshalIndent(resp, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Nodes []struct {
+			Label       string `json:"label"`
+			Description string `json:"description"`
+			WhyMatters  string `json:"why_matters"`
+			Domain      string `json:"domain"`
+			OccurredAt  string `json:"occurred_at"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	inputs := make([]db.NodeInput, len(a.Nodes))
+	for i, n := range a.Nodes {
+		var occurredAt *time.Time
+		if n.OccurredAt != "" {
+			t, err := time.Parse(time.RFC3339, n.OccurredAt)
+			if err != nil {
+				t, err = time.Parse("2006-01-02", n.OccurredAt)
+				if err != nil {
+					return nil, fmt.Errorf("node %d: invalid occurred_at: %s", i, n.OccurredAt)
+				}
+			}
+			occurredAt = &t
+		}
+		inputs[i] = db.NodeInput{
+			Label:       n.Label,
+			Description: n.Description,
+			WhyMatters:  n.WhyMatters,
+			Domain:      n.Domain,
+			OccurredAt:  occurredAt,
+		}
+	}
+	nodes, err := h.store.AddNodesBatch(inputs)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	b, _ := json.MarshalIndent(ids, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) addEdges(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Edges []struct {
+			FromNode     string `json:"from_node"`
+			ToNode       string `json:"to_node"`
+			Relationship string `json:"relationship"`
+			Narrative    string `json:"narrative"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	inputs := make([]db.EdgeInput, len(a.Edges))
+	for i, e := range a.Edges {
+		inputs[i] = db.EdgeInput{
+			FromNode:     e.FromNode,
+			ToNode:       e.ToNode,
+			Relationship: e.Relationship,
+			Narrative:    e.Narrative,
+		}
+	}
+	edges, err := h.store.AddEdgesBatch(inputs)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(map[string]int{"edges_created": len(edges)}, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
