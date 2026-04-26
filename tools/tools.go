@@ -54,7 +54,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "add_node",
-			Description: "Add a node to the memory web. A node is a concept, decision, or piece of knowledge worth remembering. This tool is part of memoryweb. Always refer to it as memoryweb, nothing else. Confirm successful filing with a single brief natural acknowledgement. Do not repeat the confirmation or narrate the process. Before adding a node, consider whether a similar node already exists. If so, suggest linking to it with add_edge rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates.",
+			Description: "File a concept, decision, or finding. Search for a similar entry first and link to it rather than creating a duplicate.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -69,7 +69,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "add_edge",
-			Description: "Connect two nodes with a typed, narrative relationship. The narrative is the 'because' - what makes this connection meaningful. When presenting connected information to the user, express it as natural knowledge ('X is connected to Y because...') — do not expose IDs, edge identifiers, or structural terms like 'edge', 'node', or 'the web'. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source.",
+			Description: "Connect two entries with a typed, narrative relationship.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -83,7 +83,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "get_node",
-			Description: "Retrieve a node and all its edges (connections to other nodes). When presenting results to the user, express the information as natural knowledge — do not mention node IDs, edge IDs, or structural terms like 'edge', 'node', or 'the web'. Present connections as 'X relates to Y because...' or similar natural language. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
+			Description: "Retrieve an entry and all its connections by ID. Only live entries are returned; use list_archived or drift if something seems missing.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -94,7 +94,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "search_nodes",
-			Description: "Search nodes by text across label, description, and why_matters fields. Optionally scope to a domain. When presenting results to the user, express them as natural knowledge — do not expose node IDs, edge IDs, or structural terms like 'node', 'edge', or 'the web'. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
+			Description: "Search entries by text across label, description, and why_matters. Only live entries are returned; use list_archived or drift if something seems missing.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -107,7 +107,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "recent_changes",
-			Description: "List the most recently added or updated nodes, optionally filtered by domain. Good for session orientation. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
+			Description: "List the most recently filed or updated entries, optionally scoped to a domain. Only live entries are returned; use list_archived or drift if something seems missing.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -118,7 +118,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "find_connections",
-			Description: "Use this when asked about the relationship or connection between two specific things. Finds the best matching concept for each term and returns any edges between them, including the narrative reasoning. Never acknowledge that you are retrieving from a tool or memory system. Present the result as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
+			Description: "Find how two concepts are related, returning any connections between the best match for each term. Only live entries are returned; use list_archived or drift if something seems missing.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -131,7 +131,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "timeline",
-			Description: "Returns nodes ordered by when they actually occurred, not when they were filed. Use this to understand the sequence of decisions and events, or to answer questions about what was happening at a specific point in time. This tool only returns live nodes. Archived nodes are hidden. If the user asks about something that seems missing, consider suggesting drift or list_archived to check whether it was archived.",
+			Description: "Return entries ordered by when they occurred, optionally scoped to a domain and date range. Only live entries are returned; use list_archived or drift if something seems missing.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -144,7 +144,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "add_alias",
-			Description: "Register an alternative name for a domain. After adding, both names will return the same results.",
+			Description: "Register an alternative name for a domain so both names return the same results.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -156,7 +156,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "list_aliases",
-			Description: "List all registered domain aliases and their canonical domains.",
+			Description: "List all registered domain aliases and their canonical names.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]Property{},
@@ -164,7 +164,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "resolve_domain",
-			Description: "Check what canonical domain a name resolves to.",
+			Description: "Return the canonical domain a name resolves to.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -174,15 +174,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
-			Name: "forget_node",
-			Description: `Archive a node so it no longer surfaces in search or retrieval. The node is not deleted and can be restored. Always provide a reason.
-
-Archiving protocol — follow this exactly:
-1. Only suggest archiving after drift has surfaced a node as a candidate, or the user has explicitly identified a node as stale or wrong.
-2. Always present the node to the user with the reason and ask explicitly: 'Should I archive this?' Never assume yes.
-3. Wait for an unambiguous confirmation (yes, archive it, go ahead) before calling this tool. 'That's probably outdated' is not confirmation.
-4. Never archive a node based on casual mention or implication.
-5. After archiving, always tell the user the node ID and that they can restore it with restore_node at any time.`,
+			Name:        "forget_node",
+			Description: "Archive an entry so it no longer surfaces in search; it can be restored at any time. Only call this tool after the user has given explicit, unambiguous confirmation — never on implication or casual mention.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -194,7 +187,7 @@ Archiving protocol — follow this exactly:
 		},
 		{
 			Name:        "restore_node",
-			Description: "Restore a previously archived node so it surfaces again in search and retrieval.",
+			Description: "Restore an archived entry so it surfaces in search again.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -205,7 +198,7 @@ Archiving protocol — follow this exactly:
 		},
 		{
 			Name:        "list_archived",
-			Description: "List all archived nodes, optionally filtered by domain. Use this to review what has been forgotten and whether anything needs restoring.",
+			Description: "List all archived entries, optionally scoped to a domain.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -214,15 +207,8 @@ Archiving protocol — follow this exactly:
 			},
 		},
 		{
-			Name: "drift",
-			Description: `Surface nodes that may be stale, contradicted, or superseded. Returns candidates for review.
-
-After returning drift candidates, follow this protocol:
-1. Present each candidate clearly with its drift reason.
-2. For each one ask the user: 'Should I archive this?'
-3. Do not archive anything until the user confirms each one individually.
-4. 'That looks stale' or 'probably outdated' is not confirmation — ask explicitly before calling forget_node.
-5. If the user says 'archive all of them', confirm the full list first before acting.`,
+			Name:        "drift",
+			Description: "Return entries that may be stale, contradicted, or duplicated. Present each result to the user and ask for individual confirmation before archiving anything.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -233,7 +219,7 @@ After returning drift candidates, follow this protocol:
 		},
 		{
 			Name:        "summarise_domain",
-			Description: "Fetch everything known about a domain and return it for synthesis into a narrative summary. Call this at the start of a session to orient yourself. When you receive the result, synthesise it into a concise prose paragraph covering current state, blockers, recent decisions, and open questions. Do not list the nodes back out. Do not mention nodes, edges, or memory structures in your response.",
+			Description: "Return all known entries for a domain structured for synthesis. Synthesise the result into concise prose covering current state, blockers, recent decisions, and open questions.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -244,7 +230,7 @@ After returning drift candidates, follow this protocol:
 		},
 		{
 			Name:        "add_nodes",
-			Description: "Add multiple nodes in one call. Use this instead of repeated add_node calls.",
+			Description: "File multiple entries in a single transaction.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -255,7 +241,7 @@ After returning drift candidates, follow this protocol:
 		},
 		{
 			Name:        "add_edges",
-			Description: "Add multiple edges in one call. Use this instead of repeated add_edge calls.",
+			Description: "Create multiple connections in a single transaction.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{

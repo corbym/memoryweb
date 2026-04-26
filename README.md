@@ -10,6 +10,22 @@ You don't remember facts in isolation. You remember them because of what they co
 
 memoryweb works the same way. Each concept is a node. What makes it retrievable is the narrative edge — the *because* that links it to something else. A concept with rich connections is reachable from many starting points. A concept filed alone, with no story linking it to anything, is effectively lost.
 
+## Philosophy
+
+memoryweb optimises for remembering things well, not remembering things fast. Filing requires a moment of judgement: why does this matter, how does it connect to what else is known, what would be useful to know when coming back to this cold?
+
+The metric is whether the next session starts with genuine understanding rather than a pile of raw facts.
+
+This makes memoryweb a decision log, not an event log. The difference matters:
+
+- An event log records what happened. A decision log records what was learned, decided, and why.
+- An event log grows automatically. A decision log requires intent.
+- An event log is useful for reconstructing the past. A decision log is useful for continuing work.
+
+For long-running technical projects — where the hard problems are architectural decisions, subtle bugs, and design tradeoffs — the decision log is what lets you pick up where you left off without re-learning everything.
+
+The `why_matters` field is not optional. A node without it is an event, not a decision. Nodes without `why_matters` will surface as drift candidates.
+
 ## Tools
 
 ### Core graph
@@ -95,3 +111,74 @@ Add to your MCP host's config (example for Claude Desktop on macOS — `~/Librar
 - Add edges immediately after adding related nodes
 - Call `recent_changes` at the start of a session to orient without needing to know what to search for
 - Use `find_connections` when asking about the relationship between two specific things
+
+## Hooks
+
+Two Claude Code hooks automate filing and pre-compaction capture.
+
+### What they do
+
+**`hooks/memoryweb_save_hook.sh`** (Stop hook — fires after every AI response)  
+Counts human messages in the session transcript. Every `SAVE_INTERVAL` messages (default 15) it blocks the response and asks the model to call `add_nodes` and `add_edges` for anything significant before continuing. Uses a re-entry flag so the block fires once and allows immediately after the model files.
+
+**`hooks/memoryweb_precompact_hook.sh`** (PreCompact hook — fires before context compaction)  
+Blocks compaction once and asks the model to file everything important that hasn't been filed yet. Allows on re-entry so compaction proceeds after the filing pass.
+
+### Install (Claude Code)
+
+Run the setup tool once after building:
+
+```bash
+go build -o memoryweb-setup ./cmd/setup
+./memoryweb-setup --hooks-dir /path/to/hooks
+```
+
+Or install manually:
+
+```bash
+chmod +x hooks/memoryweb_save_hook.sh hooks/memoryweb_precompact_hook.sh
+```
+
+Add to `~/.claude/settings.local.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/hooks/memoryweb_save_hook.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/hooks/memoryweb_precompact_hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Restart Claude Code to activate.
+
+### Configuration
+
+Set `MEMORYWEB_SAVE_INTERVAL` in the hook's environment to change the trigger frequency (default: 15 human messages).
+
+### Token cost
+
+Unlike passive hooks, these cost tokens because the model must actually produce quality nodes. Expect one short filing exchange per trigger — typically under 1,000 tokens for a focused session.
+
+### Other tools
+
+**GitHub Copilot and Claude Desktop do not support hooks.** For those tools, add session-start and filing instructions to your system prompt manually.
+
