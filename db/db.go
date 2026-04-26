@@ -57,47 +57,149 @@ func (s *Store) Close() {
 	s.db.Close()
 }
 
+// ── migrations ────────────────────────────────────────────────────────────────
+
+// migration is a single versioned schema change.
+type migration struct {
+	version int
+	desc    string
+	up      func(tx *sql.Tx) error
+}
+
+// migrations is the ordered, append-only list of all schema changes.
+// Never edit an existing entry — only add new ones at the end.
+var migrations = []migration{
+	{
+		version: 1,
+		desc:    "initial schema: nodes, edges, indexes",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				CREATE TABLE IF NOT EXISTS nodes (
+					id          TEXT PRIMARY KEY,
+					label       TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					why_matters TEXT NOT NULL DEFAULT '',
+					domain      TEXT NOT NULL DEFAULT '',
+					created_at  DATETIME NOT NULL,
+					updated_at  DATETIME NOT NULL
+				);
+				CREATE TABLE IF NOT EXISTS edges (
+					id           TEXT PRIMARY KEY,
+					from_node    TEXT NOT NULL,
+					to_node      TEXT NOT NULL,
+					relationship TEXT NOT NULL,
+					narrative    TEXT NOT NULL DEFAULT '',
+					created_at   DATETIME NOT NULL,
+					FOREIGN KEY(from_node) REFERENCES nodes(id),
+					FOREIGN KEY(to_node)   REFERENCES nodes(id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_nodes_domain    ON nodes(domain);
+				CREATE INDEX IF NOT EXISTS idx_nodes_updated   ON nodes(updated_at);
+				CREATE INDEX IF NOT EXISTS idx_edges_from_node ON edges(from_node);
+				CREATE INDEX IF NOT EXISTS idx_edges_to_node   ON edges(to_node);
+			`)
+			return err
+		},
+	},
+	{
+		version: 2,
+		desc:    "nodes: add occurred_at column and index",
+		up: func(tx *sql.Tx) error {
+			if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN occurred_at DATETIME`); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_occurred ON nodes(occurred_at)`)
+			return err
+		},
+	},
+	{
+		version: 3,
+		desc:    "add domain_aliases table",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				CREATE TABLE IF NOT EXISTS domain_aliases (
+					alias      TEXT PRIMARY KEY,
+					domain     TEXT NOT NULL,
+					created_at DATETIME NOT NULL
+				)
+			`)
+			return err
+		},
+	},
+}
+
+// migrate creates the schema_migrations tracking table (if needed) then applies
+// any unapplied migrations in version order inside individual transactions.
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS nodes (
-			id          TEXT PRIMARY KEY,
-			label       TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			why_matters TEXT NOT NULL DEFAULT '',
-			domain      TEXT NOT NULL DEFAULT '',
-			created_at  DATETIME NOT NULL,
-			updated_at  DATETIME NOT NULL
-		);
+	// Check whether schema_migrations already exists before we create it.
+	var migrationsTableExisted int
+	s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'`,
+	).Scan(&migrationsTableExisted)
 
-		CREATE TABLE IF NOT EXISTS edges (
-			id           TEXT PRIMARY KEY,
-			from_node    TEXT NOT NULL,
-			to_node      TEXT NOT NULL,
-			relationship TEXT NOT NULL,
-			narrative    TEXT NOT NULL DEFAULT '',
-			created_at   DATETIME NOT NULL,
-			FOREIGN KEY(from_node) REFERENCES nodes(id),
-			FOREIGN KEY(to_node)   REFERENCES nodes(id)
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_nodes_domain    ON nodes(domain);
-		CREATE INDEX IF NOT EXISTS idx_nodes_updated   ON nodes(updated_at);
-		CREATE INDEX IF NOT EXISTS idx_edges_from_node ON edges(from_node);
-		CREATE INDEX IF NOT EXISTS idx_edges_to_node   ON edges(to_node);
-	`)
-	if err != nil {
-		return err
+	// Bootstrap: ensure schema_migrations exists.
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version    INTEGER PRIMARY KEY,
+			desc       TEXT NOT NULL,
+			applied_at DATETIME NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("bootstrap schema_migrations: %w", err)
 	}
-	// Incremental migration: add occurred_at if it doesn't exist yet.
-	s.db.Exec(`ALTER TABLE nodes ADD COLUMN occurred_at DATETIME`)
-	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_occurred ON nodes(occurred_at)`)
 
-	// Incremental migration: domain_aliases table.
-	s.db.Exec(`CREATE TABLE IF NOT EXISTS domain_aliases (
-		alias      TEXT PRIMARY KEY,
-		domain     TEXT NOT NULL,
-		created_at DATETIME NOT NULL
-	)`)
+	// If schema_migrations did not exist before this call AND the nodes table
+	// already exists, this is a pre-versioning DB being upgraded.
+	// Stamp all known migrations as applied so we don't re-run them.
+	if migrationsTableExisted == 0 {
+		var nodesExists int
+		s.db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nodes'`,
+		).Scan(&nodesExists)
+		if nodesExists > 0 {
+			now := time.Now().UTC()
+			for _, m := range migrations {
+				if _, err := s.db.Exec(
+					`INSERT OR IGNORE INTO schema_migrations (version, desc, applied_at) VALUES (?, ?, ?)`,
+					m.version, m.desc, now,
+				); err != nil {
+					return fmt.Errorf("stamp migration v%d: %w", m.version, err)
+				}
+			}
+			return nil
+		}
+	}
+
+	for _, m := range migrations {
+		var count int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, m.version,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("migration v%d: check: %w", m.version, err)
+		}
+		if count > 0 {
+			continue // already applied
+		}
+
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("migration v%d: begin tx: %w", m.version, err)
+		}
+		if err := m.up(tx); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migration v%d (%s): %w", m.version, m.desc, err)
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO schema_migrations (version, desc, applied_at) VALUES (?, ?, ?)`,
+			m.version, m.desc, time.Now().UTC(),
+		); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migration v%d: record: %w", m.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("migration v%d: commit: %w", m.version, err)
+		}
+	}
 	return nil
 }
 
