@@ -91,20 +91,21 @@ jobs:
 
       - name: Create archives and checksums
         run: |
+          set -e
           mkdir -p dist
           VERSION="${{ github.ref_name }}"
-          for goos in linux darwin; do
-            for goarch in amd64 arm64; do
-              dir="bin/memoryweb_${goos}_${goarch}"
-              if [ -d "$dir" ]; then
-                tar -czf "dist/memoryweb_${VERSION}_${goos}_${goarch}.tar.gz" -C bin "memoryweb_${goos}_${goarch}"
-              fi
-            done
+          for dir in bin/memoryweb_*/; do
+            name=$(basename "$dir")
+            suffix="${name#memoryweb_}"
+            goos="${suffix%%_*}"
+            goarch="${suffix#*_}"
+            if [ "$goos" = "windows" ]; then
+              (cd bin && zip -r "../dist/memoryweb_${VERSION}_${goos}_${goarch}.zip" "$name/")
+            else
+              tar -czf "dist/memoryweb_${VERSION}_${goos}_${goarch}.tar.gz" -C bin "$name"
+            fi
           done
-          if [ -d "bin/memoryweb_windows_amd64" ]; then
-            (cd bin && zip -r "../dist/memoryweb_${VERSION}_windows_amd64.zip" memoryweb_windows_amd64/)
-          fi
-          cd dist && sha256sum * > checksums.txt
+          cd dist && sha256sum ./* > checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
