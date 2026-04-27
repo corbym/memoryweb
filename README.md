@@ -91,10 +91,18 @@ memoryweb purge --domain sedex         # scope to a domain
 memoryweb purge --before 2026-01-01    # only nodes archived before a date
 ```
 
+The `dream` subcommand prints a digest of recent nodes and drift candidates — useful for session orientation and embedded automatically by the save hook at filing time.
+
+```bash
+memoryweb-dream                              # reads ~/.memoryweb.db
+memoryweb-dream --db /path/to/your.db        # explicit DB path
+```
+
 ## Build
 
 ```bash
 go build -o memoryweb .
+go build -o memoryweb-dream ./cmd/dream
 ```
 
 Requires Go 1.22+. Uses `github.com/mattn/go-sqlite3` — CGO must be available.
@@ -140,7 +148,7 @@ Two Claude Code hooks automate filing and pre-compaction capture.
 ### What they do
 
 **`hooks/memoryweb_save_hook.sh`** (Stop hook — fires after every AI response)  
-Counts human messages in the session transcript. Every `SAVE_INTERVAL` messages (default 15) it blocks the response and asks the model to call `add_nodes` and `add_edges` for anything significant before continuing. Uses a re-entry flag so the block fires once and allows immediately after the model files.
+Counts human messages in the session transcript. Every `SAVE_INTERVAL` messages (default 15) it blocks the response and asks the model to call `add_nodes` and `add_edges` for anything significant before continuing. Before blocking, it runs `memoryweb-dream` and embeds the resulting digest — recent nodes and drift candidates — directly in the `stopReason` so the model has live context before it files. If `memoryweb-dream` is not available the hook still blocks but omits the digest. Uses a re-entry flag so the block fires once and allows immediately after the model files.
 
 **`hooks/memoryweb_precompact_hook.sh`** (PreCompact hook — fires before context compaction)  
 Blocks compaction once and asks the model to file everything important that hasn't been filed yet. Allows on re-entry so compaction proceeds after the filing pass.
@@ -193,7 +201,11 @@ Restart Claude Code to activate.
 
 ### Configuration
 
-Set `MEMORYWEB_SAVE_INTERVAL` in the hook's environment to change the trigger frequency (default: 15 human messages).
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MEMORYWEB_SAVE_INTERVAL` | `15` | Human messages between filing prompts. |
+| `MEMORYWEB_DB` | `~/.memoryweb.db` | Path to the SQLite database, passed to `memoryweb-dream` when generating the digest. |
+| `MEMORYWEB_DREAM_BIN` | `memoryweb-dream` | Path to the dream binary. Defaults to whatever is on `$PATH`. If absent, the digest is omitted but the hook still blocks normally. |
 
 ### Token cost
 
