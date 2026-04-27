@@ -980,6 +980,74 @@ func TestFindDrift_TransientNewerThan7Days_NotDriftCandidate(t *testing.T) {
 	}
 }
 
+// ── SuggestEdges ──────────────────────────────────────────────────────────────
+
+func TestSuggestEdges_ReturnsOverlappingTagsNode(t *testing.T) {
+	s := newStore(t)
+	nA, _ := s.AddNode("sprint ticket alpha", "d", "w", "proj", nil, "kotlin testing", false)
+	nB, _ := s.AddNode("sprint ticket beta", "d", "w", "proj", nil, "kotlin approval", false)
+	mustAddNode(t, s, "completely unrelated thing", "proj") // no overlap
+
+	suggestions, err := s.SuggestEdges(nA.ID, 5)
+	if err != nil {
+		t.Fatalf("SuggestEdges: %v", err)
+	}
+	found := false
+	for _, sg := range suggestions {
+		if sg.ID == nB.ID {
+			found = true
+			if !strings.Contains(sg.Reason, "kotlin") {
+				t.Errorf("reason should mention 'kotlin'; got %q", sg.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("node B (%s) should appear in suggestions for overlapping tag 'kotlin'", nB.ID)
+	}
+}
+
+func TestSuggestEdges_ExcludesSelf(t *testing.T) {
+	s := newStore(t)
+	n, _ := s.AddNode("self test node kotlin", "d", "w", "proj", nil, "kotlin", false)
+	mustAddNode(t, s, "kotlin partner node", "proj") // gives a keyword match
+
+	suggestions, err := s.SuggestEdges(n.ID, 5)
+	if err != nil {
+		t.Fatalf("SuggestEdges: %v", err)
+	}
+	for _, sg := range suggestions {
+		if sg.ID == n.ID {
+			t.Error("SuggestEdges should not include the source node itself")
+		}
+	}
+}
+
+func TestSuggestEdges_DomainScoping_DB(t *testing.T) {
+	s := newStore(t)
+	nA, _ := s.AddNode("kotlin build system", "d", "w", "domain-a", nil, "kotlin gradle", false)
+	s.AddNode("kotlin build tool", "d", "w", "domain-b", nil, "kotlin gradle", false) // different domain
+	nC, _ := s.AddNode("kotlin runner", "d", "w", "domain-a", nil, "kotlin testing", false)
+
+	suggestions, err := s.SuggestEdges(nA.ID, 5)
+	if err != nil {
+		t.Fatalf("SuggestEdges: %v", err)
+	}
+	ids := make([]string, len(suggestions))
+	for i, sg := range suggestions {
+		ids[i] = sg.ID
+	}
+	// domain-a node should appear
+	foundC := false
+	for _, id := range ids {
+		if id == nC.ID {
+			foundC = true
+		}
+	}
+	if !foundC {
+		t.Errorf("same-domain node (%s) should appear in suggestions; got %v", nC.ID, ids)
+	}
+}
+
 func TestAddNode_Tags_RoundTrip(t *testing.T) {
 	s := newStore(t)
 	n, err := s.AddNode("my node", "desc", "why", "proj", nil, "alpha beta gamma", false)

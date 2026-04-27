@@ -168,6 +168,7 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		"forget_node", "restore_node", "list_archived",
 		"drift", "summarise_domain",
 		"add_nodes", "add_edges",
+		"suggest_edges",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {
@@ -1707,7 +1708,7 @@ func TestUpdateNode_SearchableAfterTagsUpdate(t *testing.T) {
 	}
 }
 
-// ── add_node tags and related_to ──────────────────────────────────────────────
+// ── add_node tags ─────────────────────────────────────────────────────────────
 
 func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
 	_, h := newEnv(t)
@@ -1742,7 +1743,9 @@ func TestAddNode_WithTags_TagsInResponse(t *testing.T) {
 	}
 }
 
-func TestAddNode_WithRelatedTo_CreatesEdge(t *testing.T) {
+// ── add_node related_to ───────────────────────────────────────────────────────
+
+func TestAddNode_WithRelatedTo_PlainStringCreatesConnectsToEdge(t *testing.T) {
 	_, h := newEnv(t)
 	existingID := addNode(t, h, "Existing Node", "proj", nil)
 
@@ -1750,47 +1753,79 @@ func TestAddNode_WithRelatedTo_CreatesEdge(t *testing.T) {
 		"related_to": []string{existingID},
 	})
 
-	// Get the new node and verify it has an edge to the existing node.
 	tr := call(t, h, "get_node", map[string]any{"id": newID})
 	mustNotError(t, tr)
 
 	var nwe struct {
 		Edges []struct {
-			FromNode string `json:"from_node"`
-			ToNode   string `json:"to_node"`
+			FromNode     string `json:"from_node"`
+			ToNode       string `json:"to_node"`
+			Relationship string `json:"relationship"`
 		} `json:"edges"`
 	}
 	json.Unmarshal([]byte(text(t, tr)), &nwe)
+
 	found := false
 	for _, e := range nwe.Edges {
-		if (e.FromNode == newID && e.ToNode == existingID) ||
-			(e.FromNode == existingID && e.ToNode == newID) {
+		if e.Relationship == "connects_to" &&
+			((e.FromNode == newID && e.ToNode == existingID) ||
+				(e.FromNode == existingID && e.ToNode == newID)) {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected edge between %q and %q, got edges: %+v", newID, existingID, nwe.Edges)
+		t.Errorf("expected connects_to edge between %q and %q, got edges: %+v", newID, existingID, nwe.Edges)
 	}
 }
 
-func TestAddNode_WithRelatedTo_InvalidIDSkipped(t *testing.T) {
+func TestAddNode_WithRelatedTo_ExplicitRelationshipObject(t *testing.T) {
 	_, h := newEnv(t)
-	// Should succeed even with a bogus related_to ID.
-	tr := call(t, h, "add_node", map[string]any{
-		"label":      "Safe Node",
-		"domain":     "proj",
-		"related_to": []string{"ghost-id-xxxx"},
+	existingID := addNode(t, h, "Cause Node", "proj", nil)
+
+	newID := addNode(t, h, "Effect Node", "proj", map[string]any{
+		"related_to": []map[string]any{
+			{"id": existingID, "relationship": "led_to"},
+		},
 	})
+
+	tr := call(t, h, "get_node", map[string]any{"id": newID})
 	mustNotError(t, tr)
+
+	var nwe struct {
+		Edges []struct {
+			FromNode     string `json:"from_node"`
+			ToNode       string `json:"to_node"`
+			Relationship string `json:"relationship"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &nwe); err != nil {
+		t.Fatalf("parse get_node: %v", err)
+	}
+
+	found := false
+	for _, e := range nwe.Edges {
+		if e.Relationship == "led_to" &&
+			((e.FromNode == newID && e.ToNode == existingID) ||
+				(e.FromNode == existingID && e.ToNode == newID)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected led_to edge between %q and %q; got edges: %+v", newID, existingID, nwe.Edges)
+	}
 }
 
-func TestAddNode_WithRelatedTo_MultipleEdges(t *testing.T) {
+func TestAddNode_WithRelatedTo_MixedFormats(t *testing.T) {
 	_, h := newEnv(t)
-	idA := addNode(t, h, "Node A", "proj", nil)
-	idB := addNode(t, h, "Node B", "proj", nil)
+	idA := addNode(t, h, "Node A mixed", "proj", nil)
+	idB := addNode(t, h, "Node B mixed", "proj", nil)
 
-	idC := addNode(t, h, "Node C", "proj", map[string]any{
-		"related_to": []string{idA, idB},
+	// idA via plain string → connects_to; idB via object → depends_on
+	idC := addNode(t, h, "Node C mixed", "proj", map[string]any{
+		"related_to": []any{
+			idA,
+			map[string]any{"id": idB, "relationship": "depends_on"},
+		},
 	})
 
 	tr := call(t, h, "get_node", map[string]any{"id": idC})
@@ -1798,13 +1833,53 @@ func TestAddNode_WithRelatedTo_MultipleEdges(t *testing.T) {
 
 	var nwe struct {
 		Edges []struct {
-			FromNode string `json:"from_node"`
-			ToNode   string `json:"to_node"`
+			FromNode     string `json:"from_node"`
+			ToNode       string `json:"to_node"`
+			Relationship string `json:"relationship"`
 		} `json:"edges"`
 	}
 	json.Unmarshal([]byte(text(t, tr)), &nwe)
-	if len(nwe.Edges) < 2 {
-		t.Errorf("expected at least 2 edges, got %d: %+v", len(nwe.Edges), nwe.Edges)
+
+	relByTarget := map[string]string{}
+	for _, e := range nwe.Edges {
+		if e.FromNode == idC {
+			relByTarget[e.ToNode] = e.Relationship
+		} else if e.ToNode == idC {
+			relByTarget[e.FromNode] = e.Relationship
+		}
+	}
+
+	if relByTarget[idA] != "connects_to" {
+		t.Errorf("plain string entry: expected connects_to to idA, got %q", relByTarget[idA])
+	}
+	if relByTarget[idB] != "depends_on" {
+		t.Errorf("object entry: expected depends_on to idB, got %q", relByTarget[idB])
+	}
+}
+
+func TestAddNode_WithRelatedTo_UnknownIDSilentlySkipped(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "add_node", map[string]any{
+		"label":      "Safe Node",
+		"domain":     "proj",
+		"related_to": []string{"ghost-id-xxxx"},
+	})
+	mustNotError(t, tr)
+
+	var n struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &n)
+
+	gettr := call(t, h, "get_node", map[string]any{"id": n.ID})
+	mustNotError(t, gettr)
+
+	var nwe struct {
+		Edges []struct{} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, gettr)), &nwe)
+	if len(nwe.Edges) != 0 {
+		t.Errorf("expected no edges for unknown ID, got %d", len(nwe.Edges))
 	}
 }
 
@@ -1895,92 +1970,6 @@ func TestAuditLog_RecordsUpdateNode(t *testing.T) {
 	// And should include the old value so the trail is useful.
 	if !strings.Contains(reason, "original description") {
 		t.Errorf("reason should include old description value; got %q", reason)
-	}
-}
-
-// ── add_node related_to with explicit relationship ────────────────────────────
-
-// TestAddNode_WithRelatedTo_ExplicitRelationship: passing an object item in
-// related_to with an explicit relationship type must create an edge with that
-// type rather than the default connects_to.
-func TestAddNode_WithRelatedTo_ExplicitRelationship(t *testing.T) {
-	_, h := newEnv(t)
-	existingID := addNode(t, h, "Cause Node", "proj", nil)
-
-	newID := addNode(t, h, "Effect Node", "proj", map[string]any{
-		"related_to": []map[string]any{
-			{"id": existingID, "relationship": "led_to"},
-		},
-	})
-
-	tr := call(t, h, "get_node", map[string]any{"id": newID})
-	mustNotError(t, tr)
-
-	var nwe struct {
-		Edges []struct {
-			FromNode     string `json:"from_node"`
-			ToNode       string `json:"to_node"`
-			Relationship string `json:"relationship"`
-		} `json:"edges"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &nwe); err != nil {
-		t.Fatalf("parse get_node: %v", err)
-	}
-
-	found := false
-	for _, e := range nwe.Edges {
-		if e.Relationship == "led_to" &&
-			((e.FromNode == newID && e.ToNode == existingID) ||
-				(e.FromNode == existingID && e.ToNode == newID)) {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected led_to edge between %q and %q; got edges: %+v", newID, existingID, nwe.Edges)
-	}
-}
-
-// TestAddNode_WithRelatedTo_MixedFormats: related_to may mix plain string IDs
-// (default connects_to) with object entries (explicit relationship).
-func TestAddNode_WithRelatedTo_MixedFormats(t *testing.T) {
-	_, h := newEnv(t)
-	idA := addNode(t, h, "Node A for mixed", "proj", nil)
-	idB := addNode(t, h, "Node B for mixed", "proj", nil)
-
-	// idA via plain string → connects_to; idB via object → depends_on
-	idC := addNode(t, h, "Node C mixed", "proj", map[string]any{
-		"related_to": []any{
-			idA, // plain string
-			map[string]any{"id": idB, "relationship": "depends_on"},
-		},
-	})
-
-	tr := call(t, h, "get_node", map[string]any{"id": idC})
-	mustNotError(t, tr)
-
-	var nwe struct {
-		Edges []struct {
-			FromNode     string `json:"from_node"`
-			ToNode       string `json:"to_node"`
-			Relationship string `json:"relationship"`
-		} `json:"edges"`
-	}
-	json.Unmarshal([]byte(text(t, tr)), &nwe)
-
-	var relByTarget = map[string]string{}
-	for _, e := range nwe.Edges {
-		if e.FromNode == idC {
-			relByTarget[e.ToNode] = e.Relationship
-		} else if e.ToNode == idC {
-			relByTarget[e.FromNode] = e.Relationship
-		}
-	}
-
-	if relByTarget[idA] != "connects_to" {
-		t.Errorf("plain string entry: expected connects_to to idA, got %q", relByTarget[idA])
-	}
-	if relByTarget[idB] != "depends_on" {
-		t.Errorf("object entry: expected depends_on to idB, got %q", relByTarget[idB])
 	}
 }
 
@@ -2170,6 +2159,112 @@ func TestDrift_TransientNewerThan7Days_NotSurfaced(t *testing.T) {
 
 	if strings.Contains(body, id) {
 		t.Errorf("recent transient node (%s) should NOT appear in drift; got:\n%s", id, body)
+	}
+}
+
+// ── suggest_edges ─────────────────────────────────────────────────────────────
+
+// TestSuggestEdges_OverlappingTags: two nodes sharing a tag should produce a
+// suggestion mentioning the shared tag.
+func TestSuggestEdges_OverlappingTags(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Sprint ticket ABC", "proj", map[string]any{
+		"tags": "kotlin testing approval",
+	})
+	addNode(t, h, "Sprint ticket DEF", "proj", map[string]any{
+		"tags": "kotlin gradle build",
+	})
+
+	tr := call(t, h, "suggest_edges", map[string]any{"id": idA})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(strings.ToLower(body), "kotlin") {
+		t.Errorf("expected suggestion mentioning shared tag 'kotlin'; got:\n%s", body)
+	}
+}
+
+// TestSuggestEdges_SimilarLabelWords: two nodes sharing a significant word in
+// their labels should produce a suggestion mentioning that word.
+func TestSuggestEdges_SimilarLabelWords(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "boot crash investigation", "proj", nil)
+	idB := addNode(t, h, "boot sequence timing", "proj", nil) // shares "boot"
+	addNode(t, h, "completely unrelated widget", "proj", nil)
+
+	tr := call(t, h, "suggest_edges", map[string]any{"id": idA})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, idB) {
+		t.Errorf("expected node B (%s) in suggestion results; got:\n%s", idB, body)
+	}
+}
+
+// TestSuggestEdges_DoesNotReturnItself: the source node must not appear in its
+// own suggestion list.
+func TestSuggestEdges_DoesNotReturnItself(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "source node with uniquetag999", "proj", map[string]any{
+		"tags": "uniquetag999",
+	})
+	addNode(t, h, "partner node", "proj", map[string]any{
+		"tags": "uniquetag999",
+	})
+
+	tr := call(t, h, "suggest_edges", map[string]any{"id": id})
+	mustNotError(t, tr)
+
+	var suggestions []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &suggestions); err != nil {
+		t.Fatalf("parse suggest_edges response: %v", err)
+	}
+	for _, s := range suggestions {
+		if s.ID == id {
+			t.Error("suggest_edges should not return the source node itself")
+		}
+	}
+}
+
+// TestSuggestEdges_DomainScoping: only nodes in the same domain as the source
+// node should be returned.
+func TestSuggestEdges_DomainScoping(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "kotlin build system", "domain-a", map[string]any{
+		"tags": "kotlin gradle",
+	})
+	// Same tags, different domain — must NOT appear.
+	addNode(t, h, "kotlin build tool", "domain-b", map[string]any{
+		"tags": "kotlin gradle",
+	})
+	// Same domain — SHOULD appear.
+	idC := addNode(t, h, "kotlin test runner", "domain-a", map[string]any{
+		"tags": "kotlin testing",
+	})
+
+	tr := call(t, h, "suggest_edges", map[string]any{"id": idA})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, idC) {
+		t.Errorf("same-domain node (%s) should appear in suggestions; got:\n%s", idC, body)
+	}
+}
+
+// TestSuggestEdges_NoResults_ReturnsEmptyNotError: when no similar nodes
+// exist the tool should return an empty list, not an error.
+func TestSuggestEdges_NoResults_ReturnsEmptyNotError(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "lone node in empty domain", "lone-domain-xyz", nil)
+
+	tr := call(t, h, "suggest_edges", map[string]any{"id": id})
+	mustNotError(t, tr)
+	// Must parse as a JSON array (possibly empty).
+	var suggestions []interface{}
+	if err := json.Unmarshal([]byte(text(t, tr)), &suggestions); err != nil {
+		t.Fatalf("expect JSON array for zero results, got: %s", text(t, tr))
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -1244,4 +1245,146 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 		n.ArchivedAt = &aa.Time
 	}
 	return &n, nil
+}
+
+// ── edge suggestions ──────────────────────────────────────────────────────────
+
+// EdgeSuggestion is a candidate connection returned by SuggestEdges.
+type EdgeSuggestion struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Reason string `json:"reason"`
+}
+
+// SuggestEdges returns up to limit candidate connections for the given node:
+// live nodes in the same domain that share tags or significant label words.
+// It never creates edges — the caller must use AddEdge to act on suggestions.
+func (s *Store) SuggestEdges(id string, limit int) ([]EdgeSuggestion, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+
+	// Fetch the target node.
+	var targetLabel, targetDomain, targetTags string
+	if err := s.db.QueryRow(
+		`SELECT label, domain, tags FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
+	).Scan(&targetLabel, &targetDomain, &targetTags); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("node not found: %s", id)
+		}
+		return nil, err
+	}
+
+	// Extract meaningful keywords from label + tags (lowercased, deduplicated,
+	// stop-words and very short words removed).
+	keywords := suggestKeywords(targetLabel, targetTags)
+	if len(keywords) == 0 {
+		return []EdgeSuggestion{}, nil
+	}
+
+	// Fetch all other live nodes in the same domain (cap at 200 to bound work).
+	rows, err := s.db.Query(
+		`SELECT id, label, tags FROM nodes
+		 WHERE id != ? AND domain = ? AND archived_at IS NULL
+		 ORDER BY updated_at DESC LIMIT 200`,
+		id, targetDomain,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type scored struct {
+		id     string
+		label  string
+		score  int
+		reason string
+	}
+
+	var candidates []scored
+	for rows.Next() {
+		var cid, clabel, ctags string
+		rows.Scan(&cid, &clabel, &ctags)
+
+		cLabelLower := strings.ToLower(clabel)
+		cTagsLower := strings.ToLower(ctags)
+
+		var matchedTags, matchedLabels []string
+		seen := map[string]bool{}
+		for _, kw := range keywords {
+			if seen[kw] {
+				continue
+			}
+			if strings.Contains(cTagsLower, kw) {
+				matchedTags = append(matchedTags, kw)
+				seen[kw] = true
+			} else if strings.Contains(cLabelLower, kw) {
+				matchedLabels = append(matchedLabels, kw)
+				seen[kw] = true
+			}
+		}
+
+		score := len(matchedTags)*2 + len(matchedLabels)
+		if score == 0 {
+			continue
+		}
+
+		var reasons []string
+		if len(matchedTags) > 0 {
+			reasons = append(reasons, "shares tags: "+strings.Join(matchedTags, " "))
+		}
+		if len(matchedLabels) > 0 {
+			reasons = append(reasons, "similar label words: "+strings.Join(matchedLabels, " "))
+		}
+		candidates = append(candidates, scored{
+			id:     cid,
+			label:  clabel,
+			score:  score,
+			reason: strings.Join(reasons, "; "),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Sort by score descending.
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+
+	result := make([]EdgeSuggestion, len(candidates))
+	for i, c := range candidates {
+		result[i] = EdgeSuggestion{ID: c.id, Label: c.label, Reason: c.reason}
+	}
+	return result, nil
+}
+
+// suggestKeywords extracts lowercase, deduplicated, meaningful words from label
+// and tags, skipping common stop words and words shorter than 3 characters.
+func suggestKeywords(label, tags string) []string {
+	stopWords := map[string]bool{
+		"a": true, "an": true, "the": true, "and": true, "or": true,
+		"of": true, "in": true, "to": true, "is": true, "it": true,
+		"be": true, "for": true, "on": true, "at": true, "by": true,
+		"we": true, "as": true, "so": true, "do": true, "not": true,
+		"are": true, "was": true, "has": true, "had": true, "its": true,
+	}
+	seen := map[string]bool{}
+	var keywords []string
+	addWords := func(text string) {
+		for _, w := range strings.Fields(strings.ToLower(text)) {
+			w = strings.Trim(w, ".,!?;:-\"'()")
+			if len(w) < 3 || stopWords[w] || seen[w] {
+				continue
+			}
+			seen[w] = true
+			keywords = append(keywords, w)
+		}
+	}
+	addWords(tags) // tags first — higher signal
+	addWords(label)
+	return keywords
 }

@@ -40,9 +40,10 @@ type InputSchema struct {
 }
 
 type Property struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
-	Enum        []string `json:"enum,omitempty"`
+	Type        string          `json:"type"`
+	Description string          `json:"description"`
+	Enum        []string        `json:"enum,omitempty"`
+	Items       json.RawMessage `json:"items,omitempty"`
 }
 
 type CallToolRequest struct {
@@ -74,8 +75,12 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general')"},
 					"occurred_at": {Type: "string", Description: "Optional ISO8601 date or datetime when this event or decision actually happened (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Distinct from when it was filed."},
 					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
-					"related_to":  {Type: "array", Description: "Optional list of nodes to auto-connect to this node at creation time. Each item can be a plain node ID string (creates a connects_to edge) or an object {\"id\": \"...\", \"relationship\": \"...\"} to specify an explicit relationship type. Invalid or unknown IDs are silently skipped."},
-					"transient":   {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient nodes older than 7 days are surfaced by drift as archiving candidates."},
+					"related_to": {
+						Type:        "array",
+						Description: "Optional list of nodes to auto-connect at creation time. Each item is either a plain node ID string (creates a connects_to edge) or an object with id and relationship fields. Invalid or unknown IDs are silently skipped.",
+						Items:       json.RawMessage(`{"oneOf":[{"type":"string"},{"type":"object","properties":{"id":{"type":"string"},"relationship":{"type":"string"}},"required":["id"],"additionalProperties":false}]}`),
+					},
+					"transient": {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient nodes older than 7 days are surfaced by drift as archiving candidates."},
 				},
 				Required: []string{"label", "domain"},
 			},
@@ -382,20 +387,14 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	// Auto-create edges for each related_to entry (best-effort; skip invalid IDs).
-	// Each element may be either:
-	//   - a plain string ID (defaults to "connects_to")
-	//   - an object {"id": "...", "relationship": "..."} (relationship optional)
 	for _, raw := range a.RelatedTo {
 		relID := ""
 		relationship := "connects_to"
 
-		// Try parsing as a plain string first.
 		var strID string
 		if err := json.Unmarshal(raw, &strID); err == nil {
 			relID = strID
 		} else {
-			// Try parsing as an object with id + optional relationship.
 			var entry struct {
 				ID           string `json:"id"`
 				Relationship string `json:"relationship"`
