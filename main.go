@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 
@@ -38,11 +40,12 @@ type Notification struct {
 }
 
 func main() {
-	dbPath := os.Getenv("MEMORYWEB_DB")
-	if dbPath == "" {
-		home, _ := os.UserHomeDir()
-		dbPath = home + "/.memoryweb.db"
+	if len(os.Args) > 1 && os.Args[1] == "dream" {
+		dreamCmd()
+		return
 	}
+
+	dbPath := resolveDBPath()
 
 	store, err := db.New(dbPath)
 	if err != nil {
@@ -82,6 +85,72 @@ func main() {
 		}
 		encoder.Encode(resp)
 	}
+}
+
+func resolveDBPath() string {
+	if p := os.Getenv("MEMORYWEB_DB"); p != "" {
+		return p
+	}
+	home, _ := os.UserHomeDir()
+	return home + "/.memoryweb.db"
+}
+
+// dreamCmd implements the "memoryweb dream" subcommand.
+func dreamCmd() {
+	flags := flag.NewFlagSet("dream", flag.ExitOnError)
+	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	store, err := db.New(*dbFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	if err := runDream(store, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runDream prints a digest of recent nodes and drift candidates to out.
+func runDream(store *db.Store, out io.Writer) error {
+	fmt.Fprintln(out, "== memoryweb dream ==")
+	fmt.Fprintln(out)
+
+	// ── recent nodes ──────────────────────────────────────────────────────────
+	recent, err := store.RecentChanges("", 10)
+	if err != nil {
+		return fmt.Errorf("recent changes: %w", err)
+	}
+
+	fmt.Fprintf(out, "Recent nodes (%d):\n", len(recent))
+	for _, n := range recent {
+		fmt.Fprintf(out, "  [%s] %s\n", n.Domain, n.Label)
+	}
+	if len(recent) == 0 {
+		fmt.Fprintln(out, "  (none)")
+	}
+	fmt.Fprintln(out)
+
+	// ── drift candidates ──────────────────────────────────────────────────────
+	drift, err := store.FindDrift("", 5)
+	if err != nil {
+		return fmt.Errorf("find drift: %w", err)
+	}
+
+	fmt.Fprintf(out, "Drift candidates (%d):\n", len(drift))
+	for _, d := range drift {
+		fmt.Fprintf(out, "  %s: %s\n", d.Node.Label, d.Reason)
+	}
+	if len(drift) == 0 {
+		fmt.Fprintln(out, "  (none)")
+	}
+	fmt.Fprintln(out)
+
+	fmt.Fprintln(out, "== end ==")
+	return nil
 }
 
 func dispatch(req Request, h *tools.Handler) (interface{}, *RPCError) {
