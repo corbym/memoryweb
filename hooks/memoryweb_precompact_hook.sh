@@ -23,7 +23,7 @@ printf '%s precompact_hook session=%s\n' \
   >> "${STATE_DIR}/hook.log"
 
 if [ -z "${session_id}" ]; then
-  printf '{"decision":"allow"}\n'
+  printf '{"continue":true}\n'
   exit 0
 fi
 
@@ -32,11 +32,11 @@ compacting_flag="${STATE_DIR}/${session_id}.compacting"
 # Re-entry: model has just filed. Allow compaction to proceed.
 if [ -f "${compacting_flag}" ]; then
   rm -f "${compacting_flag}"
-  printf '{"decision":"allow"}\n'
+  printf '{"continue":true}\n'
   exit 0
 fi
 
 # First run: block and request a thorough filing pass.
 touch "${compacting_flag}"
-printf '{"decision":"block","reason":"Context is about to compact. This is your last chance to file anything important. Call add_nodes for every significant decision, finding, or open question from this session that is not already in memoryweb. Add edges. Be thorough \xe2\x80\x94 anything not filed now may be lost. When done, continue."}\n'
+printf '{"continue":false,"stopReason":"Context is about to compact. This is your last chance to file anything important. Call add_nodes for every significant decision, finding, or open question from this session that is not already in memoryweb. Add edges. Be thorough \xe2\x80\x94 anything not filed now may be lost. When done, continue."}\n'
 

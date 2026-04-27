@@ -25,7 +25,7 @@ printf '%s save_hook session=%s\n' \
   >> "${STATE_DIR}/hook.log"
 
 if [ -z "${session_id}" ]; then
-  printf '{"decision":"allow"}\n'
+  printf '{"continue":true}\n'
   exit 0
 fi
 
@@ -42,14 +42,15 @@ fi
 current_count=0
 transcript=$(find "${PROJECTS_DIR}" -name "${session_id}.jsonl" 2>/dev/null | head -1)
 if [ -n "${transcript}" ] && [ -f "${transcript}" ]; then
-  current_count=$(grep -c '"role"[[:space:]]*:[[:space:]]*"human"' "${transcript}" 2>/dev/null || echo 0)
+  current_count=$(grep -c '"role"[[:space:]]*:[[:space:]]*"human"' "${transcript}" 2>/dev/null || true)
+  current_count=${current_count:-0}
 fi
 
 delta=$((current_count - last_saved))
 
 # Below threshold — allow without filing.
 if [ "${delta}" -lt "${SAVE_INTERVAL}" ]; then
-  printf '{"decision":"allow"}\n'
+  printf '{"continue":true}\n'
   exit 0
 fi
 
@@ -57,11 +58,11 @@ fi
 if [ -f "${saving_flag}" ]; then
   rm -f "${saving_flag}"
   printf '%d' "${current_count}" > "${count_file}"
-  printf '{"decision":"allow"}\n'
+  printf '{"continue":true}\n'
   exit 0
 fi
 
 # Threshold reached: block and request filing.
 touch "${saving_flag}"
-printf '{"decision":"block","reason":"File significant findings from this session to memoryweb now. Call add_nodes with any decisions made, bugs found or fixed, design choices, or open questions. Add edges connecting related nodes. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
+printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now. Call add_nodes with any decisions made, bugs found or fixed, design choices, or open questions. Add edges connecting related nodes. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
 
