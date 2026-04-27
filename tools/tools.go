@@ -54,7 +54,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "add_node",
-			Description: "File a concept, decision, or finding. Search for a similar entry first and link to it rather than creating a duplicate.",
+			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer add_nodes for batches — and always search first to avoid creating a duplicate.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -69,7 +69,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "add_edge",
-			Description: "Connect two entries with a typed, narrative relationship.",
+			Description: "Connect two entries with a typed, narrative relationship. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of — and both node IDs must already exist before calling this.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -156,7 +156,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "list_aliases",
-			Description: "List all registered domain aliases and their canonical names.",
+			Description: "List all registered domain aliases and their canonical names. Reach for this during orientation or when debugging why a domain-scoped search is returning unexpected results.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]Property{},
@@ -164,7 +164,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "resolve_domain",
-			Description: "Return the canonical domain a name resolves to.",
+			Description: "Return the canonical domain a name resolves to. Use this when you have an alias and need its canonical domain before scoping a search or filing an entry.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -187,7 +187,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "restore_node",
-			Description: "Restore an archived entry so it surfaces in search again.",
+			Description: "Restore an archived entry so it surfaces in search again. This reverses forget_node; obtain the node_id from list_archived.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -198,7 +198,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "list_archived",
-			Description: "List all archived entries, optionally scoped to a domain.",
+			Description: "List all archived entries, optionally scoped to a domain. This is the right tool when search returns nothing but you expect the content to exist.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -230,7 +230,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "add_nodes",
-			Description: "File multiple entries in a single transaction.",
+			Description: "File multiple entries in a single transaction. Prefer this over multiple add_node calls when filing several findings at once.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
