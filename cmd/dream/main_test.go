@@ -170,7 +170,8 @@ func TestDreamReportIncludesHeader(t *testing.T) {
 	}
 }
 
-// TestDreamReportShowsNodeCount: the output includes the number of live nodes.
+// TestDreamReportShowsNodeCount: the output includes the count of recent nodes
+// in the expected "Recent nodes (N):" header.
 func TestDreamReportShowsNodeCount(t *testing.T) {
 	dbPath, store := newTestDB(t)
 	mustAddNode(t, store, "Node One", "test")
@@ -182,7 +183,7 @@ func TestDreamReportShowsNodeCount(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("dream exited %d; output:\n%s", code, out)
 	}
-	if !strings.Contains(out, "3") {
-		t.Errorf("output should mention node count (3); got:\n%s", out)
+	if !strings.Contains(out, "Recent nodes (3):") {
+		t.Errorf("output should contain 'Recent nodes (3):'; got:\n%s", out)
 	}
 }
