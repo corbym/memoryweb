@@ -1,0 +1,35 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server-config.json",
+  "name": "memoryweb",
+  "displayName": "memoryweb",
+  "description": "A decision-log memory tool for AI agents. File what was decided and why, not just what happened. Stores nodes and edges in a local SQLite database with semantic search via Ollama.",
+  "license": "MIT",
+  "homepage": "https://github.com/corbym/memoryweb",
+  "repository": "https://github.com/corbym/memoryweb",
+  "tools": [
+    "add_node",
+    "add_nodes",
+    "add_edge",
+    "add_edges",
+    "get_node",
+    "search_nodes",
+    "recent_changes",
+    "timeline",
+    "find_connections",
+    "forget_node",
+    "restore_node",
+    "list_archived",
+    "drift",
+    "summarise_domain",
+    "add_alias",
+    "list_aliases",
+    "resolve_domain"
+  ],
+  "buildSteps": [
+    "apt-get update && apt-get install -y gcc libc-dev",
+    "curl -OL https://go.dev/dl/go1.23.0.linux-amd64.tar.gz",
+    "tar -xzf go1.23.0.linux-amd64.tar.gz",
+    "CGO_ENABLED=1 ./go/bin/go build -o memoryweb ."
+  ],
+  "command": "./memoryweb"
+}
