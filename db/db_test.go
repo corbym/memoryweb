@@ -27,7 +27,7 @@ func newStore(t *testing.T) *db.Store {
 
 func mustAddNode(t *testing.T, s *db.Store, label, domain string) *db.Node {
 	t.Helper()
-	n, err := s.AddNode(label, "desc", "why", domain, nil, "")
+	n, err := s.AddNode(label, "desc", "why", domain, nil, "", false)
 	if err != nil {
 		t.Fatalf("AddNode(%q): %v", label, err)
 	}
@@ -40,7 +40,7 @@ func ptr(t time.Time) *time.Time { return &t }
 
 func TestAddNode_IDContainsSlug(t *testing.T) {
 	s := newStore(t)
-	n, err := s.AddNode("RST Boot Crash", "desc", "why", "deep-game", nil, "")
+	n, err := s.AddNode("RST Boot Crash", "desc", "why", "deep-game", nil, "", false)
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestAddNode_IDContainsSlug(t *testing.T) {
 func TestAddNode_WithOccurredAt(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
-	n, err := s.AddNode("dated node", "d", "w", "proj", &ts, "")
+	n, err := s.AddNode("dated node", "d", "w", "proj", &ts, "", false)
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -261,8 +261,8 @@ func TestTimeline_AscendingOrder(t *testing.T) {
 	early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	late := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	n1, _ := s.AddNode("Early", "d", "w", "proj", ptr(early), "")
-	n2, _ := s.AddNode("Late", "d", "w", "proj", ptr(late), "")
+	n1, _ := s.AddNode("Early", "d", "w", "proj", ptr(early), "", false)
+	n2, _ := s.AddNode("Late", "d", "w", "proj", ptr(late), "", false)
 
 	nodes, err := s.Timeline("proj", nil, nil, 10)
 	if err != nil {
@@ -280,7 +280,7 @@ func TestTimeline_ExcludesNullOccurredAt(t *testing.T) {
 	s := newStore(t)
 	noDate := mustAddNode(t, s, "no date", "proj")
 	ts := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "")
+	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", false)
 
 	nodes, err := s.Timeline("proj", nil, nil, 10)
 	if err != nil {
@@ -305,7 +305,7 @@ func TestTimeline_ExcludesNullOccurredAt(t *testing.T) {
 func TestTimeline_ExcludesArchived(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
-	n, _ := s.AddNode("archived event", "d", "w", "proj", ptr(ts), "")
+	n, _ := s.AddNode("archived event", "d", "w", "proj", ptr(ts), "", false)
 	s.ArchiveNode(n.ID, "reason")
 
 	nodes, err := s.Timeline("proj", nil, nil, 10)
@@ -324,9 +324,9 @@ func TestTimeline_DateRangeFilter(t *testing.T) {
 	jan := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	mar := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
 	jun := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
-	s.AddNode("Jan", "d", "w", "proj", ptr(jan), "")
-	nMar, _ := s.AddNode("Mar", "d", "w", "proj", ptr(mar), "")
-	s.AddNode("Jun", "d", "w", "proj", ptr(jun), "")
+	s.AddNode("Jan", "d", "w", "proj", ptr(jan), "", false)
+	nMar, _ := s.AddNode("Mar", "d", "w", "proj", ptr(mar), "", false)
+	s.AddNode("Jun", "d", "w", "proj", ptr(jun), "", false)
 
 	from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
@@ -673,7 +673,7 @@ func TestUpdateNode_UpdatesTags(t *testing.T) {
 
 func TestUpdateNode_OnlyUpdatesProvidedFields(t *testing.T) {
 	s := newStore(t)
-	n, _ := s.AddNode("stable label", "original desc", "original why", "proj", nil, "original tags")
+	n, _ := s.AddNode("stable label", "original desc", "original why", "proj", nil, "original tags", false)
 
 	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil)
 	if err != nil {
@@ -735,7 +735,7 @@ func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
 func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
 	s := newStore(t)
 	// The label won't match; a tag synonym will.
-	n, err := s.AddNode("Parameterised test approval files need withNameSuffix", "some description", "why", "proj", nil, "testing approval parameterised withNamesuffix")
+	n, err := s.AddNode("Parameterised test approval files need withNameSuffix", "some description", "why", "proj", nil, "testing approval parameterised withNamesuffix", false)
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -811,6 +811,7 @@ func TestSearchNodes_MultiWordFallback_WordsSpreadAcrossFields(t *testing.T) {
 		"proj",
 		nil,
 		"parameterised kotlin", // tags: contains "parameterised"
+		false,
 	)
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
@@ -863,6 +864,7 @@ func TestSearchNodes_MultiWordFallback_NoDomain(t *testing.T) {
 		"proj-a",
 		nil,
 		"parameterised",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
@@ -884,9 +886,103 @@ func TestSearchNodes_MultiWordFallback_NoDomain(t *testing.T) {
 	}
 }
 
+// ── Transient field ───────────────────────────────────────────────────────────
+
+func TestAddNode_Transient_Persists(t *testing.T) {
+	s := newStore(t)
+	n, err := s.AddNode("sprint ticket XYZ", "d", "w", "proj", nil, "", true)
+	if err != nil {
+		t.Fatalf("AddNode transient: %v", err)
+	}
+	if !n.Transient {
+		t.Error("Transient should be true on returned node")
+	}
+
+	got, err := s.GetNode(n.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if !got.Node.Transient {
+		t.Error("Transient should be true when fetched via GetNode")
+	}
+}
+
+func TestAddNode_Transient_DefaultsFalse(t *testing.T) {
+	s := newStore(t)
+	n, err := s.AddNode("regular node", "d", "w", "proj", nil, "", false)
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if n.Transient {
+		t.Error("Transient should default to false")
+	}
+}
+
+func TestFindDrift_TransientOlderThan7Days_IsDriftCandidate(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+
+	n, err := s.AddNode("sprint ticket stale", "d", "w", "transient-drift", nil, "", true)
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	// Backdate created_at to 8 days ago via raw SQL.
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+	stale := time.Now().UTC().AddDate(0, 0, -8).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE id = ?`, stale, n.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	candidates, err := s.FindDrift("transient-drift", 10)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, c := range candidates {
+		if c.Node.ID == n.ID {
+			found = true
+			if !strings.Contains(c.Reason, "transient") {
+				t.Errorf("reason should mention 'transient'; got %q", c.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("stale transient node (%s) should appear in drift candidates", n.ID)
+	}
+}
+
+func TestFindDrift_TransientNewerThan7Days_NotDriftCandidate(t *testing.T) {
+	s := newStore(t)
+	n, err := s.AddNode("recent sprint ticket", "d", "w", "transient-new", nil, "", true)
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	candidates, err := s.FindDrift("transient-new", 10)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, c := range candidates {
+		if c.Node.ID == n.ID {
+			t.Errorf("recent transient node should NOT appear in drift; got reason: %q", c.Reason)
+		}
+	}
+}
+
 func TestAddNode_Tags_RoundTrip(t *testing.T) {
 	s := newStore(t)
-	n, err := s.AddNode("my node", "desc", "why", "proj", nil, "alpha beta gamma")
+	n, err := s.AddNode("my node", "desc", "why", "proj", nil, "alpha beta gamma", false)
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}

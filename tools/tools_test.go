@@ -2105,5 +2105,73 @@ func TestSummariseDomain_IncludesNodeIDs(t *testing.T) {
 	}
 }
 
+// ── add_node transient + drift of transient ───────────────────────────────────
+
+func TestAddNode_Transient_PersistedAndReturned(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "add_node", map[string]any{
+		"label":     "Sprint ticket ABC",
+		"domain":    "proj",
+		"transient": true,
+	})
+	mustNotError(t, tr)
+
+	var n struct {
+		Transient bool `json:"transient"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &n); err != nil {
+		t.Fatalf("parse add_node response: %v", err)
+	}
+	if !n.Transient {
+		t.Error("transient=true should be present in add_node response")
+	}
+}
+
+func TestDrift_TransientOlderThan7Days_Surfaced(t *testing.T) {
+	dbPath, _, h := newEnvWithPath(t)
+
+	id := addNode(t, h, "Sprint ticket old", "transient-test", map[string]any{
+		"transient": true,
+	})
+
+	// Backdate created_at to 8 days ago.
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	stale := time.Now().UTC().AddDate(0, 0, -8).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE id = ?`, stale, id); err != nil {
+		rawDB.Close()
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	tr := call(t, h, "drift", map[string]any{"domain": "transient-test"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, id) {
+		t.Errorf("stale transient node (%s) should appear in drift; got:\n%s", id, body)
+	}
+	if !strings.Contains(body, "transient") {
+		t.Errorf("drift reason should mention 'transient'; got:\n%s", body)
+	}
+}
+
+func TestDrift_TransientNewerThan7Days_NotSurfaced(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "Sprint ticket fresh", "transient-fresh", map[string]any{
+		"transient": true,
+	})
+
+	tr := call(t, h, "drift", map[string]any{"domain": "transient-fresh"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if strings.Contains(body, id) {
+		t.Errorf("recent transient node (%s) should NOT appear in drift; got:\n%s", id, body)
+	}
+}
+
 // suppress unused import warning in case time is imported only via helpers
 var _ = time.Now

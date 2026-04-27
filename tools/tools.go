@@ -64,7 +64,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "add_node",
-			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer add_nodes for batches — and always search first to avoid creating a duplicate. Before adding a node, consider whether a similar node already exists. If so, suggest linking to it with add_edge rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates.",
+			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer add_nodes for batches — and always search first to avoid creating a duplicate. Before adding a node, consider whether a similar node already exists. If so, suggest linking to it with add_edge rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates. Use transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -75,6 +75,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"occurred_at": {Type: "string", Description: "Optional ISO8601 date or datetime when this event or decision actually happened (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Distinct from when it was filed."},
 					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
 					"related_to":  {Type: "array", Description: "Optional list of nodes to auto-connect to this node at creation time. Each item can be a plain node ID string (creates a connects_to edge) or an object {\"id\": \"...\", \"relationship\": \"...\"} to specify an explicit relationship type. Invalid or unknown IDs are silently skipped."},
+					"transient":   {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient nodes older than 7 days are surfaced by drift as archiving candidates."},
 				},
 				Required: []string{"label", "domain"},
 			},
@@ -360,6 +361,7 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		OccurredAt  string            `json:"occurred_at"`
 		Tags        string            `json:"tags"`
 		RelatedTo   []json.RawMessage `json:"related_to"`
+		Transient   bool              `json:"transient"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -375,7 +377,7 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		}
 		occurredAt = &t
 	}
-	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags)
+	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags, a.Transient)
 	if err != nil {
 		return nil, err
 	}
@@ -784,6 +786,7 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 			Tags        string `json:"tags"`
 			Domain      string `json:"domain"`
 			OccurredAt  string `json:"occurred_at"`
+			Transient   bool   `json:"transient"`
 		} `json:"nodes"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
@@ -809,6 +812,7 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 			Tags:        n.Tags,
 			Domain:      n.Domain,
 			OccurredAt:  occurredAt,
+			Transient:   n.Transient,
 		}
 	}
 	nodes, err := h.store.AddNodesBatch(inputs)
