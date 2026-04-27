@@ -2,13 +2,9 @@ version: 2
 
 project_name: memoryweb
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
-  - env:
-      - CGO_ENABLED=1
+  - id: memoryweb
+    builder: prebuilt
     goos:
       - linux
       - darwin
@@ -19,8 +15,8 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
-    ldflags:
-      - -s -w
+    prebuilt:
+      path: bin/memoryweb_{{ .Os }}_{{ .Arch }}/memoryweb{{ .Ext }}
 
 archives:
   - formats:
