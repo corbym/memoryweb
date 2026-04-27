@@ -209,6 +209,41 @@ Restart Claude Code to activate.
 
 Unlike passive hooks, these cost tokens because the model must actually produce quality nodes. Expect one short filing exchange per trigger — typically under 1,000 tokens for a focused session.
 
+### GitHub Copilot (VS Code)
+
+GitHub Copilot in VS Code supports the same `Stop` and `PreCompact` hook events in the same JSON format. VS Code loads hooks from `.github/hooks/*.json` in your workspace, as well as from `~/.claude/settings.json` and `.claude/settings.local.json`.
+
+Make the scripts executable first:
+
+```bash
+chmod +x hooks/memoryweb_save_hook.sh hooks/memoryweb_precompact_hook.sh
+```
+
+Create `.github/hooks/memoryweb.json` in your repository:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "/path/to/hooks/memoryweb_save_hook.sh"
+      }
+    ],
+    "PreCompact": [
+      {
+        "type": "command",
+        "command": "/path/to/hooks/memoryweb_precompact_hook.sh"
+      }
+    ]
+  }
+}
+```
+
+VS Code loads the hooks automatically — no restart needed. If you have already installed the Claude Code hooks via `~/.claude/settings.local.json`, VS Code Copilot picks them up from there without any additional configuration.
+
 ### Other tools
 
-**GitHub Copilot and Claude Desktop do not support hooks.** For those tools, add session-start and filing instructions to your system prompt manually.
+**Claude Desktop does not support hooks.** Add session-start and filing instructions to your system prompt manually.
+
+**GitHub Copilot cloud agent** (the coding agent that runs on GitHub.com) uses a different hook format and event model that does not include `Stop` or `PreCompact`. Add filing instructions to your system prompt for that surface instead.
