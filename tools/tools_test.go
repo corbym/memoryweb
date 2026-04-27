@@ -1831,5 +1831,158 @@ func TestAddNodes_WithTags_Searchable(t *testing.T) {
 	}
 }
 
+// ── audit_log for update_node ─────────────────────────────────────────────────
+
+// TestAuditLog_RecordsUpdateNode: every call to update_node must write an
+// audit_log entry with action="update". The reason must name the changed
+// fields and their old values.
+func TestAuditLog_RecordsUpdateNode(t *testing.T) {
+	dbPath, _, h := newEnvWithPath(t)
+	id := addNode(t, h, "original label", "proj", map[string]any{
+		"description": "original description",
+	})
+
+	mustNotError(t, call(t, h, "update_node", map[string]any{
+		"id":          id,
+		"description": "improved description",
+		"why_matters": "now it matters more",
+	}))
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+
+	rows, err := rawDB.Query(
+		`SELECT action, reason FROM audit_log WHERE node_id = ? ORDER BY actioned_at ASC`, id,
+	)
+	if err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	defer rows.Close()
+
+	type entry struct {
+		action string
+		reason sql.NullString
+	}
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.action, &e.reason); err != nil {
+			t.Fatalf("scan audit_log: %v", err)
+		}
+		entries = append(entries, e)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 audit_log entry after update_node, got %d", len(entries))
+	}
+	if entries[0].action != "update" {
+		t.Errorf("audit action: got %q, want %q", entries[0].action, "update")
+	}
+	if !entries[0].reason.Valid || entries[0].reason.String == "" {
+		t.Error("audit reason should be non-empty")
+	}
+	// Reason should mention fields that changed.
+	reason := entries[0].reason.String
+	if !strings.Contains(reason, "description") {
+		t.Errorf("reason should mention 'description'; got %q", reason)
+	}
+	if !strings.Contains(reason, "why_matters") {
+		t.Errorf("reason should mention 'why_matters'; got %q", reason)
+	}
+	// And should include the old value so the trail is useful.
+	if !strings.Contains(reason, "original description") {
+		t.Errorf("reason should include old description value; got %q", reason)
+	}
+}
+
+// ── add_node related_to with explicit relationship ────────────────────────────
+
+// TestAddNode_WithRelatedTo_ExplicitRelationship: passing an object item in
+// related_to with an explicit relationship type must create an edge with that
+// type rather than the default connects_to.
+func TestAddNode_WithRelatedTo_ExplicitRelationship(t *testing.T) {
+	_, h := newEnv(t)
+	existingID := addNode(t, h, "Cause Node", "proj", nil)
+
+	newID := addNode(t, h, "Effect Node", "proj", map[string]any{
+		"related_to": []map[string]any{
+			{"id": existingID, "relationship": "led_to"},
+		},
+	})
+
+	tr := call(t, h, "get_node", map[string]any{"id": newID})
+	mustNotError(t, tr)
+
+	var nwe struct {
+		Edges []struct {
+			FromNode     string `json:"from_node"`
+			ToNode       string `json:"to_node"`
+			Relationship string `json:"relationship"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &nwe); err != nil {
+		t.Fatalf("parse get_node: %v", err)
+	}
+
+	found := false
+	for _, e := range nwe.Edges {
+		if e.Relationship == "led_to" &&
+			((e.FromNode == newID && e.ToNode == existingID) ||
+				(e.FromNode == existingID && e.ToNode == newID)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected led_to edge between %q and %q; got edges: %+v", newID, existingID, nwe.Edges)
+	}
+}
+
+// TestAddNode_WithRelatedTo_MixedFormats: related_to may mix plain string IDs
+// (default connects_to) with object entries (explicit relationship).
+func TestAddNode_WithRelatedTo_MixedFormats(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Node A for mixed", "proj", nil)
+	idB := addNode(t, h, "Node B for mixed", "proj", nil)
+
+	// idA via plain string → connects_to; idB via object → depends_on
+	idC := addNode(t, h, "Node C mixed", "proj", map[string]any{
+		"related_to": []any{
+			idA, // plain string
+			map[string]any{"id": idB, "relationship": "depends_on"},
+		},
+	})
+
+	tr := call(t, h, "get_node", map[string]any{"id": idC})
+	mustNotError(t, tr)
+
+	var nwe struct {
+		Edges []struct {
+			FromNode     string `json:"from_node"`
+			ToNode       string `json:"to_node"`
+			Relationship string `json:"relationship"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &nwe)
+
+	var relByTarget = map[string]string{}
+	for _, e := range nwe.Edges {
+		if e.FromNode == idC {
+			relByTarget[e.ToNode] = e.Relationship
+		} else if e.ToNode == idC {
+			relByTarget[e.FromNode] = e.Relationship
+		}
+	}
+
+	if relByTarget[idA] != "connects_to" {
+		t.Errorf("plain string entry: expected connects_to to idA, got %q", relByTarget[idA])
+	}
+	if relByTarget[idB] != "depends_on" {
+		t.Errorf("object entry: expected depends_on to idB, got %q", relByTarget[idB])
+	}
+}
+
 // suppress unused import warning in case time is imported only via helpers
 var _ = time.Now

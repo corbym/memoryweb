@@ -1,9 +1,13 @@
 package db_test
 
 import (
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/corbym/memoryweb/db"
 )
@@ -748,6 +752,47 @@ func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
 	}
 	if !found {
 		t.Error("node not found via tag search")
+	}
+}
+
+func TestUpdateNode_WritesAuditLog(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+
+	n := mustAddNode(t, s, "audit target", "proj")
+
+	_, err = s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil)
+	if err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+
+	// Open second connection to inspect audit_log.
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open rawDB: %v", err)
+	}
+	defer rawDB.Close()
+
+	var action, reason string
+	err = rawDB.QueryRow(
+		`SELECT action, reason FROM audit_log WHERE node_id = ?`, n.ID,
+	).Scan(&action, &reason)
+	if err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if action != "update" {
+		t.Errorf("action: got %q, want %q", action, "update")
+	}
+	if reason == "" {
+		t.Error("reason should be non-empty")
+	}
+	if !strings.Contains(reason, "description") {
+		t.Errorf("reason should mention 'description'; got %q", reason)
 	}
 }
 

@@ -1038,12 +1038,18 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 // ── update ────────────────────────────────────────────────────────────────────
 
 // UpdateNode merges the provided (non-nil) fields into an existing live node.
+// Writes an audit_log entry recording which fields changed and their old values.
 // Returns the full updated node. Returns an error if the node does not exist or
 // has been archived.
 func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string) (*Node, error) {
-	// Verify node exists and is live.
-	var curLabel string
-	if err := s.db.QueryRow(`SELECT label FROM nodes WHERE id = ? AND archived_at IS NULL`, id).Scan(&curLabel); err != nil {
+	// Fetch current values for comparison and audit trail.
+	var cur Node
+	var curOA, curAA sql.NullTime
+	if err := s.db.QueryRow(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags
+		 FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
+	).Scan(&cur.ID, &cur.Label, &cur.Description, &cur.WhyMatters, &cur.Domain,
+		&cur.CreatedAt, &cur.UpdatedAt, &curOA, &curAA, &cur.Tags); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("node not found: %s", id)
 		}
@@ -1054,27 +1060,54 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	sets := []string{"updated_at = ?"}
 	args := []interface{}{now}
 
+	// Build audit reason describing each changed field with its old value.
+	var changes []string
+
 	if label != nil {
 		sets = append(sets, "label = ?")
 		args = append(args, *label)
+		if *label != cur.Label {
+			changes = append(changes, fmt.Sprintf("label (was %q)", cur.Label))
+		}
 	}
 	if description != nil {
 		sets = append(sets, "description = ?")
 		args = append(args, *description)
+		if *description != cur.Description {
+			changes = append(changes, fmt.Sprintf("description (was %q)", cur.Description))
+		}
 	}
 	if whyMatters != nil {
 		sets = append(sets, "why_matters = ?")
 		args = append(args, *whyMatters)
+		if *whyMatters != cur.WhyMatters {
+			changes = append(changes, fmt.Sprintf("why_matters (was %q)", cur.WhyMatters))
+		}
 	}
 	if tags != nil {
 		sets = append(sets, "tags = ?")
 		args = append(args, *tags)
+		if *tags != cur.Tags {
+			changes = append(changes, fmt.Sprintf("tags (was %q)", cur.Tags))
+		}
 	}
 	args = append(args, id)
 
 	if _, err := s.db.Exec(
 		`UPDATE nodes SET `+strings.Join(sets, ", ")+` WHERE id = ?`,
 		args...,
+	); err != nil {
+		return nil, err
+	}
+
+	// Write audit log entry.
+	reason := "no fields changed"
+	if len(changes) > 0 {
+		reason = "changed: " + strings.Join(changes, "; ")
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"auditlog-"+shortID(), "update", id, cur.Label, reason, now,
 	); err != nil {
 		return nil, err
 	}

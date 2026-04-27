@@ -206,9 +206,10 @@ Run tests: `go test ./...`
 - [x] Soft delete: archived_at, audit_log, ArchiveNode, RestoreNode, ListArchived
 - [x] Tool description agent guidance (archive advisory + duplicate warning)
 - [x] Outside-in test suite (db + tools packages)
-- [x] `update_node` tool: merge label/description/why_matters/tags without archiving
+- [x] `update_node` tool: merge label/description/why_matters/tags without archiving; writes audit_log entry on every call with action='update' and a reason listing changed fields and their old values
 - [x] `tags` field on nodes (migration v6): searched by all retrieval tools; populated via add_node, add_nodes, update_node
-- [x] `related_to` on `add_node`: auto-creates `connects_to` edges at creation time (invalid IDs silently skipped)
+- [x] `related_to` on `add_node`: accepts plain string IDs (defaults to `connects_to`) or objects `{"id": "...", "relationship": "..."}` for explicit relationship type; invalid IDs silently skipped
+- [x] `audit_log` records: archive, restore, purge (CLI), update — all mutating node operations
 
 ## What's planned (see prompts.md)
 

@@ -74,7 +74,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general')"},
 					"occurred_at": {Type: "string", Description: "Optional ISO8601 date or datetime when this event or decision actually happened (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Distinct from when it was filed."},
 					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
-					"related_to":  {Type: "array", Description: "Optional list of node IDs to auto-connect to this node via a connects_to edge at creation time. Use this to wire the new node into the graph immediately. Invalid or unknown IDs are silently skipped."},
+					"related_to":  {Type: "array", Description: "Optional list of nodes to auto-connect to this node at creation time. Each item can be a plain node ID string (creates a connects_to edge) or an object {\"id\": \"...\", \"relationship\": \"...\"} to specify an explicit relationship type. Invalid or unknown IDs are silently skipped."},
 				},
 				Required: []string{"label", "domain"},
 			},
@@ -353,13 +353,13 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 
 func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
-		Label       string   `json:"label"`
-		Description string   `json:"description"`
-		WhyMatters  string   `json:"why_matters"`
-		Domain      string   `json:"domain"`
-		OccurredAt  string   `json:"occurred_at"`
-		Tags        string   `json:"tags"`
-		RelatedTo   []string `json:"related_to"`
+		Label       string            `json:"label"`
+		Description string            `json:"description"`
+		WhyMatters  string            `json:"why_matters"`
+		Domain      string            `json:"domain"`
+		OccurredAt  string            `json:"occurred_at"`
+		Tags        string            `json:"tags"`
+		RelatedTo   []json.RawMessage `json:"related_to"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -379,10 +379,38 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Auto-create connects_to edges for each related_to ID (best-effort; skip invalid IDs).
-	for _, relID := range a.RelatedTo {
-		h.store.AddEdge(node.ID, relID, "connects_to", "auto-linked at creation") //nolint:errcheck
+
+	// Auto-create edges for each related_to entry (best-effort; skip invalid IDs).
+	// Each element may be either:
+	//   - a plain string ID (defaults to "connects_to")
+	//   - an object {"id": "...", "relationship": "..."} (relationship optional)
+	for _, raw := range a.RelatedTo {
+		relID := ""
+		relationship := "connects_to"
+
+		// Try parsing as a plain string first.
+		var strID string
+		if err := json.Unmarshal(raw, &strID); err == nil {
+			relID = strID
+		} else {
+			// Try parsing as an object with id + optional relationship.
+			var entry struct {
+				ID           string `json:"id"`
+				Relationship string `json:"relationship"`
+			}
+			if err := json.Unmarshal(raw, &entry); err == nil {
+				relID = entry.ID
+				if entry.Relationship != "" {
+					relationship = entry.Relationship
+				}
+			}
+		}
+
+		if relID != "" {
+			h.store.AddEdge(node.ID, relID, relationship, "auto-linked at creation") //nolint:errcheck
+		}
 	}
+
 	b, _ := json.MarshalIndent(node, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
