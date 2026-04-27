@@ -370,6 +370,7 @@ var migrations = []migration{
 				node_id   TEXT PRIMARY KEY,
 				embedding FLOAT[384]
 			)`)
+			// 384 dimensions matches the snowflake-arctic-embed model output size.
 			if err != nil {
 				// sqlite-vec extension may not be available in all build environments.
 				log.Printf("[memoryweb] note: could not create node_embeddings table (sqlite-vec may not be loaded): %v", err)
@@ -748,7 +749,10 @@ func collectEdges(db *sql.DB, nodes []Node) []Edge {
 	var edges []Edge
 	for eRows.Next() {
 		var e Edge
-		eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
+		if err := eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+			log.Printf("[memoryweb] collectEdges scan: %v", err)
+			continue
+		}
 		edges = append(edges, e)
 	}
 	return edges

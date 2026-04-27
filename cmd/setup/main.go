@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func main() {
@@ -190,8 +191,7 @@ func checkOllama() {
 	}
 
 	for _, m := range tagsResp.Models {
-		if m.Name == "snowflake-arctic-embed" || len(m.Name) > len("snowflake-arctic-embed") &&
-			m.Name[:len("snowflake-arctic-embed")] == "snowflake-arctic-embed" {
+		if strings.HasPrefix(m.Name, "snowflake-arctic-embed") {
 			return // model is available
 		}
 	}
