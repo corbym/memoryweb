@@ -6,6 +6,8 @@ set -euo pipefail
 SAVE_INTERVAL="${MEMORYWEB_SAVE_INTERVAL:-15}"
 STATE_DIR="${MEMORYWEB_HOOK_STATE_DIR:-${HOME}/.memoryweb/hook_state}"
 PROJECTS_DIR="${MEMORYWEB_PROJECTS_DIR:-${HOME}/.claude/projects}"
+MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb.db}"
+DREAM_BIN="${MEMORYWEB_DREAM_BIN:-memoryweb-dream}"
 
 mkdir -p "${STATE_DIR}"
 
@@ -64,5 +66,21 @@ fi
 
 # Threshold reached: block and request filing.
 touch "${saving_flag}"
-printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now. Call add_nodes with any decisions made, bugs found or fixed, design choices, or open questions. Add edges connecting related nodes. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
+
+# Capture dream digest for context (best-effort; skipped silently if unavailable).
+dream_digest=""
+if [ -x "${DREAM_BIN}" ] || command -v "${DREAM_BIN}" >/dev/null 2>&1; then
+  dream_digest=$("${DREAM_BIN}" --db "${MEMORYWEB_DB}" 2>/dev/null || true)
+fi
+
+# JSON-escape the digest: \  →  \\   then  "  →  \"   then  newlines  →  \n
+_esc="${dream_digest//$'\\'/\\\\}"
+_esc="${_esc//$'"'/\\\"}"
+_esc="${_esc//$'\n'/\\n}"
+
+if [ -n "${_esc}" ]; then
+  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now.\\n\\n%s\\n\\nCall add_nodes with any decisions made, bugs found or fixed, design choices, or open questions. Add edges connecting related nodes. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n' "${_esc}"
+else
+  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now. Call add_nodes with any decisions made, bugs found or fixed, design choices, or open questions. Add edges connecting related nodes. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
+fi
 
