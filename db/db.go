@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -438,21 +439,25 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var nodes []Node
-	for rows.Next() {
-		var n Node
-		var oa sql.NullTime
-		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags)
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
+	nodes, err := scanNodeRows(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	// If the full-phrase LIKE returned nothing and the query contains multiple
+	// words, fall back to an OR of individual-word LIKE terms so that nodes
+	// whose fields collectively cover the query words are still surfaced.
+	if len(nodes) == 0 {
+		words := strings.Fields(query)
+		if len(words) > 1 {
+			log.Printf("[memoryweb] search: no results for %q (domain=%q), falling back to individual-word search", query, domain)
+			nodes, err = s.searchByWords(words, domain, limit)
+			if err != nil {
+				return nil, err
+			}
 		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		nodes = append(nodes, n)
 	}
 
 	// collect edges where both endpoints are in the result set
@@ -484,6 +489,72 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 	}
 
 	return &SearchResult{Nodes: nodes, Edges: edges}, nil
+}
+
+// scanNodeRows reads all node rows from rows into a slice.
+// Caller is responsible for closing rows.
+func scanNodeRows(rows *sql.Rows) ([]Node, error) {
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		var oa sql.NullTime
+		var aa sql.NullTime
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags)
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}
+
+// searchByWords executes a fallback query that matches nodes containing ANY of
+// the provided words in ANY of the searchable fields (label, description,
+// why_matters, tags). Results are ordered by updated_at DESC.
+func (s *Store) searchByWords(words []string, domain string, limit int) ([]Node, error) {
+	// Build: (label LIKE ? OR desc LIKE ? OR why LIKE ? OR tags LIKE ?)
+	//        OR (label LIKE ? OR ...)   ... one group per word.
+	const fields = 4 // label, description, why_matters, tags
+	wordClause := "(label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)"
+	clauses := make([]string, len(words))
+	for i := range words {
+		clauses[i] = wordClause
+	}
+	combined := strings.Join(clauses, " OR ")
+
+	args := []interface{}{}
+	for _, w := range words {
+		wq := "%" + w + "%"
+		for j := 0; j < fields; j++ {
+			args = append(args, wq)
+		}
+	}
+
+	var q string
+	if domain != "" {
+		q = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
+		     WHERE domain = ? AND archived_at IS NULL AND (` + combined + `) ORDER BY updated_at DESC LIMIT ?`
+		// domain goes first, limit last
+		finalArgs := make([]interface{}, 0, 1+len(args)+1)
+		finalArgs = append(finalArgs, domain)
+		finalArgs = append(finalArgs, args...)
+		finalArgs = append(finalArgs, limit)
+		args = finalArgs
+	} else {
+		q = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
+		     WHERE archived_at IS NULL AND (` + combined + `) ORDER BY updated_at DESC LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNodeRows(rows)
 }
 
 type ConnectionResult struct {

@@ -796,6 +796,94 @@ func TestUpdateNode_WritesAuditLog(t *testing.T) {
 	}
 }
 
+// ── SearchNodes multi-word fallback ───────────────────────────────────────────
+
+// TestSearchNodes_MultiWordFallback: when the full phrase isn't a substring of
+// any field but each individual word IS, the fallback should find the node.
+func TestSearchNodes_MultiWordFallback_WordsSpreadAcrossFields(t *testing.T) {
+	s := newStore(t)
+	// Full phrase "testing approval parameterised" does not appear contiguously
+	// in any single field, but each word appears in a different field.
+	n, err := s.AddNode(
+		"testing scaffold",  // label:       contains "testing"
+		"approval required", // description: contains "approval"
+		"why it matters",    // why_matters: no match
+		"proj",
+		nil,
+		"parameterised kotlin", // tags: contains "parameterised"
+	)
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	res, err := s.SearchNodes("testing approval parameterised", "proj", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	found := false
+	for _, nd := range res.Nodes {
+		if nd.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("node not found via multi-word fallback search")
+	}
+}
+
+// TestSearchNodes_SingleWord_BehaviourUnchanged: a single-word query that
+// directly matches still returns results — fallback does not interfere.
+func TestSearchNodes_SingleWord_BehaviourUnchanged(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "ULA memory write fix", "proj")
+
+	res, err := s.SearchNodes("ULA", "proj", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	found := false
+	for _, nd := range res.Nodes {
+		if nd.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("single-word query should still find node via primary search")
+	}
+}
+
+// TestSearchNodes_MultiWordFallback_NoDomain: fallback also works without a
+// domain filter (cross-domain search).
+func TestSearchNodes_MultiWordFallback_NoDomain(t *testing.T) {
+	s := newStore(t)
+	n, err := s.AddNode(
+		"kotlin testing",    // label
+		"approval workflow", // description
+		"why",
+		"proj-a",
+		nil,
+		"parameterised",
+	)
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	// No domain filter — should still hit fallback path.
+	res, err := s.SearchNodes("testing approval parameterised", "", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	found := false
+	for _, nd := range res.Nodes {
+		if nd.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("multi-word fallback should work without domain filter")
+	}
+}
+
 func TestAddNode_Tags_RoundTrip(t *testing.T) {
 	s := newStore(t)
 	n, err := s.AddNode("my node", "desc", "why", "proj", nil, "alpha beta gamma")

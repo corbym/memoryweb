@@ -1984,5 +1984,75 @@ func TestAddNode_WithRelatedTo_MixedFormats(t *testing.T) {
 	}
 }
 
+// ── search_nodes multi-word fallback ─────────────────────────────────────────
+
+// TestSearchNodes_MultiWordFallback: multi-word query where no field contains
+// the full phrase but each word appears in a different field — should still
+// return the node via individual-word OR fallback.
+func TestSearchNodes_MultiWordFallback(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "testing scaffold", "proj", map[string]any{
+		"description": "approval required",
+		"tags":        "parameterised kotlin",
+	})
+
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query":  "testing approval parameterised",
+		"domain": "proj",
+	})
+	mustNotError(t, tr)
+	if !contains(searchIDs(t, tr), id) {
+		t.Error("node not found via multi-word fallback search")
+	}
+}
+
+// TestSearchNodes_SingleWord_Unchanged: single-word primary match still works
+// exactly as before — fallback does not alter behaviour.
+func TestSearchNodes_SingleWord_Unchanged(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "ULA memory write fix fallback test", "proj", nil)
+
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query":  "ULA",
+		"domain": "proj",
+	})
+	mustNotError(t, tr)
+	if !contains(searchIDs(t, tr), id) {
+		t.Error("single-word query should still find node without interference from fallback")
+	}
+}
+
+// TestSearchNodes_MultiWordFallback_NoSpuriousResults: a node that does NOT
+// contain any of the query words must not appear in the fallback results.
+func TestSearchNodes_MultiWordFallback_NoSpuriousResults(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "completely unrelated topic", "proj", map[string]any{
+		"description": "something about rendering pipelines",
+	})
+	idTarget := addNode(t, h, "testing scaffold", "proj", map[string]any{
+		"description": "approval required",
+		"tags":        "parameterised",
+	})
+
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query":  "testing approval parameterised",
+		"domain": "proj",
+	})
+	mustNotError(t, tr)
+	ids := searchIDs(t, tr)
+	if !contains(ids, idTarget) {
+		t.Error("target node should appear in fallback results")
+	}
+	// The unrelated node should not appear.
+	for _, id := range ids {
+		// We can't easily check by ID for the unrelated one since we don't have it,
+		// but we can verify the count is reasonable (only 1 match expected).
+		_ = id
+	}
+	if len(ids) != 1 {
+		t.Errorf("expected exactly 1 result, got %d: %v", len(ids), ids)
+	}
+}
+
 // suppress unused import warning in case time is imported only via helpers
 var _ = time.Now
