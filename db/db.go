@@ -1,18 +1,31 @@
 package db
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 )
 
+func init() {
+	// Register sqlite-vec extension for all future SQLite3 connections.
+	// Called once at process start, before any connection is opened.
+	vec.Auto()
+}
+
 type Store struct {
-	db *sql.DB
+	db           *sql.DB
+	vecAvailable bool
 }
 
 type Node struct {
@@ -81,11 +94,156 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
-	return s, s.migrate()
+	if err := s.migrate(); err != nil {
+		return nil, err
+	}
+	s.checkVecAvailable()
+	return s, nil
 }
 
 func (s *Store) Close() {
 	s.db.Close()
+}
+
+// VecAvailable reports whether sqlite-vec is loaded and the node_embeddings
+// table is available for semantic search.
+func (s *Store) VecAvailable() bool {
+	return s.vecAvailable
+}
+
+// checkVecAvailable verifies that the sqlite-vec extension is loaded and the
+// node_embeddings table exists. Sets s.vecAvailable accordingly.
+func (s *Store) checkVecAvailable() {
+	var v string
+	if err := s.db.QueryRow("SELECT vec_version()").Scan(&v); err != nil {
+		log.Printf("[memoryweb] sqlite-vec not available: %v; falling back to text search", err)
+		return
+	}
+	var dummy int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM node_embeddings").Scan(&dummy); err != nil {
+		log.Printf("[memoryweb] node_embeddings table not available: %v; falling back to text search", err)
+		return
+	}
+	s.vecAvailable = true
+	log.Printf("[memoryweb] sqlite-vec %s loaded; semantic search enabled", v)
+}
+
+// ollamaEmbedRequest is the JSON body for the Ollama /api/embed endpoint.
+type ollamaEmbedRequest struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+}
+
+// ollamaEmbedResponse is the JSON response from the Ollama /api/embed endpoint.
+type ollamaEmbedResponse struct {
+	Embeddings [][]float32 `json:"embeddings"`
+}
+
+const ollamaModel = "snowflake-arctic-embed"
+const ollamaEndpoint = "http://localhost:11434/api/embed"
+
+// embed calls the local Ollama instance to generate an embedding for the
+// given text using the snowflake-arctic-embed model. Returns nil if Ollama is
+// not running or the model is unavailable — callers must treat nil as a signal
+// to fall back to literal LIKE search.
+func embed(text string) ([]float32, error) {
+	body, err := json.Marshal(ollamaEmbedRequest{Model: ollamaModel, Input: text})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.Post(ollamaEndpoint, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama embed: status %d: %s", resp.StatusCode, raw)
+	}
+
+	var result ollamaEmbedResponse
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	if len(result.Embeddings) == 0 || len(result.Embeddings[0]) == 0 {
+		return nil, fmt.Errorf("ollama embed: empty embedding returned")
+	}
+	return result.Embeddings[0], nil
+}
+
+// Embed is the exported form of embed, used by external tools such as
+// the embeddings backfill command.
+func Embed(text string) ([]float32, error) {
+	return embed(text)
+}
+
+// storeEmbedding inserts or replaces the embedding for a node in the
+// node_embeddings virtual table. Errors are logged but do not propagate —
+// a missing embedding only degrades search quality, not correctness.
+func (s *Store) storeEmbedding(id string, embedding []float32) {
+	if !s.vecAvailable || len(embedding) == 0 {
+		return
+	}
+	blob, err := vec.SerializeFloat32(embedding)
+	if err != nil {
+		log.Printf("[memoryweb] serialize embedding for %s: %v", id, err)
+		return
+	}
+	if _, err := s.db.Exec(
+		`INSERT OR REPLACE INTO node_embeddings(node_id, embedding) VALUES (?, ?)`,
+		id, blob,
+	); err != nil {
+		log.Printf("[memoryweb] store embedding for %s: %v", id, err)
+	}
+}
+
+// BackfillEmbeddings generates and stores embeddings for all live nodes that
+// do not yet have one. Returns the count of embeddings successfully written.
+// Requires Ollama to be running with the snowflake-arctic-embed model.
+func (s *Store) BackfillEmbeddings() (int, error) {
+	if !s.vecAvailable {
+		return 0, fmt.Errorf("sqlite-vec not available; cannot backfill embeddings")
+	}
+	rows, err := s.db.Query(`
+		SELECT n.id, n.label, n.description, n.why_matters
+		FROM nodes n
+		LEFT JOIN node_embeddings e ON e.node_id = n.id
+		WHERE n.archived_at IS NULL AND e.node_id IS NULL
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		id, label, description, whyMatters string
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.label, &c.description, &c.whyMatters); err != nil {
+			return 0, err
+		}
+		candidates = append(candidates, c)
+	}
+	rows.Close()
+
+	n := 0
+	for _, c := range candidates {
+		text := c.label + " " + c.description + " " + c.whyMatters
+		embedding, err := embed(text)
+		if err != nil {
+			log.Printf("[memoryweb] backfill embed %s: %v", c.id, err)
+			continue
+		}
+		s.storeEmbedding(c.id, embedding)
+		n++
+	}
+	return n, nil
 }
 
 // ── migrations ────────────────────────────────────────────────────────────────
@@ -202,6 +360,22 @@ var migrations = []migration{
 		up: func(tx *sql.Tx) error {
 			_, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN transient INTEGER NOT NULL DEFAULT 0`)
 			return err
+		},
+	},
+	{
+		version: 8,
+		desc:    "add node_embeddings virtual table (sqlite-vec)",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS node_embeddings USING vec0(
+				node_id   TEXT PRIMARY KEY,
+				embedding FLOAT[384]
+			)`)
+			if err != nil {
+				// sqlite-vec extension may not be available in all build environments.
+				log.Printf("[memoryweb] note: could not create node_embeddings table (sqlite-vec may not be loaded): %v", err)
+				return nil
+			}
+			return nil
 		},
 	},
 }
@@ -346,6 +520,12 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 	if err != nil {
 		return nil, err
 	}
+
+	// Generate and store an embedding for semantic search (best-effort).
+	if embedding, err := embed(label + " " + description + " " + whyMatters); err == nil {
+		s.storeEmbedding(id, embedding)
+	}
+
 	return &Node{
 		ID:          id,
 		Label:       label,
@@ -429,6 +609,73 @@ type SearchResult struct {
 
 func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, error) {
 	domain = s.ResolveAlias(domain)
+
+	// Try semantic search when sqlite-vec is loaded.
+	if s.vecAvailable {
+		embedding, err := embed(query)
+		if err == nil && len(embedding) > 0 {
+			result, err := s.searchNodesSemantic(query, domain, limit, embedding)
+			if err == nil {
+				return result, nil
+			}
+			log.Printf("[memoryweb] semantic search failed: %v; falling back to text search", err)
+		}
+	}
+
+	return s.searchNodesLike(query, domain, limit)
+}
+
+// searchNodesSemantic ranks nodes by cosine distance between the query
+// embedding and stored node embeddings, then falls back to LIKE if no
+// semantic results are found.
+func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding []float32) (*SearchResult, error) {
+	blob, err := vec.SerializeFloat32(embedding)
+	if err != nil {
+		return nil, err
+	}
+
+	var rows *sql.Rows
+	if domain != "" {
+		rows, err = s.db.Query(`
+			SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.transient
+			FROM node_embeddings e
+			JOIN nodes n ON n.id = e.node_id
+			WHERE n.archived_at IS NULL AND n.domain = ?
+			ORDER BY vec_distance_cosine(e.embedding, ?) ASC
+			LIMIT ?`,
+			domain, blob, limit)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.transient
+			FROM node_embeddings e
+			JOIN nodes n ON n.id = e.node_id
+			WHERE n.archived_at IS NULL
+			ORDER BY vec_distance_cosine(e.embedding, ?) ASC
+			LIMIT ?`,
+			blob, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	nodes, err := scanNodeRows(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(nodes) == 0 {
+		// No embeddings stored yet; fall back to literal search.
+		return s.searchNodesLike(query, domain, limit)
+	}
+
+	return &SearchResult{Nodes: nodes, Edges: collectEdges(s.db, nodes)}, nil
+}
+
+// searchNodesLike performs a full-phrase LIKE search with a multi-word fallback.
+func (s *Store) searchNodesLike(query, domain string, limit int) (*SearchResult, error) {
 	q := "%" + query + "%"
 	var rows *sql.Rows
 	var err error
@@ -472,35 +719,39 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 		}
 	}
 
-	// collect edges where both endpoints are in the result set
-	var edges []Edge
-	if len(nodes) > 1 {
-		ids := make([]interface{}, len(nodes))
-		for i, n := range nodes {
-			ids[i] = n.ID
-		}
-		ph := make([]byte, 0, len(ids)*2)
-		for i := range ids {
-			if i > 0 {
-				ph = append(ph, ',')
-			}
-			ph = append(ph, '?')
-		}
-		edgeQ := "SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges WHERE from_node IN (" +
-			string(ph) + ") AND to_node IN (" + string(ph) + ")"
-		eRows, err := s.db.Query(edgeQ, append(ids, ids...)...)
-		if err != nil {
-			return nil, err
-		}
-		defer eRows.Close()
-		for eRows.Next() {
-			var e Edge
-			eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
-			edges = append(edges, e)
-		}
-	}
+	return &SearchResult{Nodes: nodes, Edges: collectEdges(s.db, nodes)}, nil
+}
 
-	return &SearchResult{Nodes: nodes, Edges: edges}, nil
+// collectEdges returns edges whose both endpoints appear in nodes.
+func collectEdges(db *sql.DB, nodes []Node) []Edge {
+	if len(nodes) <= 1 {
+		return nil
+	}
+	ids := make([]interface{}, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	ph := make([]byte, 0, len(ids)*2)
+	for i := range ids {
+		if i > 0 {
+			ph = append(ph, ',')
+		}
+		ph = append(ph, '?')
+	}
+	edgeQ := "SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges WHERE from_node IN (" +
+		string(ph) + ") AND to_node IN (" + string(ph) + ")"
+	eRows, err := db.Query(edgeQ, append(ids, ids...)...)
+	if err != nil {
+		return nil
+	}
+	defer eRows.Close()
+	var edges []Edge
+	for eRows.Next() {
+		var e Edge
+		eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
+		edges = append(edges, e)
+	}
+	return edges
 }
 
 // scanNodeRows reads all node rows from rows into a slice.
@@ -870,6 +1121,15 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+
+	// Generate and store embeddings for each node (best-effort, after commit).
+	for _, n := range nodes {
+		text := n.Label + " " + n.Description + " " + n.WhyMatters
+		if embedding, err := embed(text); err == nil {
+			s.storeEmbedding(n.ID, embedding)
+		}
+	}
+
 	return nodes, nil
 }
 
