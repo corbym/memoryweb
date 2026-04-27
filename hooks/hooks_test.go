@@ -38,11 +38,11 @@ func TestMain(m *testing.M) {
 		dir = parent
 	}
 
-	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-dream-hooks-%d", os.Getpid()))
-	buildCmd := exec.Command("go", "build", "-o", bin, "./cmd/dream")
+	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-hooks-%d", os.Getpid()))
+	buildCmd := exec.Command("go", "build", "-o", bin, ".")
 	buildCmd.Dir = root
 	if out, err := buildCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: cannot build cmd/dream: %v\n%s\n", err, out)
+		fmt.Fprintf(os.Stderr, "FAIL: cannot build memoryweb: %v\n%s\n", err, out)
 		os.Exit(1)
 	}
 	dreamBin = bin

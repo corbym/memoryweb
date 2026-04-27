@@ -1,4 +1,4 @@
-package main_test
+package dream_test
 
 import (
 	"fmt"
@@ -13,18 +13,18 @@ import (
 
 // ── test setup ────────────────────────────────────────────────────────────────
 
-// dreamBin is the path to the compiled dream binary, set by TestMain.
+// dreamBin is the path to the compiled memoryweb binary, set by TestMain.
 var dreamBin string
 
-// TestMain compiles the dream binary once before all tests run.
+// TestMain compiles the memoryweb binary once before all tests run.
 func TestMain(m *testing.M) {
 	root := findRepoRoot()
 
-	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-dream-%d", os.Getpid()))
-	buildCmd := exec.Command("go", "build", "-o", bin, "./cmd/dream")
+	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-%d", os.Getpid()))
+	buildCmd := exec.Command("go", "build", "-o", bin, ".")
 	buildCmd.Dir = root
 	if out, err := buildCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: cannot build cmd/dream: %v\n%s\n", err, out)
+		fmt.Fprintf(os.Stderr, "FAIL: cannot build memoryweb: %v\n%s\n", err, out)
 		os.Exit(1)
 	}
 	dreamBin = bin
@@ -65,11 +65,12 @@ func newTestDB(t *testing.T) (dbPath string, store *db.Store) {
 	return dbPath, store
 }
 
-// runDream executes the dream binary with the given flags.
+// runDream executes "memoryweb dream" with the given flags.
 // Returns combined stdout+stderr and the exit code.
 func runDream(t *testing.T, args ...string) (output string, exitCode int) {
 	t.Helper()
-	cmd := exec.Command(dreamBin, args...)
+	allArgs := append([]string{"dream"}, args...)
+	cmd := exec.Command(dreamBin, allArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

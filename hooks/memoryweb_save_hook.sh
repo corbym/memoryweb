@@ -7,7 +7,7 @@ SAVE_INTERVAL="${MEMORYWEB_SAVE_INTERVAL:-15}"
 STATE_DIR="${MEMORYWEB_HOOK_STATE_DIR:-${HOME}/.memoryweb/hook_state}"
 PROJECTS_DIR="${MEMORYWEB_PROJECTS_DIR:-${HOME}/.claude/projects}"
 MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb.db}"
-DREAM_BIN="${MEMORYWEB_DREAM_BIN:-memoryweb-dream}"
+DREAM_BIN="${MEMORYWEB_DREAM_BIN:-memoryweb}"
 
 mkdir -p "${STATE_DIR}"
 
@@ -70,7 +70,7 @@ touch "${saving_flag}"
 # Capture dream digest for context (best-effort; skipped silently if unavailable).
 dream_digest=""
 if [ -x "${DREAM_BIN}" ] || command -v "${DREAM_BIN}" >/dev/null 2>&1; then
-  dream_digest=$("${DREAM_BIN}" --db "${MEMORYWEB_DB}" 2>/dev/null || true)
+  dream_digest=$("${DREAM_BIN}" dream --db "${MEMORYWEB_DB}" 2>/dev/null || true)
 fi
 
 # JSON-escape the digest: \  →  \\   then  "  →  \"   then  newlines  →  \n
