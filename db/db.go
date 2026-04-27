@@ -18,6 +18,7 @@ type Node struct {
 	Label       string     `json:"label"`
 	Description string     `json:"description"`
 	WhyMatters  string     `json:"why_matters"`
+	Tags        string     `json:"tags,omitempty"`
 	Domain      string     `json:"domain"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
@@ -51,6 +52,7 @@ type NodeInput struct {
 	Label       string
 	Description string
 	WhyMatters  string
+	Tags        string
 	Domain      string
 	OccurredAt  *time.Time
 }
@@ -176,6 +178,17 @@ var migrations = []migration{
 					actioned_at DATETIME NOT NULL
 				)
 			`)
+			return err
+		},
+	},
+	{
+		version: 6,
+		desc:    "nodes: add tags column and index",
+		up: func(tx *sql.Tx) error {
+			if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN tags TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_tags ON nodes(tags)`)
 			return err
 		},
 	},
@@ -310,13 +323,13 @@ func (s *Store) RemoveAlias(alias string) error {
 	return nil
 }
 
-func (s *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time) (*Node, error) {
+func (s *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time, tags string) (*Node, error) {
 	id := slug(label) + "-" + shortID()
 	now := time.Now().UTC()
 	_, err := s.db.Exec(
-		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, label, description, whyMatters, domain, now, now, occurredAt,
+		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, label, description, whyMatters, domain, now, now, occurredAt, tags,
 	)
 	if err != nil {
 		return nil, err
@@ -326,6 +339,7 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 		Label:       label,
 		Description: description,
 		WhyMatters:  whyMatters,
+		Tags:        tags,
 		Domain:      domain,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -360,9 +374,9 @@ func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
 	var oa sql.NullTime
 	var aa sql.NullTime
 	err := s.db.QueryRow(
-		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags
 		 FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
-	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa)
+	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("node not found: %s", id)
 	}
@@ -408,17 +422,17 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 
 	if domain != "" {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes
-			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ?)
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
+			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY updated_at DESC LIMIT ?`,
-			domain, q, q, q, limit,
+			domain, q, q, q, q, limit,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes
-			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ?)
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
+			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY updated_at DESC LIMIT ?`,
-			q, q, q, limit,
+			q, q, q, q, limit,
 		)
 	}
 	if err != nil {
@@ -431,7 +445,7 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -485,23 +499,23 @@ func (s *Store) bestMatch(term, domain string) (*Node, error) {
 	var row *sql.Row
 	if domain != "" {
 		row = s.db.QueryRow(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes
-			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ?)
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
+			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
-			domain, q, q, q, q,
+			domain, q, q, q, q, q,
 		)
 	} else {
 		row = s.db.QueryRow(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes
-			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ?)
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
+			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
-			q, q, q, q,
+			q, q, q, q, q,
 		)
 	}
 	var n Node
 	var oa sql.NullTime
 	var aa sql.NullTime
-	err := row.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa)
+	err := row.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -556,13 +570,13 @@ func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 
 	if domain != "" {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
 			 WHERE domain = ? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
 			domain, limit,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
 			 WHERE archived_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
 			limit,
 		)
@@ -577,7 +591,7 @@ func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -614,7 +628,7 @@ func (s *Store) Timeline(domain string, from, to *time.Time, limit int) ([]Node,
 	}
 	args = append(args, limit)
 
-	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes WHERE " +
+	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY occurred_at ASC LIMIT ?"
 
 	rows, err := s.db.Query(q, args...)
@@ -628,7 +642,7 @@ func (s *Store) Timeline(domain string, from, to *time.Time, limit int) ([]Node,
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -696,13 +710,13 @@ func (s *Store) ListArchived(domain string) ([]Node, error) {
 
 	if domain != "" {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
 			 WHERE archived_at IS NOT NULL AND domain = ? ORDER BY archived_at DESC`,
 			domain,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags FROM nodes
 			 WHERE archived_at IS NOT NULL ORDER BY archived_at DESC`,
 		)
 	}
@@ -716,7 +730,7 @@ func (s *Store) ListArchived(domain string) ([]Node, error) {
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -750,9 +764,9 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 		}
 		id := slug(inp.Label) + "-" + shortID()
 		if _, err := tx.Exec(
-			`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			id, inp.Label, inp.Description, inp.WhyMatters, inp.Domain, now, now, inp.OccurredAt,
+			`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, inp.Label, inp.Description, inp.WhyMatters, inp.Domain, now, now, inp.OccurredAt, inp.Tags,
 		); err != nil {
 			tx.Rollback()
 			return nil, err
@@ -762,6 +776,7 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 			Label:       inp.Label,
 			Description: inp.Description,
 			WhyMatters:  inp.WhyMatters,
+			Tags:        inp.Tags,
 			Domain:      inp.Domain,
 			CreatedAt:   now,
 			UpdatedAt:   now,
@@ -843,12 +858,12 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 		}
 	}
 
-	// scanSingle scans 9 standard node columns from a *sql.Rows.
+	// scanSingle scans 10 standard node columns from a *sql.Rows.
 	scanSingle := func(r *sql.Rows) (Node, error) {
 		var n Node
 		var oa, aa sql.NullTime
 		if err := r.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa); err != nil {
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags); err != nil {
 			return Node{}, err
 		}
 		if oa.Valid {
@@ -865,9 +880,9 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	// ── Rule 1: contradicts edges ─────────────────────────────────────────────
 	rows, err := s.db.Query(`
 		SELECT a.id, a.label, a.description, a.why_matters, a.domain,
-		       a.created_at, a.updated_at, a.occurred_at, a.archived_at,
+		       a.created_at, a.updated_at, a.occurred_at, a.archived_at, a.tags,
 		       b.id, b.label, b.description, b.why_matters, b.domain,
-		       b.created_at, b.updated_at, b.occurred_at, b.archived_at
+		       b.created_at, b.updated_at, b.occurred_at, b.archived_at, b.tags
 		FROM edges e
 		JOIN nodes a ON a.id = e.from_node AND a.archived_at IS NULL
 		JOIN nodes b ON b.id = e.to_node   AND b.archived_at IS NULL
@@ -880,25 +895,27 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 			aID, aLabel, aDesc, aWhy, aDomain string
 			aCreated, aUpdated                time.Time
 			aOA, aAA                          sql.NullTime
+			aTags                             string
 			bID, bLabel, bDesc, bWhy, bDomain string
 			bCreated, bUpdated                time.Time
 			bOA, bAA                          sql.NullTime
+			bTags                             string
 		)
 		if err := rows.Scan(
-			&aID, &aLabel, &aDesc, &aWhy, &aDomain, &aCreated, &aUpdated, &aOA, &aAA,
-			&bID, &bLabel, &bDesc, &bWhy, &bDomain, &bCreated, &bUpdated, &bOA, &bAA,
+			&aID, &aLabel, &aDesc, &aWhy, &aDomain, &aCreated, &aUpdated, &aOA, &aAA, &aTags,
+			&bID, &bLabel, &bDesc, &bWhy, &bDomain, &bCreated, &bUpdated, &bOA, &bAA, &bTags,
 		); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		a := Node{ID: aID, Label: aLabel, Description: aDesc, WhyMatters: aWhy, Domain: aDomain, CreatedAt: aCreated, UpdatedAt: aUpdated}
+		a := Node{ID: aID, Label: aLabel, Description: aDesc, WhyMatters: aWhy, Domain: aDomain, CreatedAt: aCreated, UpdatedAt: aUpdated, Tags: aTags}
 		if aOA.Valid {
 			a.OccurredAt = &aOA.Time
 		}
 		if aAA.Valid {
 			a.ArchivedAt = &aAA.Time
 		}
-		b := Node{ID: bID, Label: bLabel, Description: bDesc, WhyMatters: bWhy, Domain: bDomain, CreatedAt: bCreated, UpdatedAt: bUpdated}
+		b := Node{ID: bID, Label: bLabel, Description: bDesc, WhyMatters: bWhy, Domain: bDomain, CreatedAt: bCreated, UpdatedAt: bUpdated, Tags: bTags}
 		if bOA.Valid {
 			b.OccurredAt = &bOA.Time
 		}
@@ -925,11 +942,11 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	var rows2 *sql.Rows
 	if domain != "" {
 		rows2, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at `+
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+supersededKW, domain)
 	} else {
 		rows2, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at ` +
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags ` +
 				`FROM nodes WHERE archived_at IS NULL AND ` + supersededKW)
 	}
 	if err != nil {
@@ -958,12 +975,12 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	var rows3 *sql.Rows
 	if domain != "" {
 		rows3, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at `+
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+staleKW+` AND `+ageFilter,
 			domain, cutoff, cutoff)
 	} else {
 		rows3, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at `+
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags `+
 				`FROM nodes WHERE archived_at IS NULL AND `+staleKW+` AND `+ageFilter,
 			cutoff, cutoff)
 	}
@@ -989,11 +1006,11 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	var rows4 *sql.Rows
 	if domain != "" {
 		rows4, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at `+
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+dupExists, domain)
 	} else {
 		rows4, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at ` +
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags ` +
 				`FROM nodes WHERE archived_at IS NULL AND ` + dupExists)
 	}
 	if err != nil {
@@ -1016,4 +1033,66 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// ── update ────────────────────────────────────────────────────────────────────
+
+// UpdateNode merges the provided (non-nil) fields into an existing live node.
+// Returns the full updated node. Returns an error if the node does not exist or
+// has been archived.
+func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string) (*Node, error) {
+	// Verify node exists and is live.
+	var curLabel string
+	if err := s.db.QueryRow(`SELECT label FROM nodes WHERE id = ? AND archived_at IS NULL`, id).Scan(&curLabel); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("node not found: %s", id)
+		}
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	sets := []string{"updated_at = ?"}
+	args := []interface{}{now}
+
+	if label != nil {
+		sets = append(sets, "label = ?")
+		args = append(args, *label)
+	}
+	if description != nil {
+		sets = append(sets, "description = ?")
+		args = append(args, *description)
+	}
+	if whyMatters != nil {
+		sets = append(sets, "why_matters = ?")
+		args = append(args, *whyMatters)
+	}
+	if tags != nil {
+		sets = append(sets, "tags = ?")
+		args = append(args, *tags)
+	}
+	args = append(args, id)
+
+	if _, err := s.db.Exec(
+		`UPDATE nodes SET `+strings.Join(sets, ", ")+` WHERE id = ?`,
+		args...,
+	); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch the updated node.
+	var n Node
+	var oa, aa sql.NullTime
+	if err := s.db.QueryRow(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags
+		 FROM nodes WHERE id = ?`, id,
+	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags); err != nil {
+		return nil, err
+	}
+	if oa.Valid {
+		n.OccurredAt = &oa.Time
+	}
+	if aa.Valid {
+		n.ArchivedAt = &aa.Time
+	}
+	return &n, nil
 }

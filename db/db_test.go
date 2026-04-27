@@ -23,7 +23,7 @@ func newStore(t *testing.T) *db.Store {
 
 func mustAddNode(t *testing.T, s *db.Store, label, domain string) *db.Node {
 	t.Helper()
-	n, err := s.AddNode(label, "desc", "why", domain, nil)
+	n, err := s.AddNode(label, "desc", "why", domain, nil, "")
 	if err != nil {
 		t.Fatalf("AddNode(%q): %v", label, err)
 	}
@@ -36,7 +36,7 @@ func ptr(t time.Time) *time.Time { return &t }
 
 func TestAddNode_IDContainsSlug(t *testing.T) {
 	s := newStore(t)
-	n, err := s.AddNode("RST Boot Crash", "desc", "why", "deep-game", nil)
+	n, err := s.AddNode("RST Boot Crash", "desc", "why", "deep-game", nil, "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestAddNode_IDContainsSlug(t *testing.T) {
 func TestAddNode_WithOccurredAt(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
-	n, err := s.AddNode("dated node", "d", "w", "proj", &ts)
+	n, err := s.AddNode("dated node", "d", "w", "proj", &ts, "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -257,8 +257,8 @@ func TestTimeline_AscendingOrder(t *testing.T) {
 	early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	late := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	n1, _ := s.AddNode("Early", "d", "w", "proj", ptr(early))
-	n2, _ := s.AddNode("Late", "d", "w", "proj", ptr(late))
+	n1, _ := s.AddNode("Early", "d", "w", "proj", ptr(early), "")
+	n2, _ := s.AddNode("Late", "d", "w", "proj", ptr(late), "")
 
 	nodes, err := s.Timeline("proj", nil, nil, 10)
 	if err != nil {
@@ -276,7 +276,7 @@ func TestTimeline_ExcludesNullOccurredAt(t *testing.T) {
 	s := newStore(t)
 	noDate := mustAddNode(t, s, "no date", "proj")
 	ts := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts))
+	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "")
 
 	nodes, err := s.Timeline("proj", nil, nil, 10)
 	if err != nil {
@@ -301,7 +301,7 @@ func TestTimeline_ExcludesNullOccurredAt(t *testing.T) {
 func TestTimeline_ExcludesArchived(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
-	n, _ := s.AddNode("archived event", "d", "w", "proj", ptr(ts))
+	n, _ := s.AddNode("archived event", "d", "w", "proj", ptr(ts), "")
 	s.ArchiveNode(n.ID, "reason")
 
 	nodes, err := s.Timeline("proj", nil, nil, 10)
@@ -320,9 +320,9 @@ func TestTimeline_DateRangeFilter(t *testing.T) {
 	jan := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	mar := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
 	jun := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
-	s.AddNode("Jan", "d", "w", "proj", ptr(jan))
-	nMar, _ := s.AddNode("Mar", "d", "w", "proj", ptr(mar))
-	s.AddNode("Jun", "d", "w", "proj", ptr(jun))
+	s.AddNode("Jan", "d", "w", "proj", ptr(jan), "")
+	nMar, _ := s.AddNode("Mar", "d", "w", "proj", ptr(mar), "")
+	s.AddNode("Jun", "d", "w", "proj", ptr(jun), "")
 
 	from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
@@ -617,5 +617,151 @@ func TestAddEdge_AppearsInGetNode(t *testing.T) {
 	}
 	if !found {
 		t.Error("edge not found in GetNode result")
+	}
+}
+
+// ── UpdateNode ────────────────────────────────────────────────────────────────
+
+func ptrStr(s string) *string { return &s }
+
+func TestUpdateNode_UpdatesDescription(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "update target", "proj")
+
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil)
+	if err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if updated.Description != "new description" {
+		t.Errorf("description: got %q, want %q", updated.Description, "new description")
+	}
+	// Label should be unchanged
+	if updated.Label != n.Label {
+		t.Errorf("label changed unexpectedly: %q", updated.Label)
+	}
+}
+
+func TestUpdateNode_UpdatesLabel(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "old label", "proj")
+
+	updated, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil)
+	if err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if updated.Label != "new label" {
+		t.Errorf("label: got %q, want %q", updated.Label, "new label")
+	}
+}
+
+func TestUpdateNode_UpdatesTags(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "tagged node", "proj")
+
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, ptrStr("kotlin gradle testing"))
+	if err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if updated.Tags != "kotlin gradle testing" {
+		t.Errorf("tags: got %q, want %q", updated.Tags, "kotlin gradle testing")
+	}
+}
+
+func TestUpdateNode_OnlyUpdatesProvidedFields(t *testing.T) {
+	s := newStore(t)
+	n, _ := s.AddNode("stable label", "original desc", "original why", "proj", nil, "original tags")
+
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil)
+	if err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if updated.Description != "new desc only" {
+		t.Errorf("description: got %q", updated.Description)
+	}
+	if updated.Label != "stable label" {
+		t.Errorf("label changed: %q", updated.Label)
+	}
+	if updated.WhyMatters != "original why" {
+		t.Errorf("why_matters changed: %q", updated.WhyMatters)
+	}
+	if updated.Tags != "original tags" {
+		t.Errorf("tags changed: %q", updated.Tags)
+	}
+}
+
+func TestUpdateNode_BumpsUpdatedAt(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "timestamp test", "proj")
+	before := n.UpdatedAt
+
+	// Sleep briefly to ensure time advances.
+	time.Sleep(2 * time.Millisecond)
+
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("changed"), nil, nil)
+	if err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if !updated.UpdatedAt.After(before) {
+		t.Errorf("updated_at not bumped: before=%v after=%v", before, updated.UpdatedAt)
+	}
+}
+
+func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
+	s := newStore(t)
+
+	_, err := s.UpdateNode("nonexistent-id-xxxx", ptrStr("x"), nil, nil, nil)
+	if err == nil {
+		t.Error("expected error for missing node, got nil")
+	}
+}
+
+func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "soon archived", "proj")
+	s.ArchiveNode(n.ID, "test")
+
+	_, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil)
+	if err == nil {
+		t.Error("expected error updating archived node, got nil")
+	}
+}
+
+// ── Tags search ───────────────────────────────────────────────────────────────
+
+func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
+	s := newStore(t)
+	// The label won't match; a tag synonym will.
+	n, err := s.AddNode("Parameterised test approval files need withNameSuffix", "some description", "why", "proj", nil, "testing approval parameterised withNamesuffix")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	res, err := s.SearchNodes("testing approval parameterised", "proj", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	found := false
+	for _, node := range res.Nodes {
+		if node.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("node not found via tag search")
+	}
+}
+
+func TestAddNode_Tags_RoundTrip(t *testing.T) {
+	s := newStore(t)
+	n, err := s.AddNode("my node", "desc", "why", "proj", nil, "alpha beta gamma")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	got, err := s.GetNode(n.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got.Node.Tags != "alpha beta gamma" {
+		t.Errorf("tags round-trip: got %q", got.Node.Tags)
 	}
 }

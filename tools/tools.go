@@ -64,7 +64,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "add_node",
-			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer add_nodes for batches — and always search first to avoid creating a duplicate.",
+			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer add_nodes for batches — and always search first to avoid creating a duplicate. Before adding a node, consider whether a similar node already exists. If so, suggest linking to it with add_edge rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -73,6 +73,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"why_matters": {Type: "string", Description: "Why this is significant - the 'so what'"},
 					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general')"},
 					"occurred_at": {Type: "string", Description: "Optional ISO8601 date or datetime when this event or decision actually happened (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Distinct from when it was filed."},
+					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
+					"related_to":  {Type: "array", Description: "Optional list of node IDs to auto-connect to this node via a connects_to edge at creation time. Use this to wire the new node into the graph immediately. Invalid or unknown IDs are silently skipped."},
 				},
 				Required: []string{"label", "domain"},
 			},
@@ -104,7 +106,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "search_nodes",
-			Description: "Search entries by text across label, description, and why_matters. Only live entries are returned; use list_archived or drift if something seems missing.",
+			Description: "Search entries by text across label, description, why_matters, and tags. Only live entries are returned; use list_archived or drift if something seems missing.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -256,9 +258,24 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"nodes": {Type: "array", Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, occurred_at (ISO8601)."},
+					"nodes": {Type: "array", Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601)."},
 				},
 				Required: []string{"nodes"},
+			},
+		},
+		{
+			Name:        "update_node",
+			Description: "Update the label, description, why_matters, or tags of an existing live node. Only the fields you provide are changed — omitted fields keep their current values. Use this to enrich or correct a node without archiving and recreating it. Returns the full updated node.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"id":          {Type: "string", Description: "ID of the node to update"},
+					"label":       {Type: "string", Description: "New label (optional)"},
+					"description": {Type: "string", Description: "New description (optional)"},
+					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
+					"tags":        {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
+				},
+				Required: []string{"id"},
 			},
 		},
 		{
@@ -322,6 +339,8 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.addNodes(req.Arguments)
 	case "add_edges":
 		result, err = h.addEdges(req.Arguments)
+	case "update_node":
+		result, err = h.updateNode(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -334,11 +353,13 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 
 func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
-		Label       string `json:"label"`
-		Description string `json:"description"`
-		WhyMatters  string `json:"why_matters"`
-		Domain      string `json:"domain"`
-		OccurredAt  string `json:"occurred_at"`
+		Label       string   `json:"label"`
+		Description string   `json:"description"`
+		WhyMatters  string   `json:"why_matters"`
+		Domain      string   `json:"domain"`
+		OccurredAt  string   `json:"occurred_at"`
+		Tags        string   `json:"tags"`
+		RelatedTo   []string `json:"related_to"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -354,9 +375,13 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		}
 		occurredAt = &t
 	}
-	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt)
+	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags)
 	if err != nil {
 		return nil, err
+	}
+	// Auto-create connects_to edges for each related_to ID (best-effort; skip invalid IDs).
+	for _, relID := range a.RelatedTo {
+		h.store.AddEdge(node.ID, relID, "connects_to", "auto-linked at creation") //nolint:errcheck
 	}
 	b, _ := json.MarshalIndent(node, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -726,6 +751,7 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 			Label       string `json:"label"`
 			Description string `json:"description"`
 			WhyMatters  string `json:"why_matters"`
+			Tags        string `json:"tags"`
 			Domain      string `json:"domain"`
 			OccurredAt  string `json:"occurred_at"`
 		} `json:"nodes"`
@@ -750,6 +776,7 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 			Label:       n.Label,
 			Description: n.Description,
 			WhyMatters:  n.WhyMatters,
+			Tags:        n.Tags,
 			Domain:      n.Domain,
 			OccurredAt:  occurredAt,
 		}
@@ -792,5 +819,27 @@ func (h *Handler) addEdges(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	b, _ := json.MarshalIndent(map[string]int{"edges_created": len(edges)}, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		ID          string  `json:"id"`
+		Label       *string `json:"label"`
+		Description *string `json:"description"`
+		WhyMatters  *string `json:"why_matters"`
+		Tags        *string `json:"tags"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.ID == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(node, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

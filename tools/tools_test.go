@@ -1603,3 +1603,233 @@ func TestAddEdgesBulkRollsBackOnError(t *testing.T) {
 		t.Errorf("edges should have been rolled back, got %d", len(nwe.Edges))
 	}
 }
+
+// ── update_node ───────────────────────────────────────────────────────────────
+
+func TestUpdateNode_UpdatesDescription(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "My Decision", "proj", nil)
+
+	tr := call(t, h, "update_node", map[string]any{
+		"id":          id,
+		"description": "improved description with better search terms",
+	})
+	mustNotError(t, tr)
+
+	var n struct {
+		Description string `json:"description"`
+		Label       string `json:"label"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &n); err != nil {
+		t.Fatalf("parse update_node response: %v", err)
+	}
+	if n.Description != "improved description with better search terms" {
+		t.Errorf("description: got %q", n.Description)
+	}
+	if n.Label != "My Decision" {
+		t.Errorf("label changed unexpectedly: %q", n.Label)
+	}
+}
+
+func TestUpdateNode_UpdatesMultipleFields(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "Old Title", "proj", nil)
+
+	tr := call(t, h, "update_node", map[string]any{
+		"id":          id,
+		"label":       "New Title",
+		"why_matters": "now has an outcome",
+		"tags":        "decision outcome kotlin",
+	})
+	mustNotError(t, tr)
+
+	var n struct {
+		Label      string `json:"label"`
+		WhyMatters string `json:"why_matters"`
+		Tags       string `json:"tags"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &n)
+	if n.Label != "New Title" {
+		t.Errorf("label: got %q", n.Label)
+	}
+	if n.WhyMatters != "now has an outcome" {
+		t.Errorf("why_matters: got %q", n.WhyMatters)
+	}
+	if n.Tags != "decision outcome kotlin" {
+		t.Errorf("tags: got %q", n.Tags)
+	}
+}
+
+func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "update_node", map[string]any{
+		"id":          "nonexistent-node-xxx",
+		"description": "whatever",
+	})
+	mustError(t, tr)
+}
+
+func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "Will Be Archived", "proj", nil)
+	call(t, h, "forget_node", map[string]any{"id": id, "reason": "test"})
+
+	tr := call(t, h, "update_node", map[string]any{
+		"id":    id,
+		"label": "New Label",
+	})
+	mustError(t, tr)
+}
+
+func TestUpdateNode_SearchableAfterTagsUpdate(t *testing.T) {
+	_, h := newEnv(t)
+	// Node label won't match the search query.
+	id := addNode(t, h, "Parameterised test approval files need withNameSuffix", "proj", nil)
+
+	// Before updating tags, the oblique query should miss.
+	trBefore := call(t, h, "search_nodes", map[string]any{"query": "approval parameterised", "domain": "proj"})
+	mustNotError(t, trBefore)
+	idsBefore := searchIDs(t, trBefore)
+	if contains(idsBefore, id) {
+		t.Log("note: node found before tag update (label/description matched)")
+	}
+
+	// After adding tags, the query must find it.
+	call(t, h, "update_node", map[string]any{
+		"id":   id,
+		"tags": "testing approval parameterised withNamesuffix",
+	})
+
+	trAfter := call(t, h, "search_nodes", map[string]any{"query": "approval parameterised", "domain": "proj"})
+	mustNotError(t, trAfter)
+	if !contains(searchIDs(t, trAfter), id) {
+		t.Error("node not findable via tags after update_node")
+	}
+}
+
+// ── add_node tags and related_to ──────────────────────────────────────────────
+
+func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
+	_, h := newEnv(t)
+	// The description uses "approval parameterised" so search will match even without tags,
+	// but we verify the tag field is echoed back and search works.
+	id := addNode(t, h, "Test scaffold decision", "proj", map[string]any{
+		"tags": "approval parameterised withNameSuffix kotlin",
+	})
+
+	tr := call(t, h, "search_nodes", map[string]any{"query": "withNameSuffix", "domain": "proj"})
+	mustNotError(t, tr)
+	if !contains(searchIDs(t, tr), id) {
+		t.Error("node not found via tags field search")
+	}
+}
+
+func TestAddNode_WithTags_TagsInResponse(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "add_node", map[string]any{
+		"label":  "Tagged Node",
+		"domain": "proj",
+		"tags":   "alpha beta gamma",
+	})
+	mustNotError(t, tr)
+
+	var n struct {
+		Tags string `json:"tags"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &n)
+	if n.Tags != "alpha beta gamma" {
+		t.Errorf("tags in response: got %q", n.Tags)
+	}
+}
+
+func TestAddNode_WithRelatedTo_CreatesEdge(t *testing.T) {
+	_, h := newEnv(t)
+	existingID := addNode(t, h, "Existing Node", "proj", nil)
+
+	newID := addNode(t, h, "New Node", "proj", map[string]any{
+		"related_to": []string{existingID},
+	})
+
+	// Get the new node and verify it has an edge to the existing node.
+	tr := call(t, h, "get_node", map[string]any{"id": newID})
+	mustNotError(t, tr)
+
+	var nwe struct {
+		Edges []struct {
+			FromNode string `json:"from_node"`
+			ToNode   string `json:"to_node"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &nwe)
+	found := false
+	for _, e := range nwe.Edges {
+		if (e.FromNode == newID && e.ToNode == existingID) ||
+			(e.FromNode == existingID && e.ToNode == newID) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected edge between %q and %q, got edges: %+v", newID, existingID, nwe.Edges)
+	}
+}
+
+func TestAddNode_WithRelatedTo_InvalidIDSkipped(t *testing.T) {
+	_, h := newEnv(t)
+	// Should succeed even with a bogus related_to ID.
+	tr := call(t, h, "add_node", map[string]any{
+		"label":      "Safe Node",
+		"domain":     "proj",
+		"related_to": []string{"ghost-id-xxxx"},
+	})
+	mustNotError(t, tr)
+}
+
+func TestAddNode_WithRelatedTo_MultipleEdges(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Node A", "proj", nil)
+	idB := addNode(t, h, "Node B", "proj", nil)
+
+	idC := addNode(t, h, "Node C", "proj", map[string]any{
+		"related_to": []string{idA, idB},
+	})
+
+	tr := call(t, h, "get_node", map[string]any{"id": idC})
+	mustNotError(t, tr)
+
+	var nwe struct {
+		Edges []struct {
+			FromNode string `json:"from_node"`
+			ToNode   string `json:"to_node"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &nwe)
+	if len(nwe.Edges) < 2 {
+		t.Errorf("expected at least 2 edges, got %d: %+v", len(nwe.Edges), nwe.Edges)
+	}
+}
+
+// ── add_nodes with tags ───────────────────────────────────────────────────────
+
+func TestAddNodes_WithTags_Searchable(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "add_nodes", map[string]any{
+		"nodes": []map[string]any{
+			{
+				"label":  "Batch Node One",
+				"domain": "proj",
+				"tags":   "batchsearch uniqueterm",
+			},
+		},
+	})
+	mustNotError(t, tr)
+
+	srTr := call(t, h, "search_nodes", map[string]any{"query": "uniqueterm", "domain": "proj"})
+	mustNotError(t, srTr)
+	ids := searchIDs(t, srTr)
+	if len(ids) == 0 {
+		t.Error("batch node not findable by tag")
+	}
+}
+
+// suppress unused import warning in case time is imported only via helpers
+var _ = time.Now

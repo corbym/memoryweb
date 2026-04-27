@@ -49,6 +49,7 @@ Current migrations:
 | 3 | Add domain_aliases table |
 | 4 | nodes: add archived_at column and index (`idx_nodes_archived`) |
 | 5 | Add audit_log table |
+| 6 | nodes: add tags column and index (`idx_nodes_tags`) |
 
 ---
 
@@ -94,6 +95,7 @@ type Node struct {
     Label       string     `json:"label"`
     Description string     `json:"description"`
     WhyMatters  string     `json:"why_matters"`
+    Tags        string     `json:"tags,omitempty"`
     Domain      string     `json:"domain"`
     CreatedAt   time.Time  `json:"created_at"`
     UpdatedAt   time.Time  `json:"updated_at"`
@@ -204,6 +206,9 @@ Run tests: `go test ./...`
 - [x] Soft delete: archived_at, audit_log, ArchiveNode, RestoreNode, ListArchived
 - [x] Tool description agent guidance (archive advisory + duplicate warning)
 - [x] Outside-in test suite (db + tools packages)
+- [x] `update_node` tool: merge label/description/why_matters/tags without archiving
+- [x] `tags` field on nodes (migration v6): searched by all retrieval tools; populated via add_node, add_nodes, update_node
+- [x] `related_to` on `add_node`: auto-creates `connects_to` edges at creation time (invalid IDs silently skipped)
 
 ## What's planned (see prompts.md)
 
