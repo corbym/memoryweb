@@ -203,7 +203,7 @@ Restart Claude Code to activate.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `MEMORYWEB_SAVE_INTERVAL` | `15` | Human messages between filing prompts. |
-| `MEMORYWEB_DB` | `~/.memoryweb.db` | Path to the SQLite database, passed to `memoryweb dream` when generating the digest. |
+| `MEMORYWEB_DB` | `~/.memoryweb.db` | Path to the SQLite database. |
 
 ### Token cost
 
