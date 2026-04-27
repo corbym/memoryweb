@@ -135,6 +135,14 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
+// ── Instructions ──────────────────────────────────────────────────────────────
+
+func TestInstructions_NonEmpty(t *testing.T) {
+	if tools.Instructions == "" {
+		t.Fatal("Instructions must be non-empty")
+	}
+}
+
 // ── ListTools ─────────────────────────────────────────────────────────────────
 
 func TestListTools_ReturnsExpectedTools(t *testing.T) {

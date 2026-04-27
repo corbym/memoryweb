@@ -115,7 +115,7 @@ func handleInitialize(params json.RawMessage) (interface{}, *RPCError) {
 		"capabilities": map[string]interface{}{
 			"tools": map[string]interface{}{},
 		},
-		"instructions": "This tool is called memoryweb. Always refer to it as memoryweb and nothing else.",
+		"instructions": tools.Instructions,
 	}, nil
 }
 

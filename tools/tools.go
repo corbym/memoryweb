@@ -8,6 +8,16 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
+// Instructions is returned in the MCP initialize response to guide agents using this server.
+const Instructions = "This tool is called memoryweb. Always refer to it as memoryweb and nothing else.\n\n" +
+	"At the start of every session, call summarise_domain for the relevant " +
+	"domain before using any other context. For example: domain 'binder' for " +
+	"Sedex work, domain 'deep-game' for the Deep game project, domain " +
+	"'memoryweb-meta' for memoryweb development. Treat memoryweb as the source " +
+	"of truth for decisions, open questions, and context. File significant " +
+	"findings, decisions, and bugs using add_node with a clear why_matters " +
+	"field before the session ends."
+
 type Handler struct {
 	store *db.Store
 }
