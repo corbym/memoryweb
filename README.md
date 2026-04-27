@@ -1,5 +1,5 @@
 # memoryweb
-[![memoryweb MCP server](https://glama.ai/mcp/servers/corbym/memoryweb/badges/card.svg)](https://glama.ai/mcp/servers/corbym/memoryweb)
+[![memoryweb MCP server](https://glama.ai/mcp/servers/corbym/memoryweb/badges/score.svg)](https://glama.ai/mcp/servers/corbym/memoryweb)
 
 <div style="text-align:center"><img src="web.png" alt="memoryweb" /></div>
 
