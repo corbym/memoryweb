@@ -164,7 +164,7 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 	want := []string{
 		"add_node", "add_edge", "get_node", "search_nodes",
 		"recent_changes", "find_connections", "timeline",
-		"add_alias", "list_aliases", "resolve_domain",
+		"add_alias", "list_aliases", "resolve_domain", "remove_alias",
 		"forget_node", "restore_node", "list_archived",
 		"drift", "summarise_domain",
 		"add_nodes", "add_edges",
@@ -921,6 +921,60 @@ func TestListAliases_ReturnsRegisteredAliases(t *testing.T) {
 	body := text(t, tr)
 	if !strings.Contains(body, "dg") || !strings.Contains(body, "sx") {
 		t.Errorf("list_aliases missing registered aliases; got: %s", body)
+	}
+}
+
+// ── remove_alias ──────────────────────────────────────────────────────────────
+
+func TestRemoveAlias_RemovesExistingAlias(t *testing.T) {
+	_, h := newEnv(t)
+	call(t, h, "add_alias", map[string]any{"alias": "dg", "domain": "deep-game"})
+
+	tr := call(t, h, "remove_alias", map[string]any{"alias": "dg"})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), "dg") {
+		t.Errorf("expected confirmation mentioning alias; got: %s", text(t, tr))
+	}
+
+	// list_aliases should no longer contain it
+	listTr := call(t, h, "list_aliases", map[string]any{})
+	mustNotError(t, listTr)
+	if strings.Contains(text(t, listTr), `"dg"`) {
+		t.Error("alias 'dg' should not appear in list_aliases after removal")
+	}
+}
+
+func TestRemoveAlias_NonExistentReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remove_alias", map[string]any{"alias": "ghost-alias"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "not found") {
+		t.Errorf("expected 'not found' error; got: %s", text(t, tr))
+	}
+}
+
+func TestRemoveAlias_SearchNoLongerResolvesRemovedAlias(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "Engine node", "deep-engine", nil)
+
+	call(t, h, "add_alias", map[string]any{"alias": "engine", "domain": "deep-engine"})
+
+	// confirm alias resolves while it exists
+	if !contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{
+		"query": "Engine", "domain": "engine",
+	})), id) {
+		t.Fatal("alias should resolve before removal")
+	}
+
+	mustNotError(t, call(t, h, "remove_alias", map[string]any{"alias": "engine"}))
+
+	// after removal, searching under the alias should return nothing
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query": "Engine", "domain": "engine",
+	})
+	mustNotError(t, tr)
+	if contains(searchIDs(t, tr), id) {
+		t.Error("removed alias should no longer resolve to canonical domain in search")
 	}
 }
 

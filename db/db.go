@@ -294,6 +294,22 @@ func (s *Store) ListAliases() ([]DomainAlias, error) {
 	return out, nil
 }
 
+// RemoveAlias deletes an alias. Returns an error if the alias does not exist.
+func (s *Store) RemoveAlias(alias string) error {
+	res, err := s.db.Exec(`DELETE FROM domain_aliases WHERE alias = ?`, alias)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("alias not found: %s", alias)
+	}
+	return nil
+}
+
 func (s *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time) (*Node, error) {
 	id := slug(label) + "-" + shortID()
 	now := time.Now().UTC()

@@ -167,10 +167,21 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "list_aliases",
-			Description: "List all registered domain aliases and their canonical names. Reach for this during orientation or when debugging why a domain-scoped search is returning unexpected results.",
+			Description: "List all registered domain aliases and their canonical domains.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]Property{},
+			},
+		},
+		{
+			Name:        "remove_alias",
+			Description: "Remove a registered domain alias. Returns an error if the alias does not exist.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"alias": {Type: "string", Description: "The alias to remove"},
+				},
+				Required: []string{"alias"},
 			},
 		},
 		{
@@ -293,6 +304,8 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.addAlias(req.Arguments)
 	case "list_aliases":
 		result, err = h.listAliases(req.Arguments)
+	case "remove_alias":
+		result, err = h.removeAlias(req.Arguments)
 	case "resolve_domain":
 		result, err = h.resolveDomain(req.Arguments)
 	case "forget_node":
@@ -540,6 +553,19 @@ func (h *Handler) listAliases(_ json.RawMessage) (*ToolResult, error) {
 	}
 	b, _ := json.MarshalIndent(aliases, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) removeAlias(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Alias string `json:"alias"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if err := h.store.RemoveAlias(a.Alias); err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q removed", a.Alias)}}}, nil
 }
 
 func (h *Handler) resolveDomain(args json.RawMessage) (*ToolResult, error) {

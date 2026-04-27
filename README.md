@@ -41,10 +41,12 @@ The `why_matters` field is not optional. A node without it is an event, not a de
 |------|-------------|
 | `add_node` | File a concept, decision, or finding. Requires a label and domain. Optionally a description, why_matters, and occurred_at. |
 | `add_edge` | Connect two nodes with a typed relationship and a narrative "because". |
+| `add_nodes` | Batch version of add_node — insert multiple nodes in one transaction. |
+| `add_edges` | Batch version of add_edge — insert multiple edges in one transaction. |
 | `get_node` | Retrieve a node and all its connections. |
 | `search_nodes` | Text search across label, description, and why_matters. Optionally scope to a domain. |
 | `find_connections` | Look up the reasoning linking two named concepts. Use this when asked why or how two things relate. |
-| `recent_changes` | What was filed recently. Good for session orientation. |
+| `recent_changes` | What was filed recently. Good for session orientation. Set `group_by_domain=true` (with no domain) to see recent activity broken down per domain. |
 | `timeline` | Nodes ordered by when they actually occurred (not filed). Supports date range filtering. |
 
 ### Archive / forget
@@ -57,11 +59,18 @@ Nodes are never hard-deleted via the tools. Archive = soft delete; the node disa
 | `restore_node` | Un-archive a node so it surfaces again. |
 | `list_archived` | Review what's been forgotten. Optionally scope by domain. |
 
+### Drift detection
+
+| Tool | What it does |
+|------|-------------|
+| `drift` | Surface nodes that may be stale, contradicted, or superseded. Returns candidates for review — never archives automatically. |
+
 ### Domain aliases
 
 | Tool | What it does |
 |------|-------------|
 | `add_alias` | Register an alternative name for a domain so both names return the same results. |
+| `remove_alias` | Remove a registered alias. Returns an error if it does not exist. |
 | `list_aliases` | List all registered aliases and what they map to. |
 | `resolve_domain` | Check what canonical domain a name resolves to. |
 
