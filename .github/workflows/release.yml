@@ -89,11 +89,28 @@ jobs:
           path: bin/
           merge-multiple: true
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+      - name: Create archives and checksums
+        run: |
+          set -e
+          mkdir -p dist
+          VERSION="${{ github.ref_name }}"
+          for dir in bin/memoryweb_*/; do
+            name=$(basename "$dir")
+            suffix="${name#memoryweb_}"
+            goos="${suffix%%_*}"
+            goarch="${suffix#*_}"
+            if [ "$goos" = "windows" ]; then
+              (cd bin && zip -r "../dist/memoryweb_${VERSION}_${goos}_${goarch}.zip" "$name/")
+            else
+              tar -czf "dist/memoryweb_${VERSION}_${goos}_${goarch}.tar.gz" -C bin "$name"
+            fi
+          done
+          cd dist && sha256sum ./* > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
+          files: dist/*
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
