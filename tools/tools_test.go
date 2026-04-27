@@ -2054,5 +2054,56 @@ func TestSearchNodes_MultiWordFallback_NoSpuriousResults(t *testing.T) {
 	}
 }
 
+// TestSummariseDomain_IncludesNodeIDs: each entry in nodes and recent must
+// carry an "id" field so the agent can pass it directly to update_node or
+// add_edge without a second lookup.
+func TestSummariseDomain_IncludesNodeIDs(t *testing.T) {
+	_, h := newEnv(t)
+	id1 := addNode(t, h, "ID check node alpha", "id-test-domain", map[string]any{
+		"description": "first node",
+		"why_matters": "verify id round-trips",
+	})
+	id2 := addNode(t, h, "ID check node beta", "id-test-domain", map[string]any{
+		"description": "second node",
+	})
+
+	tr := call(t, h, "summarise_domain", map[string]any{"domain": "id-test-domain"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	// Parse the structured response.
+	var resp struct {
+		Nodes []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"nodes"`
+		Recent []struct {
+			ID string `json:"id"`
+		} `json:"recent"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("parse summarise_domain response: %v\nbody: %s", err, body)
+	}
+
+	// Every node entry must have a non-empty ID.
+	for _, n := range resp.Nodes {
+		if n.ID == "" {
+			t.Errorf("node %q has empty id in summarise_domain response", n.Label)
+		}
+	}
+
+	// Specifically, both filed IDs must appear.
+	var gotIDs []string
+	for _, n := range resp.Nodes {
+		gotIDs = append(gotIDs, n.ID)
+	}
+	if !contains(gotIDs, id1) {
+		t.Errorf("id1 (%s) not found in summarise_domain nodes; got %v", id1, gotIDs)
+	}
+	if !contains(gotIDs, id2) {
+		t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
+	}
+}
+
 // suppress unused import warning in case time is imported only via helpers
 var _ = time.Now

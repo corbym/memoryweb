@@ -243,7 +243,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "summarise_domain",
-			Description: "Return all known entries for a domain structured for synthesis. Synthesise the result into concise prose covering current state, blockers, recent decisions, and open questions.",
+			Description: "Return all known entries for a domain structured for synthesis. Synthesise the result into concise prose covering current state, blockers, recent decisions, and open questions. Each entry includes its id so you can pass it directly to update_node or add_edge without a second lookup.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -732,6 +732,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 
 	// Step 3: build structured response for the model to synthesise.
 	type nodeEntry struct {
+		ID          string  `json:"id"`
 		Label       string  `json:"label"`
 		Description string  `json:"description,omitempty"`
 		WhyMatters  string  `json:"why_matters,omitempty"`
@@ -739,6 +740,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	}
 	toEntry := func(n db.Node) nodeEntry {
 		e := nodeEntry{
+			ID:          n.ID,
 			Label:       n.Label,
 			Description: n.Description,
 			WhyMatters:  n.WhyMatters,
