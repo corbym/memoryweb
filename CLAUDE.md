@@ -50,6 +50,7 @@ Current migrations:
 | 4 | nodes: add archived_at column and index (`idx_nodes_archived`) |
 | 5 | Add audit_log table |
 | 6 | nodes: add tags column and index (`idx_nodes_tags`) |
+| 7 | nodes: add transient column (`INTEGER NOT NULL DEFAULT 0`) |
 
 ---
 
@@ -101,6 +102,7 @@ type Node struct {
     UpdatedAt   time.Time  `json:"updated_at"`
     OccurredAt  *time.Time `json:"occurred_at,omitempty"`
     ArchivedAt  *time.Time `json:"archived_at,omitempty"`  // nil = live
+    Transient   bool       `json:"transient,omitempty"`    // true = short-lived; drift flags after 7 days
 }
 ```
 
@@ -208,6 +210,7 @@ Run tests: `go test ./...`
 - [x] Outside-in test suite (db + tools packages)
 - [x] `update_node` tool: merge label/description/why_matters/tags without archiving; writes audit_log entry on every call with action='update' and a reason listing changed fields and their old values
 - [x] `tags` field on nodes (migration v6): searched by all retrieval tools; populated via add_node, add_nodes, update_node
+- [x] `transient` field on nodes (migration v7): boolean, default false; accepted by add_node and add_nodes; drift surfaces transient nodes older than 7 days with a note to archive once related work is complete
 - [x] `related_to` on `add_node`: accepts plain string IDs (defaults to `connects_to`) or objects `{"id": "...", "relationship": "..."}` for explicit relationship type; invalid IDs silently skipped
 - [x] `audit_log` records: archive, restore, purge (CLI), update — all mutating node operations
 
