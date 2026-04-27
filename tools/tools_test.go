@@ -181,6 +181,138 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 	}
 }
 
+// ── Schema validation ─────────────────────────────────────────────────────────
+
+// validateSchema recursively validates that a JSON Schema object (parsed from
+// MarshalIndent output) is well-formed per the rules below:
+//   - array type → must have "items"
+//   - object type → must have "properties"
+//   - if "required" present → every listed name must exist in "properties"
+//   - oneOf / anyOf / allOf → each entry must itself be valid recursively
+//
+// It returns a slice of human-readable problem descriptions; an empty slice
+// means the schema is valid. path is a dot-separated location prefix.
+func validateSchema(path string, schema map[string]interface{}) []string {
+	var problems []string
+
+	typ, _ := schema["type"].(string)
+
+	switch typ {
+	case "array":
+		if _, ok := schema["items"]; !ok {
+			problems = append(problems, path+": array type is missing 'items'")
+		} else {
+			if items, ok := schema["items"].(map[string]interface{}); ok {
+				problems = append(problems, validateSchema(path+".items", items)...)
+			}
+		}
+	case "object":
+		props, hasProp := schema["properties"]
+		if !hasProp {
+			problems = append(problems, path+": object type is missing 'properties'")
+		} else if propsMap, ok := props.(map[string]interface{}); ok {
+			// Validate required fields reference existing properties.
+			if req, ok := schema["required"].([]interface{}); ok {
+				for _, r := range req {
+					name, _ := r.(string)
+					if _, exists := propsMap[name]; !exists {
+						problems = append(problems, fmt.Sprintf("%s: required field %q not found in properties", path, name))
+					}
+				}
+			}
+			// Recurse into each property.
+			for propName, propRaw := range propsMap {
+				if propMap, ok := propRaw.(map[string]interface{}); ok {
+					problems = append(problems, validateSchema(path+"."+propName, propMap)...)
+				}
+			}
+		}
+	}
+
+	// Validate oneOf / anyOf / allOf entries recursively regardless of type.
+	for _, kw := range []string{"oneOf", "anyOf", "allOf"} {
+		if entries, ok := schema[kw].([]interface{}); ok {
+			for i, entry := range entries {
+				if entryMap, ok := entry.(map[string]interface{}); ok {
+					problems = append(problems, validateSchema(fmt.Sprintf("%s.%s[%d]", path, kw, i), entryMap)...)
+				}
+			}
+		}
+	}
+
+	return problems
+}
+
+// TestListTools_InputSchemaValidation iterates every tool returned by ListTools
+// and validates its inputSchema is well-formed JSON Schema. It does not
+// hardcode tool names — adding or removing a tool is automatically covered.
+func TestListTools_InputSchemaValidation(t *testing.T) {
+	_, h := newEnv(t)
+
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+
+	var resp struct {
+		Tools []struct {
+			Name        string                 `json:"name"`
+			InputSchema map[string]interface{} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools response: %v", err)
+	}
+	if len(resp.Tools) == 0 {
+		t.Fatal("ListTools returned no tools")
+	}
+
+	for _, tool := range resp.Tools {
+		tool := tool
+		t.Run(tool.Name, func(t *testing.T) {
+			if tool.InputSchema == nil {
+				t.Fatalf("tool %q has no inputSchema", tool.Name)
+			}
+			if typ, _ := tool.InputSchema["type"].(string); typ != "object" {
+				t.Errorf("tool %q: inputSchema.type must be 'object', got %q", tool.Name, typ)
+			}
+			for _, problem := range validateSchema(tool.Name+".inputSchema", tool.InputSchema) {
+				t.Error(problem)
+			}
+		})
+	}
+}
+
+// TestListTools_SchemaValidator_CatchesArrayMissingItems confirms the validator
+// catches the "array missing items" class of error — the exact bug that affected
+// related_to, add_nodes.nodes, and add_edges.edges before it was fixed.
+func TestListTools_SchemaValidator_CatchesArrayMissingItems(t *testing.T) {
+	badSchema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"related_to": map[string]interface{}{
+				"type":        "array",
+				"description": "list of IDs",
+				// intentionally missing "items"
+			},
+		},
+	}
+	problems := validateSchema("test_tool.inputSchema", badSchema)
+	if len(problems) == 0 {
+		t.Error("validator should have caught the missing 'items' on the array property")
+	}
+	found := false
+	for _, p := range problems {
+		if strings.Contains(p, "related_to") && strings.Contains(p, "items") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected problem mentioning 'related_to' and 'items', got: %v", problems)
+	}
+}
+
 // ── add_node ──────────────────────────────────────────────────────────────────
 
 func TestAddNode_HappyPath(t *testing.T) {

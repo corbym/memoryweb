@@ -65,7 +65,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "add_node",
-			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer add_nodes for batches — and always search first to avoid creating a duplicate. Before adding a node, consider whether a similar node already exists. If so, suggest linking to it with add_edge rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates. Use transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete.",
+			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer add_nodes for batches — and always search first to avoid creating a duplicate. Before adding a node, consider whether a similar node already exists. If so, suggest linking to it with add_edge rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates. Use transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete. After filing, consider calling suggest_edges with the new node ID to find connection candidates.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -264,7 +264,11 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"nodes": {Type: "array", Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601)."},
+					"nodes": {
+						Type:        "array",
+						Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["label","domain"]}`),
+					},
 				},
 				Required: []string{"nodes"},
 			},
@@ -285,12 +289,28 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
+			Name:        "suggest_edges",
+			Description: "Given a node ID, return up to 5 candidate connections from the same domain whose labels, descriptions, or tags overlap with the source node. Use this after filing a node to discover likely connections before calling add_edge. This tool is read-only — it never creates edges.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"id":    {Type: "string", Description: "ID of the node to find connection candidates for"},
+					"limit": {Type: "integer", Description: "Max candidates to return (default 5)"},
+				},
+				Required: []string{"id"},
+			},
+		},
+		{
 			Name:        "add_edges",
 			Description: "Create multiple connections in a single transaction.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"edges": {Type: "array", Description: "Array of edge objects. Each must have from_node, to_node, relationship (string), and narrative (string, optional)."},
+					"edges": {
+						Type:        "array",
+						Description: "Array of edge objects. Each must have from_node, to_node, relationship (string), and narrative (string, optional).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"from_node":{"type":"string"},"to_node":{"type":"string"},"relationship":{"type":"string"},"narrative":{"type":"string"}},"required":["from_node","to_node","relationship"]}`),
+					},
 				},
 				Required: []string{"edges"},
 			},
@@ -343,6 +363,8 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.summariseDomain(req.Arguments)
 	case "add_nodes":
 		result, err = h.addNodes(req.Arguments)
+	case "suggest_edges":
+		result, err = h.suggestEdges(req.Arguments)
 	case "add_edges":
 		result, err = h.addEdges(req.Arguments)
 	case "update_node":
@@ -874,5 +896,27 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	b, _ := json.MarshalIndent(node, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		ID    string `json:"id"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.ID == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	if a.Limit <= 0 {
+		a.Limit = 5
+	}
+	suggestions, err := h.store.SuggestEdges(a.ID, a.Limit)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(suggestions, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
