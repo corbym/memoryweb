@@ -10,3 +10,6 @@ memoryweb
 # JetBrains
 .idea/
 
+# Local GitHub Copilot hooks (machine-specific paths)
+.github/hooks/memoryweb.json
+

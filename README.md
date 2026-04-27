@@ -39,31 +39,34 @@ The `why_matters` field is not optional. A node without it is an event, not a de
 
 | Tool | What it does |
 |------|-------------|
-| `add_node` | File a concept, decision, or finding. Requires a label and domain. Optionally a description, why_matters, and occurred_at. |
-| `add_edge` | Connect two nodes with a typed relationship and a narrative "because". |
-| `add_nodes` | Batch version of add_node — insert multiple nodes in one transaction. |
-| `add_edges` | Batch version of add_edge — insert multiple edges in one transaction. |
-| `get_node` | Retrieve a node and all its connections. |
-| `search_nodes` | Text search across label, description, and why_matters. Optionally scope to a domain. |
+| `add_node` | File a concept, decision, or finding. Required: `label`, `domain`. Optional: `description`, `why_matters`, `occurred_at` (ISO8601 date/datetime when it actually happened), `tags` (space-separated search keywords), `related_to` (auto-connect to existing nodes at creation), `transient` (mark as short-lived knowledge). |
+| `add_edge` | Connect two nodes with a typed relationship and a narrative "because". Both nodes must exist first. |
+| `add_nodes` | Batch version of `add_node` — insert multiple nodes in one transaction. Supports all the same fields per node. |
+| `add_edges` | Batch version of `add_edge` — insert multiple edges in one transaction. |
+| `update_node` | Update `label`, `description`, `why_matters`, or `tags` on an existing node without archiving it. Only supplied fields are changed; omitted fields keep their current values. Writes an audit log entry on every call recording changed fields and their previous values. |
+| `get_node` | Retrieve a node and all its connections by ID. |
+| `search_nodes` | Text search across `label`, `description`, `why_matters`, and `tags`. Optionally scope to a domain. Falls back to individual-word OR matching when no field contains the full phrase. |
 | `find_connections` | Look up the reasoning linking two named concepts. Use this when asked why or how two things relate. |
 | `recent_changes` | What was filed recently. Good for session orientation. Set `group_by_domain=true` (with no domain) to see recent activity broken down per domain. |
-| `timeline` | Nodes ordered by when they actually occurred (not filed). Supports date range filtering. |
+| `timeline` | Nodes ordered by when they actually occurred (not when filed). Supports date range filtering with `from` and `to`. |
+| `summarise_domain` | Return all nodes for a domain structured for synthesis — covering current state, blockers, recent decisions, and open questions. Includes node IDs so agents can pass them directly to `update_node` or `add_edge` without a second lookup. |
+| `suggest_edges` | Given a node ID, return up to 5 candidate connections from the same domain whose labels, descriptions, or tags overlap. Use this after filing a new node to discover likely connections before calling `add_edge`. Read-only — never creates edges. |
 
 ### Archive / forget
 
-Nodes are never hard-deleted via the tools. Archive = soft delete; the node disappears from search and retrieval but can be restored.
+Nodes are never hard-deleted via the tools. Archive = soft delete; the node disappears from search and retrieval but can be restored at any time.
 
 | Tool | What it does |
 |------|-------------|
 | `forget_node` | Archive a node with a reason. Strict protocol: only after drift surfaces a candidate or the user explicitly confirms. |
-| `restore_node` | Un-archive a node so it surfaces again. |
+| `restore_node` | Un-archive a node so it surfaces in search again. |
 | `list_archived` | Review what's been forgotten. Optionally scope by domain. |
 
 ### Drift detection
 
 | Tool | What it does |
 |------|-------------|
-| `drift` | Surface nodes that may be stale, contradicted, or superseded. Returns candidates for review — never archives automatically. |
+| `drift` | Surface nodes that may be stale, contradicted, duplicated, or transient and overdue for archiving. Returns candidates for review — never archives automatically. |
 
 ### Domain aliases
 
@@ -124,9 +127,11 @@ Add to your MCP host's config (example for Claude Desktop on macOS — `~/Librar
 - Use `domain` to separate concerns: `deep-game`, `sedex`, `general`
 - The `why_matters` field is the most important one for retrieval — don't skip it
 - The `narrative` on an edge is the *because* — the reasoning that makes the connection meaningful, not just the fact that a connection exists
-- Add edges immediately after adding related nodes
-- Call `recent_changes` at the start of a session to orient without needing to know what to search for
+- Add edges immediately after adding related nodes, or use `related_to` on `add_node` to auto-connect at creation time
+- Call `recent_changes` or `summarise_domain` at the start of a session to orient without needing to know what to search for
 - Use `find_connections` when asking about the relationship between two specific things
+- Use `transient: true` for ticket state, sprint notes, or anything expected to go stale within days — `drift` will surface these for cleanup
+- After filing a new node, call `suggest_edges` to find connection candidates before moving on
 
 ## Hooks
 
@@ -194,42 +199,6 @@ Set `MEMORYWEB_SAVE_INTERVAL` in the hook's environment to change the trigger fr
 
 Unlike passive hooks, these cost tokens because the model must actually produce quality nodes. Expect one short filing exchange per trigger — typically under 1,000 tokens for a focused session.
 
-### GitHub Copilot (VS Code)
-
-GitHub Copilot in VS Code supports the same `Stop` and `PreCompact` hook events in the same JSON format. VS Code loads hooks from `.github/hooks/*.json` in your workspace, as well as from `~/.claude/settings.json` and `.claude/settings.local.json`.
-
-Make the scripts executable first:
-
-```bash
-chmod +x hooks/memoryweb_save_hook.sh hooks/memoryweb_precompact_hook.sh
-```
-
-Create `.github/hooks/memoryweb.json` in your repository:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "type": "command",
-        "command": "/path/to/hooks/memoryweb_save_hook.sh"
-      }
-    ],
-    "PreCompact": [
-      {
-        "type": "command",
-        "command": "/path/to/hooks/memoryweb_precompact_hook.sh"
-      }
-    ]
-  }
-}
-```
-
-VS Code loads the hooks automatically — no restart needed. If you have already installed the Claude Code hooks via `~/.claude/settings.local.json`, VS Code Copilot picks them up from there without any additional configuration.
-
 ### Other tools
 
-**Claude Desktop does not support hooks.** Add session-start and filing instructions to your system prompt manually.
-
-**GitHub Copilot cloud agent** (the coding agent that runs on GitHub.com) uses a different hook format and event model that does not include `Stop` or `PreCompact`. Add filing instructions to your system prompt for that surface instead.
-
+**GitHub Copilot and Claude Desktop do not support hooks.** For those tools, add session-start and filing instructions to your system prompt manually.
