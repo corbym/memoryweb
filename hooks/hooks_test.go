@@ -88,8 +88,8 @@ func TestSaveHookAllowsBelowThreshold(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hook exited %d; output:\n%s", code, out)
 	}
-	if !strings.Contains(out, `"allow"`) {
-		t.Errorf("expected allow decision for 5 messages; got:\n%s", out)
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true for 5 messages below threshold; got:\n%s", out)
 	}
 }
 
@@ -102,8 +102,8 @@ func TestSaveHookBlocksAtThreshold(t *testing.T) {
 	makeTranscript(t, projectsDir, sessionID, 15) // 15 >= 15
 
 	out, _ := runHook(t, saveHook, sessionID, stateDir, projectsDir)
-	if !strings.Contains(out, `"block"`) {
-		t.Errorf("expected block decision for 15 messages; got:\n%s", out)
+	if !strings.Contains(out, `"continue":false`) {
+		t.Errorf("expected continue:false for 15 messages at threshold; got:\n%s", out)
 	}
 	savingFlag := filepath.Join(stateDir, sessionID+".saving")
 	if _, err := os.Stat(savingFlag); err != nil {
@@ -129,8 +129,8 @@ func TestSaveHookAllowsOnReentry(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hook exited %d; output:\n%s", code, out)
 	}
-	if !strings.Contains(out, `"allow"`) {
-		t.Errorf("expected allow on re-entry; got:\n%s", out)
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true on re-entry; got:\n%s", out)
 	}
 	if _, err := os.Stat(savingFlag); err == nil {
 		t.Error(".saving flag should have been deleted on re-entry")
@@ -165,8 +165,8 @@ func TestPrecompactHookBlocks(t *testing.T) {
 	sessionID := "test-precompact-block"
 
 	out, _ := runPrecompactHook(t, stateDir, sessionID)
-	if !strings.Contains(out, `"block"`) {
-		t.Errorf("expected block on first run; got:\n%s", out)
+	if !strings.Contains(out, `"continue":false`) {
+		t.Errorf("expected continue:false on first run; got:\n%s", out)
 	}
 	compactingFlag := filepath.Join(stateDir, sessionID+".compacting")
 	if _, err := os.Stat(compactingFlag); err != nil {
@@ -188,8 +188,8 @@ func TestPrecompactHookAllowsOnReentry(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hook exited %d; output:\n%s", code, out)
 	}
-	if !strings.Contains(out, `"allow"`) {
-		t.Errorf("expected allow on re-entry; got:\n%s", out)
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true on re-entry; got:\n%s", out)
 	}
 	if _, err := os.Stat(compactingFlag); err == nil {
 		t.Error(".compacting flag should have been deleted on re-entry")
