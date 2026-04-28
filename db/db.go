@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -146,12 +147,23 @@ const ollamaEndpoint = "http://localhost:11434/api/embed"
 // given text using the snowflake-arctic-embed model. Returns nil if Ollama is
 // not running or the model is unavailable — callers must treat nil as a signal
 // to fall back to literal LIKE search.
+//
+// The endpoint may be overridden by MEMORYWEB_OLLAMA_ENDPOINT. Set it to
+// "disabled" to make embed always fail, which is useful in tests that
+// exercise LIKE search behaviour in isolation from Ollama.
 func embed(text string) ([]float32, error) {
+	endpoint := ollamaEndpoint
+	if v := os.Getenv("MEMORYWEB_OLLAMA_ENDPOINT"); v != "" {
+		if v == "disabled" {
+			return nil, fmt.Errorf("embedding disabled by MEMORYWEB_OLLAMA_ENDPOINT")
+		}
+		endpoint = v
+	}
 	body, err := json.Marshal(ollamaEmbedRequest{Model: ollamaModel, Input: text})
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.Post(ollamaEndpoint, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -182,23 +194,25 @@ func Embed(text string) ([]float32, error) {
 }
 
 // storeEmbedding inserts or replaces the embedding for a node in the
-// node_embeddings virtual table. Errors are logged but do not propagate —
-// a missing embedding only degrades search quality, not correctness.
-func (s *Store) storeEmbedding(id string, embedding []float32) {
+// node_embeddings virtual table. Returns true if the embedding was stored
+// successfully. A failure only degrades search quality, not correctness.
+func (s *Store) storeEmbedding(id string, embedding []float32) bool {
 	if !s.vecAvailable || len(embedding) == 0 {
-		return
+		return false
 	}
 	blob, err := vec.SerializeFloat32(embedding)
 	if err != nil {
 		log.Printf("[memoryweb] serialize embedding for %s: %v", id, err)
-		return
+		return false
 	}
 	if _, err := s.db.Exec(
 		`INSERT OR REPLACE INTO node_embeddings(node_id, embedding) VALUES (?, ?)`,
 		id, blob,
 	); err != nil {
 		log.Printf("[memoryweb] store embedding for %s: %v", id, err)
+		return false
 	}
+	return true
 }
 
 // BackfillEmbeddings generates and stores embeddings for all live nodes that
@@ -250,8 +264,9 @@ func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) 
 			}
 			continue
 		}
-		s.storeEmbedding(c.id, embedding)
-		n++
+		if s.storeEmbedding(c.id, embedding) {
+			n++
+		}
 	}
 	return n, nil
 }
@@ -384,6 +399,27 @@ var migrations = []migration{
 			if err != nil {
 				// sqlite-vec extension may not be available in all build environments.
 				log.Printf("[memoryweb] note: could not create node_embeddings table (sqlite-vec may not be loaded): %v", err)
+				return nil
+			}
+			return nil
+		},
+	},
+	{
+		version: 9,
+		desc:    "resize node_embeddings to 1024 dimensions (snowflake-arctic-embed default model)",
+		up: func(tx *sql.Tx) error {
+			// The default Ollama snowflake-arctic-embed model returns 1024-dimensional
+			// vectors, not 384. Drop and recreate; any stored embeddings are invalid
+			// anyway since they could not have been inserted into the 384-dim table.
+			if _, err := tx.Exec(`DROP TABLE IF EXISTS node_embeddings`); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS node_embeddings USING vec0(
+				node_id   TEXT PRIMARY KEY,
+				embedding FLOAT[1024]
+			)`)
+			if err != nil {
+				log.Printf("[memoryweb] note: could not recreate node_embeddings table (sqlite-vec may not be loaded): %v", err)
 				return nil
 			}
 			return nil
@@ -636,49 +672,79 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 	return s.searchNodesLike(query, domain, limit)
 }
 
+// semanticDistanceThreshold is the maximum cosine distance for a node to be
+// considered a semantic match. vec_distance_cosine returns values in [0, 2];
+// 0 = identical, 2 = opposite. Results beyond this threshold are discarded
+// and the LIKE fallback runs instead.
+const semanticDistanceThreshold = 0.3
+
 // searchNodesSemantic ranks nodes by cosine distance between the query
 // embedding and stored node embeddings, then falls back to LIKE if no
-// semantic results are found.
+// semantic results are found within the relevance threshold.
 func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding []float32) (*SearchResult, error) {
 	blob, err := vec.SerializeFloat32(embedding)
 	if err != nil {
 		return nil, err
 	}
 
+	// Fetch candidates ordered by cosine distance, including the distance
+	// value so we can apply the in-memory relevance threshold.
 	var rows *sql.Rows
 	if domain != "" {
 		rows, err = s.db.Query(`
 			SELECT n.id, n.label, n.description, n.why_matters, n.domain,
-			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.transient
+			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.transient,
+			       vec_distance_cosine(e.embedding, ?) AS dist
 			FROM node_embeddings e
 			JOIN nodes n ON n.id = e.node_id
 			WHERE n.archived_at IS NULL AND n.domain = ?
-			ORDER BY vec_distance_cosine(e.embedding, ?) ASC
+			ORDER BY dist ASC
 			LIMIT ?`,
-			domain, blob, limit)
+			blob, domain, limit)
 	} else {
 		rows, err = s.db.Query(`
 			SELECT n.id, n.label, n.description, n.why_matters, n.domain,
-			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.transient
+			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.transient,
+			       vec_distance_cosine(e.embedding, ?) AS dist
 			FROM node_embeddings e
 			JOIN nodes n ON n.id = e.node_id
 			WHERE n.archived_at IS NULL
-			ORDER BY vec_distance_cosine(e.embedding, ?) ASC
+			ORDER BY dist ASC
 			LIMIT ?`,
 			blob, limit)
 	}
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	nodes, err := scanNodeRows(rows)
-	rows.Close()
-	if err != nil {
-		return nil, err
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		var occurredAt, archivedAt sql.NullTime
+		var dist float64
+		if err := rows.Scan(
+			&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.Transient,
+			&dist,
+		); err != nil {
+			return nil, err
+		}
+		// Results are ordered by distance ASC; stop as soon as we exceed the threshold.
+		if dist > semanticDistanceThreshold {
+			break
+		}
+		if occurredAt.Valid {
+			n.OccurredAt = &occurredAt.Time
+		}
+		if archivedAt.Valid {
+			n.ArchivedAt = &archivedAt.Time
+		}
+		nodes = append(nodes, n)
 	}
 
 	if len(nodes) == 0 {
-		// No embeddings stored yet; fall back to literal search.
+		// No embeddings within threshold; fall back to literal search.
 		return s.searchNodesLike(query, domain, limit)
 	}
 

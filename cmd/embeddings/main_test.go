@@ -136,6 +136,9 @@ func TestBackfillExitsNonZeroOnInvalidDB(t *testing.T) {
 // each attempt, not only on successful embed).
 func TestBackfillShowsProgressBarWithNodes(t *testing.T) {
 	dbPath, store := newTestDB(t)
+	// Disable Ollama during AddNode so the node has no pre-stored embedding
+	// and backfill has a candidate to process (and fire the progress bar for).
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
 	if _, err := store.AddNode("progress test node", "desc", "why", "test", nil, "", false); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}

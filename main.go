@@ -7,8 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/corbym/memoryweb/db"
 	"github.com/corbym/memoryweb/tools"
@@ -48,6 +52,9 @@ func main() {
 			return
 		case "backfill":
 			backfillCmd()
+			return
+		case "setup":
+			setupCmd()
 			return
 		}
 	}
@@ -242,6 +249,244 @@ func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 	return nil
 }
 
+
+// ── setup subcommand ──────────────────────────────────────────────────────────
+
+// setupCmd implements the "memoryweb setup" subcommand.
+func setupCmd() {
+	flags := flag.NewFlagSet("setup", flag.ExitOnError)
+	dbFlag := flags.String("db", "", "memoryweb database path (default ~/.memoryweb.db)")
+	dryRun := flags.Bool("dry-run", false, "print resulting config without writing; skip Ollama prompts")
+	hooksDirFlag := flags.String("hooks-dir", "", "directory containing hook scripts (default: hooks/ next to binary)")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	if err := runSetup(os.Stdout, os.Stdin, *dryRun, *dbFlag, *hooksDirFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runSetup installs Claude Code hooks into ~/.claude/settings.local.json and
+// optionally sets up Ollama for semantic search. Separated from setupCmd so
+// tests can inject writers and readers.
+func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine home directory: %w", err)
+	}
+
+	// Locate hooks directory.
+	if hooksDir == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("cannot determine binary path: %w", err)
+		}
+		hooksDir = filepath.Join(filepath.Dir(exe), "hooks")
+	}
+
+	saveHook := filepath.Join(hooksDir, "memoryweb_save_hook.sh")
+	precompactHook := filepath.Join(hooksDir, "memoryweb_precompact_hook.sh")
+
+	for _, script := range []string{saveHook, precompactHook} {
+		info, err := os.Stat(script)
+		if err != nil {
+			return fmt.Errorf("hook script not found: %s (%w)", script, err)
+		}
+		if info.Mode()&0o111 == 0 {
+			return fmt.Errorf("hook script is not executable: %s", script)
+		}
+	}
+
+	if dbPath == "" {
+		dbPath = filepath.Join(home, ".memoryweb.db")
+	}
+
+	// Read or start with an empty settings object.
+	settingsPath := filepath.Join(home, ".claude", "settings.local.json")
+	var settings map[string]interface{}
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("cannot parse %s: %w", settingsPath, err)
+		}
+	}
+	if settings == nil {
+		settings = make(map[string]interface{})
+	}
+
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	if hooks == nil {
+		hooks = make(map[string]interface{})
+	}
+
+	makeEntry := func(command string) map[string]interface{} {
+		return map[string]interface{}{
+			"hooks": []interface{}{
+				map[string]interface{}{
+					"type":    "command",
+					"command": command,
+					"env": map[string]interface{}{
+						"MEMORYWEB_DB": dbPath,
+					},
+				},
+			},
+		}
+	}
+
+	stop := setupToSlice(hooks["Stop"])
+	if !setupContainsCommand(stop, saveHook) {
+		stop = append(stop, makeEntry(saveHook))
+	}
+	hooks["Stop"] = stop
+
+	precompact := setupToSlice(hooks["PreCompact"])
+	if !setupContainsCommand(precompact, precompactHook) {
+		precompact = append(precompact, makeEntry(precompactHook))
+	}
+	hooks["PreCompact"] = precompact
+
+	settings["hooks"] = hooks
+
+	output, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal settings: %w", err)
+	}
+
+	if dryRun {
+		fmt.Fprintln(out, string(output))
+		setupOllama(out, in, true)
+		return nil
+	}
+
+	stateDir := filepath.Join(home, ".memoryweb", "hook_state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0755); err != nil {
+		return fmt.Errorf("create .claude dir: %w", err)
+	}
+	if err := os.WriteFile(settingsPath, output, 0644); err != nil {
+		return fmt.Errorf("write settings: %w", err)
+	}
+
+	fmt.Fprintln(out, "memoryweb hooks installed. Restart Claude Code to activate.")
+	setupOllama(out, in, false)
+	return nil
+}
+
+// setupOllama checks whether Ollama is installed and whether the
+// snowflake-arctic-embed model is pulled, prompting the user to install/pull
+// as needed. In dry-run mode it reports what would happen without prompting.
+func setupOllama(out io.Writer, in io.Reader, dryRun bool) {
+	_, err := exec.LookPath("ollama")
+	if err != nil {
+		// Ollama not installed.
+		if dryRun {
+			fmt.Fprintln(out, "[dry-run] Ollama not found — would prompt to install via https://ollama.com/install.sh")
+			return
+		}
+		fmt.Fprint(out, "Semantic search requires Ollama. Install it? [y/N] ")
+		if setupReadYN(in) {
+			cmd := exec.Command("sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
+			cmd.Stdout = out
+			cmd.Stderr = out
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintf(out, "Ollama install failed: %v\n", err)
+			}
+		} else {
+			fmt.Fprintln(out, "Advisory: Install Ollama from https://ollama.com/download to enable semantic search.")
+		}
+		return
+	}
+
+	// Ollama is installed; ensure the server is running.
+	setupStartOllama(out, dryRun)
+
+	// Check if the model is pulled.
+	listOut, err := exec.Command("ollama", "list").Output()
+	if err != nil || !strings.Contains(string(listOut), "snowflake-arctic-embed") {
+		if dryRun {
+			fmt.Fprintln(out, "[dry-run] snowflake-arctic-embed not found — would pull automatically")
+			return
+		}
+		fmt.Fprintln(out, "Pulling snowflake-arctic-embed model for semantic search...")
+		cmd := exec.Command("ollama", "pull", "snowflake-arctic-embed")
+		cmd.Stdout = out
+		cmd.Stderr = out
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(out, "Pull failed: %v\n", err)
+		}
+		return
+	}
+
+	fmt.Fprintln(out, "Ollama: snowflake-arctic-embed is ready.")
+}
+
+// setupStartOllama ensures the Ollama server is running. It checks whether
+// localhost:11434 is already accepting connections; if not, it starts
+// "ollama serve" as a detached background process.
+func setupStartOllama(out io.Writer, dryRun bool) {
+	conn, err := net.DialTimeout("tcp", "localhost:11434", time.Second)
+	if err == nil {
+		conn.Close()
+		fmt.Fprintln(out, "Ollama: server already running.")
+		return
+	}
+
+	if dryRun {
+		fmt.Fprintln(out, "[dry-run] Ollama server not running — would start via 'ollama serve'")
+		return
+	}
+
+	fmt.Fprint(out, "Starting Ollama server... ")
+	cmd := exec.Command("ollama", "serve")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(out, "failed: %v\n", err)
+		return
+	}
+	// Give the server a moment to bind its port before the model check.
+	time.Sleep(2 * time.Second)
+	fmt.Fprintln(out, "started.")
+}
+
+// setupReadYN reads one line from in and returns true if the answer is "y".
+// Returns false on EOF or any other input.
+func setupReadYN(in io.Reader) bool {
+	scanner := bufio.NewScanner(in)
+	if scanner.Scan() {
+		return strings.ToLower(strings.TrimSpace(scanner.Text())) == "y"
+	}
+	return false
+}
+
+// setupToSlice safely converts an interface{} to []interface{}.
+func setupToSlice(v interface{}) []interface{} {
+	if v == nil {
+		return nil
+	}
+	s, _ := v.([]interface{})
+	return s
+}
+
+// setupContainsCommand reports whether any entry in the slice contains the
+// given command path in its nested "hooks" array.
+func setupContainsCommand(entries []interface{}, cmd string) bool {
+	for _, e := range entries {
+		entry, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hs, _ := entry["hooks"].([]interface{})
+		for _, h := range hs {
+			hm, ok := h.(map[string]interface{})
+			if ok && hm["command"] == cmd {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func dispatch(req Request, h *tools.Handler) (interface{}, *RPCError) {
 	switch req.Method {
