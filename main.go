@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -402,7 +403,8 @@ func setupOllama(out io.Writer, in io.Reader, dryRun bool) {
 	setupStartOllama(out, dryRun)
 
 	// Check if the model is pulled.
-	listOut, err := exec.Command("ollama", "list").Output()
+	listCmd := exec.Command("ollama", "list")
+	listOut, err := listCmd.Output()
 	if err != nil || !strings.Contains(string(listOut), "snowflake-arctic-embed") {
 		if dryRun {
 			fmt.Fprintln(out, "[dry-run] snowflake-arctic-embed not found — would pull automatically")
@@ -423,7 +425,7 @@ func setupOllama(out io.Writer, in io.Reader, dryRun bool) {
 
 // setupStartOllama ensures the Ollama server is running. It checks whether
 // localhost:11434 is already accepting connections; if not, it starts
-// "ollama serve" as a detached background process.
+// "ollama serve" as a detached background process and polls until ready.
 func setupStartOllama(out io.Writer, dryRun bool) {
 	conn, err := net.DialTimeout("tcp", "localhost:11434", time.Second)
 	if err == nil {
@@ -445,8 +447,18 @@ func setupStartOllama(out io.Writer, dryRun bool) {
 		fmt.Fprintf(out, "failed: %v\n", err)
 		return
 	}
-	// Give the server a moment to bind its port before the model check.
-	time.Sleep(2 * time.Second)
+
+	// Poll until the HTTP API responds, up to 30 seconds.
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get("http://localhost:11434/api/tags")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	fmt.Fprintln(out, "started.")
 }
 

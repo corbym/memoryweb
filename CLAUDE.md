@@ -28,6 +28,19 @@ cmd/             CLI-only subcommands (not MCP tools)
 
 ---
 
+## CLI subcommand rule — mandatory
+
+**Decision:** All new CLI commands must be implemented as subcommands of the
+main `memoryweb` binary (added to the `os.Args` switch in `main.go`). Never
+create a new standalone binary under `cmd/` unless explicitly told to.
+
+The existing `cmd/purge/` is a legacy exception. `cmd/dream/` and `cmd/embeddings/`
+contain only `doc.go` placeholders — their logic lives in `main.go`.
+
+New `cmd/` directories must not be created without explicit instruction.
+
+---
+
 ## The migration system — critical rules
 
 Migrations live in the `migrations` slice in `db/db.go`. They are **append-only**
