@@ -45,7 +45,7 @@ The `why_matters` field is not optional. A node without it is an event, not a de
 | `add_edges` | Batch version of `add_edge` — insert multiple edges in one transaction. |
 | `update_node` | Update `label`, `description`, `why_matters`, or `tags` on an existing node without archiving it. Only supplied fields are changed; omitted fields keep their current values. Writes an audit log entry on every call recording changed fields and their previous values. |
 | `get_node` | Retrieve a node and all its connections by ID. |
-| `search_nodes` | Text search across `label`, `description`, `why_matters`, and `tags`. Optionally scope to a domain. Falls back to individual-word OR matching when no field contains the full phrase. |
+| `search_nodes` | Text search across `label`, `description`, `why_matters`, and `tags`. Optionally scope to a domain. Falls back to individual-word OR matching when no field contains the full phrase. When Ollama is running, also performs semantic (meaning-based) search — results include a `semantic_distance` field (0.0–1.0, lower = closer) when matched semantically. |
 | `find_connections` | Look up the reasoning linking two named concepts. Use this when asked why or how two things relate. |
 | `recent_changes` | What was filed recently. Good for session orientation. Set `group_by_domain=true` (with no domain) to see recent activity broken down per domain. |
 | `timeline` | Nodes ordered by when they actually occurred (not when filed). Supports date range filtering with `from` and `to`. |
@@ -98,13 +98,34 @@ memoryweb dream                              # reads ~/.memoryweb.db
 memoryweb dream --db /path/to/your.db        # explicit DB path
 ```
 
+The `backfill` subcommand generates embeddings for all live nodes that don't yet have one. Requires Ollama to be running with the `snowflake-arctic-embed` model.
+
+```bash
+memoryweb backfill                           # reads ~/.memoryweb.db
+memoryweb backfill --db /path/to/your.db     # explicit DB path
+memoryweb backfill -q                        # quiet mode — no progress output
+```
+
+The `setup` subcommand installs hooks into `~/.claude/settings.local.json` and configures Ollama for semantic search (checks for `snowflake-arctic-embed` and pulls it if missing).
+
+```bash
+memoryweb setup                                      # interactive setup
+memoryweb setup --dry-run                            # preview without writing
+memoryweb setup --hooks-dir /path/to/hooks           # explicit hooks directory
+memoryweb setup --db /path/to/your.db                # explicit DB path
+```
+
 ## Build
 
 ```bash
 go build -o memoryweb .
 ```
 
-Requires Go 1.22+. Uses `github.com/mattn/go-sqlite3` — CGO must be available.
+Requires Go 1.22+. Uses `github.com/mattn/go-sqlite3` and [sqlite-vec](https://github.com/asg017/sqlite-vec) for semantic search — CGO must be available. To deploy safely when the binary is already running:
+
+```bash
+go build -o memoryweb.tmp . && mv memoryweb.tmp memoryweb
+```
 
 ## Storage
 
@@ -154,11 +175,10 @@ Blocks compaction once and asks the model to file everything important that hasn
 
 ### Install (Claude Code)
 
-Run the setup tool once after building:
+Run setup once after building:
 
 ```bash
-go build -o memoryweb-setup ./cmd/setup
-./memoryweb-setup --hooks-dir /path/to/hooks
+./memoryweb setup --hooks-dir /path/to/hooks
 ```
 
 Or install manually:
@@ -177,7 +197,10 @@ Add to `~/.claude/settings.local.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/hooks/memoryweb_save_hook.sh"
+            "command": "/path/to/hooks/memoryweb_save_hook.sh",
+            "env": {
+              "MEMORYWEB_DB": "/path/to/your.db"
+            }
           }
         ]
       }
@@ -187,7 +210,10 @@ Add to `~/.claude/settings.local.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/hooks/memoryweb_precompact_hook.sh"
+            "command": "/path/to/hooks/memoryweb_precompact_hook.sh",
+            "env": {
+              "MEMORYWEB_DB": "/path/to/your.db"
+            }
           }
         ]
       }
@@ -204,6 +230,7 @@ Restart Claude Code to activate.
 |----------|---------|---------|
 | `MEMORYWEB_SAVE_INTERVAL` | `15` | Human messages between filing prompts. |
 | `MEMORYWEB_DB` | `~/.memoryweb.db` | Path to the SQLite database. |
+| `MEMORYWEB_BIN` | `memoryweb` | Path to the memoryweb binary (used by the hook to run `dream`). |
 
 ### Token cost
 
@@ -227,13 +254,19 @@ Create `.github/hooks/memoryweb.json` in your repository:
     "Stop": [
       {
         "type": "command",
-        "command": "/path/to/hooks/memoryweb_save_hook.sh"
+        "command": "/path/to/hooks/memoryweb_save_hook.sh",
+        "env": {
+          "MEMORYWEB_DB": "/path/to/your.db"
+        }
       }
     ],
     "PreCompact": [
       {
         "type": "command",
-        "command": "/path/to/hooks/memoryweb_precompact_hook.sh"
+        "command": "/path/to/hooks/memoryweb_precompact_hook.sh",
+        "env": {
+          "MEMORYWEB_DB": "/path/to/your.db"
+        }
       }
     ]
   }
