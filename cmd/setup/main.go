@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func main() {
@@ -13,6 +15,9 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "print resulting config without writing")
 	hooksDirFlag := flag.String("hooks-dir", "", "directory containing hook scripts (default: hooks/ next to binary)")
 	flag.Parse()
+
+	// Check Ollama availability and advise if missing.
+	checkOllama()
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -155,4 +160,44 @@ func containsCommand(entries []interface{}, cmd string) bool {
 func fatalf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+// checkOllama probes the local Ollama instance and prints an advisory if
+// semantic search prerequisites are not met.
+func checkOllama() {
+	resp, err := http.Get("http://localhost:11434/api/tags")
+	if err != nil {
+		fmt.Println("Advisory: Ollama is not running.")
+		fmt.Println("  Semantic search requires Ollama with snowflake-arctic-embed.")
+		fmt.Println("  Run: ollama pull snowflake-arctic-embed")
+		fmt.Println("  Falling back to text search until available.")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("Advisory: Ollama returned status %d; semantic search may not work.\n", resp.StatusCode)
+		return
+	}
+
+	// Decode the models list to check if snowflake-arctic-embed is available.
+	var tagsResp struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
+		return
+	}
+
+	for _, m := range tagsResp.Models {
+		if strings.HasPrefix(m.Name, "snowflake-arctic-embed") {
+			return // model is available
+		}
+	}
+
+	fmt.Println("Advisory: snowflake-arctic-embed model not found in Ollama.")
+	fmt.Println("  Semantic search requires Ollama with snowflake-arctic-embed.")
+	fmt.Println("  Run: ollama pull snowflake-arctic-embed")
+	fmt.Println("  Falling back to text search until available.")
 }

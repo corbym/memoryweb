@@ -40,9 +40,15 @@ type Notification struct {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "dream" {
-		dreamCmd()
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "dream":
+			dreamCmd()
+			return
+		case "backfill":
+			backfillCmd()
+			return
+		}
 	}
 
 	dbPath := resolveDBPath()
@@ -152,6 +158,51 @@ func runDream(store *db.Store, out io.Writer) error {
 	fmt.Fprintln(out, "== end ==")
 	return nil
 }
+
+// backfillCmd implements the "memoryweb backfill" subcommand.
+func backfillCmd() {
+	flags := flag.NewFlagSet("backfill", flag.ExitOnError)
+	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	store, err := db.New(*dbFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	if err := runBackfill(store, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runBackfill generates embeddings for all live nodes that do not yet have one.
+// Requires Ollama to be running with the snowflake-arctic-embed model.
+func runBackfill(store *db.Store, out io.Writer) error {
+	if !store.VecAvailable() {
+		return fmt.Errorf("sqlite-vec extension is not available; cannot generate embeddings\n" +
+			"  Ensure memoryweb was built with CGO and sqlite-vec support")
+	}
+
+	fmt.Fprintln(out, "Backfilling embeddings for nodes without one...")
+	fmt.Fprintln(out, "  This requires Ollama to be running with the snowflake-arctic-embed model.")
+	fmt.Fprintln(out, "  Run: ollama pull snowflake-arctic-embed")
+
+	n, err := store.BackfillEmbeddings()
+	if err != nil {
+		return fmt.Errorf("backfill: %w", err)
+	}
+
+	if n == 0 {
+		fmt.Fprintln(out, "No nodes needed backfilling (all nodes already have embeddings, or Ollama is unavailable).")
+	} else {
+		fmt.Fprintf(out, "Backfilled %d embedding(s).\n", n)
+	}
+	return nil
+}
+
 
 func dispatch(req Request, h *tools.Handler) (interface{}, *RPCError) {
 	switch req.Method {
