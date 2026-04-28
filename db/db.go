@@ -649,9 +649,16 @@ func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
 	return &NodeWithEdges{Node: n, Edges: edges}, nil
 }
 
+// NodeResult is a single search result. SemanticDistance is set when the
+// result was matched by vector-distance search; it is nil for LIKE results.
+type NodeResult struct {
+	Node
+	SemanticDistance *float64 `json:"semantic_distance,omitempty"`
+}
+
 type SearchResult struct {
-	Nodes []Node `json:"nodes"`
-	Edges []Edge `json:"edges"`
+	Nodes []NodeResult `json:"nodes"`
+	Edges []Edge       `json:"edges"`
 }
 
 func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, error) {
@@ -718,7 +725,7 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 	}
 	defer rows.Close()
 
-	var nodes []Node
+	var results []NodeResult
 	for rows.Next() {
 		var n Node
 		var occurredAt, archivedAt sql.NullTime
@@ -740,15 +747,16 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 		if archivedAt.Valid {
 			n.ArchivedAt = &archivedAt.Time
 		}
-		nodes = append(nodes, n)
+		d := dist // copy for pointer stability
+		results = append(results, NodeResult{Node: n, SemanticDistance: &d})
 	}
 
-	if len(nodes) == 0 {
+	if len(results) == 0 {
 		// No embeddings within threshold; fall back to literal search.
 		return s.searchNodesLike(query, domain, limit)
 	}
 
-	return &SearchResult{Nodes: nodes, Edges: collectEdges(s.db, nodes)}, nil
+	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, extractNodes(results))}, nil
 }
 
 // searchNodesLike performs a full-phrase LIKE search with a multi-word fallback.
@@ -796,7 +804,26 @@ func (s *Store) searchNodesLike(query, domain string, limit int) (*SearchResult,
 		}
 	}
 
-	return &SearchResult{Nodes: nodes, Edges: collectEdges(s.db, nodes)}, nil
+	results := wrapNodes(nodes)
+	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, nodes)}, nil
+}
+
+// extractNodes extracts the embedded Node from each NodeResult.
+func extractNodes(nrs []NodeResult) []Node {
+	ns := make([]Node, len(nrs))
+	for i, nr := range nrs {
+		ns[i] = nr.Node
+	}
+	return ns
+}
+
+// wrapNodes wraps []Node into []NodeResult with nil SemanticDistance (LIKE results).
+func wrapNodes(nodes []Node) []NodeResult {
+	nrs := make([]NodeResult, len(nodes))
+	for i, n := range nodes {
+		nrs[i] = NodeResult{Node: n}
+	}
+	return nrs
 }
 
 // collectEdges returns edges whose both endpoints appear in nodes.

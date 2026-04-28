@@ -213,6 +213,8 @@ testing (see tests.md).
 
 Run tests: `go test ./...`
 
+**Rule:** Always run `go test ./...` and confirm all tests pass before deploying the binary or committing any change. No exceptions.
+
 ---
 
 ## What's implemented

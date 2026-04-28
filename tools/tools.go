@@ -761,7 +761,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		WhyMatters  string  `json:"why_matters,omitempty"`
 		OccurredAt  *string `json:"occurred_at,omitempty"`
 	}
-	toEntry := func(n db.Node) nodeEntry {
+	toEntry := func(n db.NodeResult) nodeEntry {
 		e := nodeEntry{
 			ID:          n.ID,
 			Label:       n.Label,
@@ -781,7 +781,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	}
 	recentEntries := make([]nodeEntry, len(recent))
 	for i, n := range recent {
-		recentEntries[i] = toEntry(n)
+		recentEntries[i] = toEntry(db.NodeResult{Node: n})
 	}
 
 	resp := struct {

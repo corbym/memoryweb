@@ -2450,6 +2450,78 @@ func TestSuggestEdges_NoResults_ReturnsEmptyNotError(t *testing.T) {
 // suppress unused import warning in case time is imported only via helpers
 var _ = time.Now
 
+// ── semantic_distance in search response ──────────────────────────────────────
+
+// TestSearchSemantic_ResponseIncludesDistance: when Ollama is running each
+// semantic result must carry a non-nil semantic_distance in the JSON response,
+// and its value must be within [0, 1].
+func TestSearchSemantic_ResponseIncludesDistance(t *testing.T) {
+	if !ollamaRunning(t) {
+		t.Skip("Ollama with snowflake-arctic-embed not available")
+	}
+	_, h := newEnv(t)
+
+	addNode(t, h, "database schema migration", "dist-test", map[string]any{
+		"description": "evolving relational schemas safely across releases",
+		"why_matters": "prevents data corruption during upgrades",
+	})
+
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query":  "schema evolution approach",
+		"domain": "dist-test",
+	})
+	mustNotError(t, tr)
+
+	var result struct {
+		Nodes []struct {
+			ID               string   `json:"id"`
+			SemanticDistance *float64 `json:"semantic_distance"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse search_nodes response: %v", err)
+	}
+	if len(result.Nodes) == 0 {
+		t.Fatal("expected at least one semantic result")
+	}
+	if result.Nodes[0].SemanticDistance == nil {
+		t.Error("semantic_distance should be non-nil for semantic results")
+	} else if d := *result.Nodes[0].SemanticDistance; d < 0 || d > 1 {
+		t.Errorf("semantic_distance out of expected range [0,1]: %v", d)
+	}
+}
+
+// TestSearchLike_ResponseHasNullDistance: LIKE-only results (Ollama disabled)
+// must not include a semantic_distance field (it should be absent/null).
+func TestSearchLike_ResponseHasNullDistance(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	addNode(t, h, "unique xylophone phrase", "dist-like-test", nil)
+
+	tr := call(t, h, "search_nodes", map[string]any{
+		"query":  "unique xylophone phrase",
+		"domain": "dist-like-test",
+	})
+	mustNotError(t, tr)
+
+	var result struct {
+		Nodes []struct {
+			ID               string   `json:"id"`
+			SemanticDistance *float64 `json:"semantic_distance"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse search_nodes response: %v", err)
+	}
+	if len(result.Nodes) == 0 {
+		t.Fatal("expected at least one LIKE result")
+	}
+	if result.Nodes[0].SemanticDistance != nil {
+		t.Errorf("LIKE results should have null semantic_distance, got %v", *result.Nodes[0].SemanticDistance)
+	}
+}
+
 // ── semantic search tests (require Ollama + snowflake-arctic-embed) ───────────
 //
 // These tests skip automatically when Ollama is not running. They verify that

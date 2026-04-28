@@ -152,7 +152,11 @@ func TestSaveHookBlocksAtThreshold(t *testing.T) {
 
 	makeTranscript(t, projectsDir, sessionID, 15) // 15 >= 15
 
-	out, _ := runHook(t, saveHook, sessionID, stateDir, projectsDir)
+	// Inhibit the dream binary so the test doesn't touch any real DB and
+	// doesn't rely on memoryweb being on PATH.
+	out, _ := runHookExtra(t, saveHook, sessionID, stateDir, projectsDir,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
 	if !strings.Contains(out, `"continue":false`) {
 		t.Errorf("expected continue:false for 15 messages at threshold; got:\n%s", out)
 	}
@@ -394,7 +398,7 @@ func TestSaveHookEmbedsDreamDigest(t *testing.T) {
 
 	out, code := runHookExtra(t, saveHook, sessionID, stateDir, projectsDir,
 		"MEMORYWEB_DB="+dbPath,
-		"MEMORYWEB_DREAM_BIN="+dreamBin,
+		"MEMORYWEB_BIN="+dreamBin,
 	)
 	if code != 0 {
 		t.Fatalf("hook exited %d; output:\n%s", code, out)
@@ -473,9 +477,9 @@ func TestSaveHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 
 	makeTranscript(t, projectsDir, sessionID, 15)
 
-	// Point MEMORYWEB_DREAM_BIN at a non-existent path.
+	// Point MEMORYWEB_BIN at a non-existent path.
 	out, code := runHookExtra(t, saveHook, sessionID, stateDir, projectsDir,
-		"MEMORYWEB_DREAM_BIN=/nonexistent/memoryweb-dream",
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-dream",
 	)
 	if code != 0 {
 		t.Fatalf("hook exited %d without dream binary; output:\n%s", code, out)
