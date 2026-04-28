@@ -74,8 +74,9 @@ if command -v "${MEMORYWEB_BIN}" >/dev/null 2>&1; then
 fi
 
 # JSON-escape the digest: \  →  \\   then  "  →  \"   then  newlines  →  \n
+_dq='"'
 _esc="${dream_digest//$'\\'/\\\\}"
-_esc="${_esc//$'"'/\\\"}"
+_esc="${_esc//$_dq/\\\"}"
 _esc="${_esc//$'\n'/\\n}"
 
 if [ -n "${_esc}" ]; then
