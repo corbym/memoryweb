@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,13 +19,18 @@ import (
 
 // ── test helpers ──────────────────────────────────────────────────────────────
 
-// ollamaRunning returns true when the local Ollama server is reachable and
-// the snowflake-arctic-embed model is available. Use this to gate tests that
-// exercise semantic search. Tests that exercise LIKE search should call
+// ollamaRunning returns true when the Ollama server is reachable and the
+// snowflake-arctic-embed model is available. The base URL is taken from the
+// OLLAMA_HOST environment variable when set, so it works in both local
+// development and CI environments. Tests that exercise LIKE search should call
 // disableOllama(t) instead.
 func ollamaRunning(t *testing.T) bool {
 	t.Helper()
-	resp, err := http.Get("http://localhost:11434/api/tags")
+	base := os.Getenv("OLLAMA_HOST")
+	if base == "" {
+		base = "http://localhost:11434"
+	}
+	resp, err := http.Get(base + "/api/tags")
 	if err != nil {
 		return false
 	}
@@ -564,8 +570,8 @@ func TestSearchNodes_ArchivedNodeExcluded(t *testing.T) {
 	tr := call(t, h, "search_nodes", map[string]any{"query": "Deprecated"})
 	mustNotError(t, tr)
 	if contains(searchIDs(t, tr), id) {
-		t.Error("archived node should not appear in search results")
-	}
+	t.Error("archived node should not appear in search results")
+}
 }
 
 func TestSearchNodes_ArchivedRestored_ReappearsInSearch(t *testing.T) {
@@ -2222,49 +2228,49 @@ func TestSearchNodes_MultiWordFallback_NoSpuriousResults(t *testing.T) {
 func TestSummariseDomain_IncludesNodeIDs(t *testing.T) {
 	_, h := newEnv(t)
 	id1 := addNode(t, h, "ID check node alpha", "id-test-domain", map[string]any{
-		"description": "first node",
+	"description": "first node",
 		"why_matters": "verify id round-trips",
-	})
-	id2 := addNode(t, h, "ID check node beta", "id-test-domain", map[string]any{
-		"description": "second node",
-	})
+})
+id2 := addNode(t, h, "ID check node beta", "id-test-domain", map[string]any{
+"description": "second node",
+})
 
-	tr := call(t, h, "summarise_domain", map[string]any{"domain": "id-test-domain"})
-	mustNotError(t, tr)
-	body := text(t, tr)
+tr := call(t, h, "summarise_domain", map[string]any{"domain": "id-test-domain"})
+mustNotError(t, tr)
+body := text(t, tr)
 
-	// Parse the structured response.
-	var resp struct {
-		Nodes []struct {
-			ID    string `json:"id"`
-			Label string `json:"label"`
-		} `json:"nodes"`
-		Recent []struct {
-			ID string `json:"id"`
-		} `json:"recent"`
-	}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil {
-		t.Fatalf("parse summarise_domain response: %v\nbody: %s", err, body)
-	}
+// Parse the structured response.
+var resp struct {
+	Nodes []struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+	} `json:"nodes"`
+	Recent []struct {
+		ID string `json:"id"`
+	} `json:"recent"`
+}
+if err := json.Unmarshal([]byte(body), &resp); err != nil {
+t.Fatalf("parse summarise_domain response: %v\nbody: %s", err, body)
+}
 
-	// Every node entry must have a non-empty ID.
-	for _, n := range resp.Nodes {
-		if n.ID == "" {
-			t.Errorf("node %q has empty id in summarise_domain response", n.Label)
-		}
-	}
+// Every node entry must have a non-empty ID.
+for _, n := range resp.Nodes {
+if n.ID == "" {
+t.Errorf("node %q has empty id in summarise_domain response", n.Label)
+}
+}
 
-	// Specifically, both filed IDs must appear.
-	var gotIDs []string
-	for _, n := range resp.Nodes {
-		gotIDs = append(gotIDs, n.ID)
-	}
-	if !contains(gotIDs, id1) {
-		t.Errorf("id1 (%s) not found in summarise_domain nodes; got %v", id1, gotIDs)
-	}
-	if !contains(gotIDs, id2) {
-		t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
-	}
+// Specifically, both filed IDs must appear.
+var gotIDs []string
+for _, n := range resp.Nodes {
+gotIDs = append(gotIDs, n.ID)
+}
+if !contains(gotIDs, id1) {
+t.Errorf("id1 (%s) not found in summarise_domain nodes; got %v", id1, gotIDs)
+}
+if !contains(gotIDs, id2) {
+t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
+}
 }
 
 // ── add_node transient + drift of transient ───────────────────────────────────
@@ -2522,4 +2528,3 @@ func TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings(t *testing.T) {
 		t.Error("should find node via LIKE fallback when no embeddings are stored")
 	}
 }
-

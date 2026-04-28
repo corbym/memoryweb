@@ -1,0 +1,53 @@
+name: Integration Tests (Ollama)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama
+        run: ollama serve &
+
+      - name: Wait for Ollama to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434 > /dev/null 2>&1; then
+              echo "Ollama is ready"
+              exit 0
+            fi
+            echo "Waiting for Ollama... ($i/30)"
+            sleep 1
+          done
+          echo "Ollama did not become ready in time"
+          exit 1
+
+      - name: Pull snowflake-arctic-embed model
+        run: ollama pull snowflake-arctic-embed
+
+      - name: Install gcc and libc-dev (required for CGO/sqlite-vec)
+        run: sudo apt-get install -y gcc libc-dev
+
+      - name: Run semantic integration tests
+        run: CGO_ENABLED=1 go test ./... -run TestSearchSemantic_ -v -timeout 120s
+
