@@ -54,6 +54,17 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: choco install mingw --no-progress
 
+      - name: Set up sqlite3 headers for Windows CGO build
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          go mod download
+          $sqlite3Dir = go list -m -json github.com/mattn/go-sqlite3 | ConvertFrom-Json | Select-Object -ExpandProperty Dir
+          $headersDir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "cgo-headers") -Force
+          Copy-Item (Join-Path $sqlite3Dir "sqlite3-binding.h") -Destination (Join-Path $headersDir.FullName "sqlite3.h")
+          $posixPath = $headersDir.FullName.Replace('\', '/')
+          Add-Content $env:GITHUB_ENV "CGO_CFLAGS=-I$posixPath"
+
       - name: Build binary
         env:
           CGO_ENABLED: "1"
