@@ -1,7 +1,9 @@
 package embeddings_test
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,7 +114,8 @@ func TestBackfillReportsZeroWhenOllamaUnavailable(t *testing.T) {
 		t.Fatalf("backfill exited %d; output:\n%s", code, out)
 	}
 	// Without Ollama, embed() returns nil → 0 nodes backfilled.
-	if !strings.Contains(out, "0") && !strings.Contains(out, "No nodes needed") {
+	// The message distinguishes "nothing to do" from "Ollama unavailable".
+	if !strings.Contains(out, "No embeddings stored") && !strings.Contains(out, "No nodes needed") {
 		t.Errorf("expected output to report zero backfilled; got:\n%s", out)
 	}
 }
@@ -127,3 +130,51 @@ func TestBackfillExitsNonZeroOnInvalidDB(t *testing.T) {
 		t.Errorf("expected non-zero exit for invalid DB path; got 0; output:\n%s", out)
 	}
 }
+
+// TestBackfillShowsProgressBarWithNodes: when nodes exist, the progress bar
+// must appear in stdout even when Ollama is unavailable (progress fires on
+// each attempt, not only on successful embed).
+func TestBackfillShowsProgressBarWithNodes(t *testing.T) {
+	dbPath, store := newTestDB(t)
+	if _, err := store.AddNode("progress test node", "desc", "why", "test", nil, "", false); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	store.Close()
+
+	out, code := runBackfill(t, "--db", dbPath)
+	if code != 0 {
+		t.Fatalf("backfill exited %d; output:\n%s", code, out)
+	}
+	// Progress bar must contain the bracket markers and N/Total counter.
+	if !strings.Contains(out, "[") || !strings.Contains(out, "]") {
+		t.Errorf("expected progress bar '[...]' in output; got:\n%q", out)
+	}
+	if !strings.Contains(out, "1/1") {
+		t.Errorf("expected '1/1' counter in progress output; got:\n%q", out)
+	}
+}
+
+// TestBackfillQuietSuppressesAllOutput: -q must produce no stdout at all.
+// (stderr may still carry log lines from the Go logger; we only check stdout.)
+func TestBackfillQuietSuppressesAllOutput(t *testing.T) {
+	dbPath, store := newTestDB(t)
+	if _, err := store.AddNode("quiet test node", "desc", "why", "test", nil, "", false); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	store.Close()
+
+	cmd := exec.Command(backfillBin, "backfill", "--db", dbPath, "-q")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			t.Fatalf("backfill -q exited %d", exitErr.ExitCode())
+		}
+		t.Fatalf("exec: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "" {
+		t.Errorf("expected no stdout with -q; got:\n%q", got)
+	}
+}
+

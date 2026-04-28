@@ -204,7 +204,9 @@ func (s *Store) storeEmbedding(id string, embedding []float32) {
 // BackfillEmbeddings generates and stores embeddings for all live nodes that
 // do not yet have one. Returns the count of embeddings successfully written.
 // Requires Ollama to be running with the snowflake-arctic-embed model.
-func (s *Store) BackfillEmbeddings() (int, error) {
+// progress is called after each successful embedding with (done, total);
+// pass nil to disable progress reporting.
+func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) {
 	if !s.vecAvailable {
 		return 0, fmt.Errorf("sqlite-vec not available; cannot backfill embeddings")
 	}
@@ -233,11 +235,19 @@ func (s *Store) BackfillEmbeddings() (int, error) {
 	rows.Close()
 
 	n := 0
-	for _, c := range candidates {
+	for i, c := range candidates {
 		text := c.label + " " + c.description + " " + c.whyMatters
 		embedding, err := embed(text)
+		if progress != nil {
+			progress(i+1, len(candidates))
+		}
 		if err != nil {
-			log.Printf("[memoryweb] backfill embed %s: %v", c.id, err)
+			// Only log when there is no progress callback — if one is present,
+			// the caller is rendering a progress bar and individual error lines
+			// would corrupt it. The summary already conveys how many succeeded.
+			if progress == nil {
+				log.Printf("[memoryweb] backfill embed %s: %v", c.id, err)
+			}
 			continue
 		}
 		s.storeEmbedding(c.id, embedding)

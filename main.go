@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/corbym/memoryweb/db"
 	"github.com/corbym/memoryweb/tools"
@@ -163,6 +164,7 @@ func runDream(store *db.Store, out io.Writer) error {
 func backfillCmd() {
 	flags := flag.NewFlagSet("backfill", flag.ExitOnError)
 	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
+	quiet := flags.Bool("q", false, "suppress progress output")
 	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
 
 	store, err := db.New(*dbFlag)
@@ -172,33 +174,70 @@ func backfillCmd() {
 	}
 	defer store.Close()
 
-	if err := runBackfill(store, os.Stdout); err != nil {
+	if err := runBackfill(store, os.Stdout, *quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
+// drawProgressBar writes a progress bar to out using a carriage return to
+// update in place. format: "  [=========>          ] 45/100 (45%)"
+func drawProgressBar(out io.Writer, done, total int) {
+	const width = 30
+	pct := float64(done) / float64(total)
+	filled := int(pct * float64(width))
+	var bar string
+	if filled >= width {
+		bar = strings.Repeat("=", width)
+	} else {
+		bar = strings.Repeat("=", filled) + ">" + strings.Repeat(" ", width-filled-1)
+	}
+	fmt.Fprintf(out, "\r  [%s] %d/%d (%d%%)", bar, done, total, int(pct*100))
+}
+
 // runBackfill generates embeddings for all live nodes that do not yet have one.
 // Requires Ollama to be running with the snowflake-arctic-embed model.
-func runBackfill(store *db.Store, out io.Writer) error {
+func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 	if !store.VecAvailable() {
 		return fmt.Errorf("sqlite-vec extension is not available; cannot generate embeddings\n" +
 			"  Ensure memoryweb was built with CGO and sqlite-vec support")
 	}
 
-	fmt.Fprintln(out, "Backfilling embeddings for nodes without one...")
-	fmt.Fprintln(out, "  This requires Ollama to be running with the snowflake-arctic-embed model.")
-	fmt.Fprintln(out, "  Run: ollama pull snowflake-arctic-embed")
+	if !quiet {
+		fmt.Fprintln(out, "Backfilling embeddings for nodes without one...")
+		fmt.Fprintln(out, "  This requires Ollama to be running with the snowflake-arctic-embed model.")
+		fmt.Fprintln(out, "  Run: ollama pull snowflake-arctic-embed")
+	}
 
-	n, err := store.BackfillEmbeddings()
+	var progressFired bool
+	var progress func(done, total int)
+	if !quiet {
+		progress = func(done, total int) {
+			progressFired = true
+			drawProgressBar(out, done, total)
+		}
+	}
+
+	n, err := store.BackfillEmbeddings(progress)
 	if err != nil {
 		return fmt.Errorf("backfill: %w", err)
 	}
 
-	if n == 0 {
-		fmt.Fprintln(out, "No nodes needed backfilling (all nodes already have embeddings, or Ollama is unavailable).")
-	} else {
-		fmt.Fprintf(out, "Backfilled %d embedding(s).\n", n)
+	// End the progress line before printing the summary.
+	if !quiet && progressFired {
+		fmt.Fprintln(out)
+	}
+
+	if !quiet {
+		switch {
+		case n > 0:
+			fmt.Fprintf(out, "Backfilled %d embedding(s).\n", n)
+		case progressFired:
+			// Candidates existed but all embeds failed — Ollama is likely down.
+			fmt.Fprintln(out, "No embeddings stored — is Ollama running? Run: ollama serve")
+		default:
+			fmt.Fprintln(out, "No nodes needed backfilling (all nodes already have embeddings).")
+		}
 	}
 	return nil
 }
