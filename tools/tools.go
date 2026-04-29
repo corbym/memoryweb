@@ -330,6 +330,25 @@ func (h *Handler) ListTools() (interface{}, error) {
 			Required: []string{"updates"},
 		},
 	},
+	{
+		Name:        "list_domains",
+		Description: "List all domains that have at least one live memory, sorted alphabetically. Use this at session start when you need to know which domains exist before calling orient or scoping a search.",
+		InputSchema: InputSchema{
+			Type:       "object",
+			Properties: map[string]Property{},
+		},
+	},
+	{
+		Name:        "disconnect",
+		Description: "Remove a connection between two memories by edge ID. Obtain the edge ID from recall. This is a hard delete — the connection cannot be restored.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"id": {Type: "string", Description: "ID of the edge to remove"},
+			},
+			Required: []string{"id"},
+		},
+	},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -386,6 +405,10 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.updateNode(req.Arguments)
 	case "revise_all":
 		result, err = h.updateNodes(req.Arguments)
+	case "list_domains":
+		result, err = h.listDomains(req.Arguments)
+	case "disconnect":
+		result, err = h.disconnect(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -456,12 +479,19 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		suggestions = []db.EdgeSuggestion{}
 	}
 
+	duplicates, err := h.store.FindPossibleDuplicates(node.Label, node.Domain, node.ID)
+	if err != nil || duplicates == nil {
+		duplicates = []db.Node{}
+	}
+
 	resp := struct {
 		Node                 *db.Node           `json:"node"`
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
+		PossibleDuplicates   []db.Node           `json:"possible_duplicates"`
 	}{
 		Node:                 node,
 		SuggestedConnections: suggestions,
+		PossibleDuplicates:   duplicates,
 	}
 	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -815,10 +845,12 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 
 	resp := struct {
 		SummaryHint string      `json:"summary_hint"`
+		TotalNodes  int         `json:"total_nodes"`
 		Nodes       interface{} `json:"nodes"`
 		Recent      interface{} `json:"recent"`
 	}{
 		SummaryHint: "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. Plain prose, no bullet points.",
+		TotalNodes:  len(sr.Nodes),
 		Nodes:       nodes,
 		Recent:      recentEntries,
 	}
@@ -869,11 +901,20 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, len(nodes))
-	for i, n := range nodes {
-		ids[i] = n.ID
+
+	type entry struct {
+		Node                 *db.Node            `json:"node"`
+		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
 	}
-	b, _ := json.MarshalIndent(ids, "", "  ")
+	result := make([]entry, len(nodes))
+	for i, n := range nodes {
+		suggestions, _ := h.store.SuggestEdges(n.ID, 5)
+		if suggestions == nil {
+			suggestions = []db.EdgeSuggestion{}
+		}
+		result[i] = entry{Node: n, SuggestedConnections: suggestions}
+	}
+	b, _ := json.MarshalIndent(result, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
@@ -986,3 +1027,29 @@ func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 	b, _ := json.MarshalIndent(suggestions, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
+
+func (h *Handler) listDomains(_ json.RawMessage) (*ToolResult, error) {
+	domains, err := h.store.ListDomains()
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(domains, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.ID == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	if err := h.store.DeleteEdge(a.ID); err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Connection %q removed.", a.ID)}}}, nil
+}
+

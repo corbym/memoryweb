@@ -1871,3 +1871,101 @@ func suggestKeywords(label, tags string) []string {
 	addWords(label)
 	return keywords
 }
+
+// ── list domains ──────────────────────────────────────────────────────────────
+
+// ListDomains returns all distinct domains that have at least one live node,
+// sorted alphabetically.
+func (s *Store) ListDomains() ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT domain FROM nodes WHERE archived_at IS NULL ORDER BY domain ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var domains []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		domains = append(domains, d)
+	}
+	if domains == nil {
+		domains = []string{}
+	}
+	return domains, nil
+}
+
+// ── disconnect ────────────────────────────────────────────────────────────────
+
+// DeleteEdge hard-deletes an edge by ID. Returns an error if the edge does not exist.
+func (s *Store) DeleteEdge(id string) error {
+	res, err := s.db.Exec(`DELETE FROM edges WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("edge not found: %s", id)
+	}
+	return nil
+}
+
+// ── possible duplicates ───────────────────────────────────────────────────────
+
+// FindPossibleDuplicates returns live nodes in the same domain whose normalised
+// label closely matches the given label (lowercased, punctuation stripped).
+// The node with the given excludeID is excluded (used to avoid self-match).
+func (s *Store) FindPossibleDuplicates(label, domain, excludeID string) ([]Node, error) {
+	norm := normaliseLabel(label)
+	if norm == "" {
+		return []Node{}, nil
+	}
+	rows, err := s.db.Query(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		 FROM nodes WHERE domain = ? AND archived_at IS NULL AND id != ?`,
+		domain, excludeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var results []Node
+	for rows.Next() {
+		var n Node
+		var oa, aa sql.NullTime
+		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); err != nil {
+			return nil, err
+		}
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		if normaliseLabel(n.Label) == norm {
+			results = append(results, n)
+		}
+	}
+	if results == nil {
+		results = []Node{}
+	}
+	return results, nil
+}
+
+// normaliseLabel lowercases a label and strips non-alphanumeric characters
+// (except spaces) so "Boot Crash!" and "boot crash" compare equal.
+func normaliseLabel(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, r := range s {
+		if r == ' ' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+

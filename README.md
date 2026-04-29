@@ -3,81 +3,77 @@
 
 <div style="text-align:center"><img src="web.png" alt="memoryweb" /></div>
 
-A memory MCP server for agents.
+A persistent knowledge graph MCP server for AI agents.
 
 ## The idea
 
-Human memory doesn't work by location. You don't retrieve a fact from a filing cabinet. You pull a thread. A smell connects to a kitchen, connects to a person, connects to a feeling from thirty years ago. The thread is always there. Pull any part of it and the rest follows.
+Human memory doesn't work by location — you pull a thread. A smell connects to a kitchen, connects to a person, connects to a feeling from thirty years ago. The thread is always there. Pull any part of it and the rest follows.
 
-This is why the memory palace works. Place feels like storage — *this fact lives in this room* — but that's not what's actually happening. Place creates a sequence. A sequence creates a story. The story is what holds the memory. Location is just a human shortcut for narrative.
+Agents are no different. Context is tokens in relation to other tokens. What makes something retrievable is its associative chain — the path of connections that lead to it from something else. The narrative edge, the *because*, is the mechanism. Not the index, not the address.
 
-Agents don't navigate by location at all. There is no place. Context is tokens in relation to other tokens. What makes something retrievable is its associative chain — the path of connections that lead to it from something else. The narrative edge, the *because*, is the mechanism. Not the index, not the address.
+*The boot crash matters because it blocks the tutorial, which blocks the demo, which is why the fix matters now.* Pull on any of those threads and you get the rest. memoryweb works the same way: each concept is a node, and what makes it reachable is the narrative that links it to everything else.
 
-You don't remember facts in isolation. You remember them because of what they connect to. *The boot crash is significant because it blocks the tutorial, which blocks the demo, which is why the fix matters now.* Pull on any of those threads and you get the rest.
+> The graph has considerably richer context than my flat file memory — including design decisions, failure modes from dogfooding, and the philosophy behind the tool. That's the point, I suppose.
 
-memoryweb works the same way. Each concept is a node. What makes it retrievable is the narrative edge — the *because* that links it to something else. A concept with rich connections is reachable from many starting points. A concept filed alone, with no story linking it to anything, is effectively lost.
-
->  The graph has considerably richer context than my flat file memory — including design decisions, failure modes from dogfooding, and the philosophy behind the tool. That's the point, I suppose.
-
--- Claude Opus 4.6 on finding memories using memoryweb, about memoryweb
+-- Claude Opus 4.6
 
 ## Philosophy
 
-memoryweb optimises for remembering things well, not remembering things fast. Filing requires a moment of judgement: why does this matter, how does it connect to what else is known, what would be useful to know when coming back to this cold?
+memoryweb optimises for remembering things *well*, not remembering things fast. Filing requires a moment of judgement: why does this matter, how does it connect to what else is known, what would be useful to know when coming back to this cold?
 
-The metric is whether the next session starts with genuine understanding rather than a pile of raw facts.
+This makes it a **decision log**, not an event log. An event log records what happened. A decision log records what was learned, decided, and why — and that's what lets you pick up where you left off without re-learning everything.
 
-This makes memoryweb a decision log, not an event log. The difference matters:
-
-- An event log records what happened. A decision log records what was learned, decided, and why.
-- An event log grows automatically. A decision log requires intent.
-- An event log is useful for reconstructing the past. A decision log is useful for continuing work.
-
-For long-running technical projects — where the hard problems are architectural decisions, subtle bugs, and design tradeoffs — the decision log is what lets you pick up where you left off without re-learning everything.
-
-The `why_matters` field is not optional. A node without it is an event, not a decision. Nodes without `why_matters` will surface as drift candidates.
+The `why_matters` field is not optional. A node without it is an event, not a decision.
 
 ## Tools
 
-### Core graph
+### Filing memories
 
 | Tool | What it does |
 |------|-------------|
-| `add_node` | File a concept, decision, or finding. Required: `label`, `domain`. Optional: `description`, `why_matters`, `occurred_at` (ISO8601 date/datetime when it actually happened), `tags` (space-separated search keywords), `related_to` (auto-connect to existing nodes at creation), `transient` (mark as short-lived knowledge). |
-| `add_edge` | Connect two nodes with a typed relationship and a narrative "because". Both nodes must exist first. |
-| `add_nodes` | Batch version of `add_node` — insert multiple nodes in one transaction. Supports all the same fields per node. |
-| `add_edges` | Batch version of `add_edge` — insert multiple edges in one transaction. |
-| `update_node` | Update `label`, `description`, `why_matters`, or `tags` on an existing node without archiving it. Only supplied fields are changed; omitted fields keep their current values. Writes an audit log entry on every call recording changed fields and their previous values. |
-| `get_node` | Retrieve a node and all its connections by ID. |
-| `search_nodes` | Text search across `label`, `description`, `why_matters`, and `tags`. Optionally scope to a domain. Falls back to individual-word OR matching when no field contains the full phrase. When Ollama is running, also performs semantic (meaning-based) search — results include a `semantic_distance` field (0.0–1.0, lower = closer) when matched semantically. |
-| `find_connections` | Look up the reasoning linking two named concepts. Use this when asked why or how two things relate. |
-| `recent_changes` | What was filed recently. Good for session orientation. Set `group_by_domain=true` (with no domain) to see recent activity broken down per domain. |
-| `timeline` | Nodes ordered by when they actually occurred (not when filed). Supports date range filtering with `from` and `to`. |
-| `summarise_domain` | Return all nodes for a domain structured for synthesis — covering current state, blockers, recent decisions, and open questions. Includes node IDs so agents can pass them directly to `update_node` or `add_edge` without a second lookup. |
-| `suggest_edges` | Given a node ID, return up to 5 candidate connections from the same domain whose labels, descriptions, or tags overlap. Use this after filing a new node to discover likely connections before calling `add_edge`. Read-only — never creates edges. |
+| `remember` | File a single concept, decision, or finding. Required: `label`, `domain`. Optional: `description`, `why_matters`, `occurred_at` (ISO8601), `tags` (space-separated keywords), `related_to` (auto-connect at creation), `transient` (mark as short-lived). Response includes `suggested_connections` and `possible_duplicates`. |
+| `remember_all` | Batch version of `remember` — insert multiple nodes in one transaction. Returns `[{node, suggested_connections}]` per entry. |
+| `revise` | Update `label`, `description`, `why_matters`, or `tags` on a live node without archiving it. Only supplied fields are changed. Writes an audit log entry on every call. |
+| `revise_all` | Batch version of `revise` — update multiple nodes in one transaction. All succeed or all roll back. |
+
+### Connecting memories
+
+| Tool | What it does |
+|------|-------------|
+| `connect` | Connect two nodes with a typed relationship and narrative *because*. Both nodes must exist first. |
+| `connect_all` | Batch version of `connect` — insert multiple connections in one transaction. |
+| `disconnect` | Remove a connection by edge ID. Hard delete — cannot be restored. Obtain the ID from `recall`. |
+| `suggest_connections` | Given a node ID, return up to 5 candidate connections from the same domain. Read-only. |
+
+### Retrieving memories
+
+| Tool | What it does |
+|------|-------------|
+| `recall` | Retrieve a node and all its connections by ID. |
+| `search` | Text search across `label`, `description`, `why_matters`, and `tags`. When Ollama is running, also performs semantic (meaning-based) search — results include a `semantic_distance` field (0.0–1.0, lower = closer). |
+| `recent` | What was filed recently. Set `group_by_domain=true` (with no domain) to see activity broken down per domain. |
+| `history` | Nodes ordered by when they actually occurred. Supports `from`/`to` date range filtering. |
+| `why_connected` | Look up the reasoning linking two named concepts. |
+| `orient` | Return all nodes for a domain structured for synthesis — current state, blockers, decisions, open questions. Includes `total_nodes` so you know when the view is truncated. |
+| `list_domains` | List all domains that have at least one live node. Use at session start to discover what domains exist before scoping a search. |
 
 ### Archive / forget
 
-Nodes are never hard-deleted via the tools. Archive = soft delete; the node disappears from search and retrieval but can be restored at any time.
+Nodes are never hard-deleted via the tools. Archive = soft delete; the node disappears from search but can be restored.
 
 | Tool | What it does |
 |------|-------------|
-| `forget_node` | Archive a node with a reason. Strict protocol: only after drift surfaces a candidate or the user explicitly confirms. |
-| `restore_node` | Un-archive a node so it surfaces in search again. |
-| `list_archived` | Review what's been forgotten. Optionally scope by domain. |
-
-### Drift detection
-
-| Tool | What it does |
-|------|-------------|
-| `drift` | Surface nodes that may be stale, contradicted, duplicated, or transient and overdue for archiving. Returns candidates for review — never archives automatically. |
+| `forget` | Archive a node with a reason. Strict protocol: only after `whats_stale` surfaces a candidate or the user explicitly confirms. |
+| `restore` | Restore an archived node so it surfaces in search again. |
+| `forgotten` | Review what's been archived. Optionally scope by domain. |
+| `whats_stale` | Surface nodes that may be stale, contradicted, duplicated, or transient and overdue. Returns candidates for review — never archives automatically. |
 
 ### Domain aliases
 
 | Tool | What it does |
 |------|-------------|
-| `add_alias` | Register an alternative name for a domain so both names return the same results. |
-| `remove_alias` | Remove a registered alias. Returns an error if it does not exist. |
+| `alias_domain` | Register an alternative name for a domain so both names return the same results. |
+| `remove_alias` | Remove a registered alias. |
 | `list_aliases` | List all registered aliases and what they map to. |
 | `resolve_domain` | Check what canonical domain a name resolves to. |
 
@@ -157,13 +153,14 @@ Add to your MCP host's config (example for Claude Desktop on macOS — `~/Librar
 ## Conventions
 
 - Use `domain` to separate concerns: `deep-game`, `sedex`, `general`
+- Call `list_domains` at session start if you don't know what domains exist
 - The `why_matters` field is the most important one for retrieval — don't skip it
-- The `narrative` on an edge is the *because* — the reasoning that makes the connection meaningful, not just the fact that a connection exists
-- Add edges immediately after adding related nodes, or use `related_to` on `add_node` to auto-connect at creation time
-- Call `recent_changes` or `summarise_domain` at the start of a session to orient without needing to know what to search for
-- Use `find_connections` when asking about the relationship between two specific things
-- Use `transient: true` for ticket state, sprint notes, or anything expected to go stale within days — `drift` will surface these for cleanup
-- After filing a new node, call `suggest_edges` to find connection candidates before moving on
+- The `narrative` on a connection is the *because* — the reasoning that makes it meaningful, not just the fact that a connection exists
+- Add connections immediately after filing related nodes, or use `related_to` on `remember` to auto-connect at creation time
+- Call `recent` or `orient` at the start of a session to orient without needing to know what to search for
+- Use `why_connected` when asking about the relationship between two specific things
+- Use `transient: true` for ticket state, sprint notes, or anything expected to go stale within days — `whats_stale` will surface these for cleanup
+- `remember` returns `suggested_connections` and `possible_duplicates` — review both before filing more nodes
 
 ## Hooks
 
@@ -172,7 +169,7 @@ Two Claude Code hooks automate filing and pre-compaction capture.
 ### What they do
 
 **`hooks/memoryweb_save_hook.sh`** (Stop hook — fires after every AI response)  
-Counts human messages in the session transcript. Every `SAVE_INTERVAL` messages (default 15) it blocks the response and asks the model to call `add_nodes` and `add_edges` for anything significant before continuing. Before blocking, it runs `memoryweb dream` and embeds the resulting digest — recent nodes and drift candidates — directly in the `stopReason` so the model has live context before it files. If `memoryweb` is not available the hook still blocks but omits the digest. Uses a re-entry flag so the block fires once and allows immediately after the model files.
+Counts human messages in the session transcript. Every `SAVE_INTERVAL` messages (default 15) it blocks the response and asks the model to call `remember_all` and `connect_all` for anything significant before continuing. Before blocking, it runs `memoryweb dream` and embeds the resulting digest — recent nodes and drift candidates — directly in the `stopReason` so the model has live context before it files. If `memoryweb` is not available the hook still blocks but omits the digest. Uses a re-entry flag so the block fires once and allows immediately after the model files.
 
 **`hooks/memoryweb_precompact_hook.sh`** (PreCompact hook — fires before context compaction)  
 Blocks compaction once and asks the model to file everything important that hasn't been filed yet. Allows on re-entry so compaction proceeds after the filing pass.

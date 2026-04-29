@@ -215,6 +215,7 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		"whats_stale", "orient",
 		"remember_all", "connect_all",
 		"suggest_connections",
+		"list_domains", "disconnect",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {
@@ -766,6 +767,50 @@ func TestFindConnections_ArchivedNodeNotMatched(t *testing.T) {
 	}
 }
 
+// ── disconnect ────────────────────────────────────────────────────────────────
+
+func TestDisconnect_RemovesEdge(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "Cause Node", "proj", nil)
+	to := addNode(t, h, "Effect Node", "proj", nil)
+
+	connectTr := call(t, h, "connect", map[string]any{
+		"from_node": from, "to_node": to, "relationship": "led_to",
+	})
+	mustNotError(t, connectTr)
+	var edge struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal([]byte(text(t, connectTr)), &edge)
+
+	// Disconnect it.
+	mustNotError(t, call(t, h, "disconnect", map[string]any{"id": edge.ID}))
+
+	// Edge should no longer appear on recall.
+	recallTr := call(t, h, "recall", map[string]any{"id": from})
+	mustNotError(t, recallTr)
+	var nwe struct {
+		Edges []struct {
+			ID string `json:"id"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, recallTr)), &nwe)
+	for _, e := range nwe.Edges {
+		if e.ID == edge.ID {
+			t.Error("edge should be gone after disconnect")
+		}
+	}
+}
+
+func TestDisconnect_NonExistentReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "disconnect", map[string]any{"id": "edge-ghost-xxx"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "not found") {
+		t.Errorf("expected 'not found' error; got: %s", text(t, tr))
+	}
+}
+
 // ── recent_changes ────────────────────────────────────────────────────────────
 
 func TestRecentChanges_ReturnsNodes(t *testing.T) {
@@ -1056,6 +1101,62 @@ func TestTimeline_EmptyReturnsGracefully(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "history", map[string]any{})
 	mustNotError(t, tr)
+}
+
+// ── list_domains ──────────────────────────────────────────────────────────────
+
+func TestListDomains_ReturnsDistinctDomains(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Node A", "domain-alpha", nil)
+	addNode(t, h, "Node B", "domain-beta", nil)
+	addNode(t, h, "Node C", "domain-alpha", nil) // duplicate domain
+
+	tr := call(t, h, "list_domains", map[string]any{})
+	mustNotError(t, tr)
+
+	var domains []string
+	if err := json.Unmarshal([]byte(text(t, tr)), &domains); err != nil {
+		t.Fatalf("parse list_domains response: %v", err)
+	}
+	if len(domains) != 2 {
+		t.Errorf("expected 2 distinct domains, got %d: %v", len(domains), domains)
+	}
+	if !contains(domains, "domain-alpha") {
+		t.Error("expected domain-alpha in result")
+	}
+	if !contains(domains, "domain-beta") {
+		t.Error("expected domain-beta in result")
+	}
+}
+
+func TestListDomains_ExcludesArchivedOnlyDomains(t *testing.T) {
+	store, h := newEnv(t)
+	id := addNode(t, h, "Ghost node", "dead-domain", nil)
+	store.ArchiveNode(id, "test")
+	addNode(t, h, "Live node", "live-domain", nil)
+
+	tr := call(t, h, "list_domains", map[string]any{})
+	mustNotError(t, tr)
+
+	var domains []string
+	json.Unmarshal([]byte(text(t, tr)), &domains)
+	if contains(domains, "dead-domain") {
+		t.Error("dead-domain should not appear: all its nodes are archived")
+	}
+	if !contains(domains, "live-domain") {
+		t.Error("live-domain should appear")
+	}
+}
+
+func TestListDomains_EmptyDB(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "list_domains", map[string]any{})
+	mustNotError(t, tr)
+	var domains []string
+	json.Unmarshal([]byte(text(t, tr)), &domains)
+	if len(domains) != 0 {
+		t.Errorf("expected empty list, got %v", domains)
+	}
 }
 
 // ── aliases ───────────────────────────────────────────────────────────────────
@@ -1657,6 +1758,27 @@ func TestSummariseDomain_IncludesRecentChanges(t *testing.T) {
 	}
 }
 
+// TestOrient_IncludesTotalNodes: orient response must include total_nodes count.
+func TestOrient_IncludesTotalNodes(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Alpha orient", "orient-total", nil)
+	addNode(t, h, "Beta orient", "orient-total", nil)
+	addNode(t, h, "Gamma orient", "orient-total", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-total"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		TotalNodes int `json:"total_nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.TotalNodes != 3 {
+		t.Errorf("total_nodes: got %d, want 3", resp.TotalNodes)
+	}
+}
+
 // ── add_nodes / add_edges (bulk) ──────────────────────────────────────────────
 
 // TestAddNodesBulk: three nodes inserted in one call; all IDs returned and
@@ -1673,23 +1795,125 @@ func TestAddNodesBulk(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var ids []string
-	if err := json.Unmarshal([]byte(text(t, tr)), &ids); err != nil {
-		t.Fatalf("parse add_nodes response: %v", err)
+	var result []struct {
+		Node struct {
+			ID string `json:"id"`
+		} `json:"node"`
+		SuggestedConnections []struct {
+			ID string `json:"id"`
+		} `json:"suggested_connections"`
 	}
-	if len(ids) != 3 {
-		t.Fatalf("expected 3 IDs, got %d", len(ids))
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse remember_all response: %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(result))
 	}
 
 	labels := []string{"Bulk Node Alpha", "Bulk Node Beta", "Bulk Node Gamma"}
 	for i, label := range labels {
+		id := result[i].Node.ID
+		if id == "" {
+			t.Errorf("entry %d: node.id is empty", i)
+			continue
+		}
 		searchTr := call(t, h, "search", map[string]any{
 			"query": label, "domain": "bulk-test",
 		})
 		mustNotError(t, searchTr)
-		if !contains(searchIDs(t, searchTr), ids[i]) {
-			t.Errorf("node %q (%s) not found after add_nodes", label, ids[i])
+		if !contains(searchIDs(t, searchTr), id) {
+			t.Errorf("node %q (%s) not found after remember_all", label, id)
 		}
+	}
+}
+
+// TestAddNodesBulk_ResponseShape: remember_all must return [{node, suggested_connections}].
+func TestAddNodesBulk_ResponseShape(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember_all", map[string]any{
+		"nodes": []map[string]any{
+			{"label": "Shape Bulk One", "domain": "shape-test"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var result []struct {
+		Node                 *struct{ ID string `json:"id"` }    `json:"node"`
+		SuggestedConnections *[]struct{ ID string `json:"id"` } `json:"suggested_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse remember_all response: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(result))
+	}
+	if result[0].Node == nil {
+		t.Error("each entry must have a 'node' field")
+	}
+	if result[0].SuggestedConnections == nil {
+		t.Error("each entry must have a 'suggested_connections' field")
+	}
+}
+
+// TestRemember_PossibleDuplicates: filing a node with a near-identical label in
+// the same domain should surface the existing node in possible_duplicates.
+func TestRemember_PossibleDuplicates(t *testing.T) {
+	_, h := newEnv(t)
+	existingID := addNode(t, h, "Boot Crash Diagnosis", "proj", nil)
+
+	tr := call(t, h, "remember", map[string]any{
+		"label":  "boot crash diagnosis",
+		"domain": "proj",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Node struct {
+			ID string `json:"id"`
+		} `json:"node"`
+		PossibleDuplicates []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"possible_duplicates"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+	if resp.PossibleDuplicates == nil {
+		t.Fatal("possible_duplicates field must always be present")
+	}
+	found := false
+	for _, d := range resp.PossibleDuplicates {
+		if d.ID == existingID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("existing node %q should appear in possible_duplicates; got %+v", existingID, resp.PossibleDuplicates)
+	}
+}
+
+// TestRemember_PossibleDuplicates_EmptyWhenNone: filing in a fresh domain
+// returns an empty possible_duplicates slice.
+func TestRemember_PossibleDuplicates_EmptyWhenNone(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"label":  "Unique Label XYZ",
+		"domain": "fresh-domain",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		PossibleDuplicates []struct {
+			ID string `json:"id"`
+		} `json:"possible_duplicates"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	if resp.PossibleDuplicates == nil {
+		t.Error("possible_duplicates must be present even when empty")
+	}
+	if len(resp.PossibleDuplicates) != 0 {
+		t.Errorf("expected no duplicates in fresh domain, got %d", len(resp.PossibleDuplicates))
 	}
 }
 
