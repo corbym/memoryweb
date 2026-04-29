@@ -1614,6 +1614,122 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	return &n, nil
 }
 
+// NodeUpdateInput is a single entry in an UpdateNodesBatch call.
+type NodeUpdateInput struct {
+	ID          string
+	Label       *string
+	Description *string
+	WhyMatters  *string
+	Tags        *string
+}
+
+// UpdateNodesBatch updates multiple nodes in a single transaction.
+// All updates succeed or all are rolled back.
+func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
+	if len(inputs) == 0 {
+		return []*Node{}, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	nodes := make([]*Node, 0, len(inputs))
+
+	for _, inp := range inputs {
+		var cur Node
+		var curOA, curAA sql.NullTime
+		if err := tx.QueryRow(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+			 FROM nodes WHERE id = ? AND archived_at IS NULL`, inp.ID,
+		).Scan(&cur.ID, &cur.Label, &cur.Description, &cur.WhyMatters, &cur.Domain,
+			&cur.CreatedAt, &cur.UpdatedAt, &curOA, &curAA, &cur.Tags, &cur.Transient); err != nil {
+			tx.Rollback()
+			if err == sql.ErrNoRows {
+				return nil, fmt.Errorf("node not found: %s", inp.ID)
+			}
+			return nil, err
+		}
+
+		sets := []string{"updated_at = ?"}
+		args := []interface{}{now}
+		var changes []string
+
+		if inp.Label != nil {
+			sets = append(sets, "label = ?")
+			args = append(args, *inp.Label)
+			if *inp.Label != cur.Label {
+				changes = append(changes, fmt.Sprintf("label (was %q)", cur.Label))
+			}
+		}
+		if inp.Description != nil {
+			sets = append(sets, "description = ?")
+			args = append(args, *inp.Description)
+			if *inp.Description != cur.Description {
+				changes = append(changes, fmt.Sprintf("description (was %q)", cur.Description))
+			}
+		}
+		if inp.WhyMatters != nil {
+			sets = append(sets, "why_matters = ?")
+			args = append(args, *inp.WhyMatters)
+			if *inp.WhyMatters != cur.WhyMatters {
+				changes = append(changes, fmt.Sprintf("why_matters (was %q)", cur.WhyMatters))
+			}
+		}
+		if inp.Tags != nil {
+			sets = append(sets, "tags = ?")
+			args = append(args, *inp.Tags)
+			if *inp.Tags != cur.Tags {
+				changes = append(changes, fmt.Sprintf("tags (was %q)", cur.Tags))
+			}
+		}
+		args = append(args, inp.ID)
+
+		if _, err := tx.Exec(
+			`UPDATE nodes SET `+strings.Join(sets, ", ")+` WHERE id = ?`,
+			args...,
+		); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		reason := "no fields changed"
+		if len(changes) > 0 {
+			reason = "changed: " + strings.Join(changes, "; ")
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			"auditlog-"+shortID(), "update", inp.ID, cur.Label, reason, now,
+		); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		// Re-fetch within the tx.
+		var n Node
+		var oa, aa sql.NullTime
+		if err := tx.QueryRow(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+			 FROM nodes WHERE id = ?`, inp.ID,
+		).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		nodes = append(nodes, &n)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
 // ── edge suggestions ──────────────────────────────────────────────────────────
 
 // EdgeSuggestion is a candidate connection returned by SuggestEdges.

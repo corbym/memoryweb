@@ -304,15 +304,22 @@ func seedRealisticDB(t *testing.T, dbPath string) {
 		if r.IsError {
 			t.Fatalf("seedRealisticDB: tool %q returned error: %v", name, r.Content)
 		}
-		var node struct {
+		// Try new shape first ({node: {id: ...}}), then fall back to root {id: ...}.
+		var nodeResp struct {
+			Node struct {
+				ID string `json:"id"`
+			} `json:"node"`
 			ID string `json:"id"`
 		}
 		if len(r.Content) > 0 {
-			if err := json.Unmarshal([]byte(r.Content[0].Text), &node); err != nil {
+			if err := json.Unmarshal([]byte(r.Content[0].Text), &nodeResp); err != nil {
 				t.Fatalf("seedRealisticDB: unmarshal node ID from %q response: %v", name, err)
 			}
 		}
-		return node.ID
+		if nodeResp.Node.ID != "" {
+			return nodeResp.Node.ID
+		}
+		return nodeResp.ID
 	}
 
 	// Domain: deep-game — a game development project with decisions, findings,

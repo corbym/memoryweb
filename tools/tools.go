@@ -65,7 +65,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",
-			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer remember_all for batches — and always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists. If so, suggest linking to it with connect rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates. Use transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete. After filing, call suggest_connections with the new node ID to find connection candidates.",
+			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer remember_all for batches — and always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists. If so, suggest linking to it with connect rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates. Use transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete. The response includes a suggested_connections field — review these and call connect for any that are relevant.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -274,7 +274,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 	{
-		Name:        "update",
+		Name:        "revise",
 		Description: "Update the label, description, why_matters, or tags of an existing live memory. Only the fields you provide are changed — omitted fields keep their current values. Use this to enrich or correct a memory without archiving and recreating it. Returns the full updated memory.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -315,6 +315,21 @@ func (h *Handler) ListTools() (interface{}, error) {
 				Required: []string{"edges"},
 			},
 		},
+	{
+		Name:        "revise_all",
+		Description: "Update multiple existing memories in a single transaction. All updates succeed or all are rolled back. Only the fields you provide are changed — omitted fields keep their current values.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"updates": {
+					Type:        "array",
+					Description: "Array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags.",
+					Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"}},"required":["id"]}`),
+				},
+			},
+			Required: []string{"updates"},
+		},
+	},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -367,8 +382,10 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.suggestEdges(req.Arguments)
 	case "connect_all":
 		result, err = h.addEdges(req.Arguments)
-	case "update":
+	case "revise":
 		result, err = h.updateNode(req.Arguments)
+	case "revise_all":
+		result, err = h.updateNodes(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -434,7 +451,19 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		}
 	}
 
-	b, _ := json.MarshalIndent(node, "", "  ")
+	suggestions, err := h.store.SuggestEdges(node.ID, 5)
+	if err != nil || suggestions == nil {
+		suggestions = []db.EdgeSuggestion{}
+	}
+
+	resp := struct {
+		Node                 *db.Node           `json:"node"`
+		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
+	}{
+		Node:                 node,
+		SuggestedConnections: suggestions,
+	}
+	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
@@ -896,6 +925,43 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	b, _ := json.MarshalIndent(node, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Updates []struct {
+			ID          string  `json:"id"`
+			Label       *string `json:"label"`
+			Description *string `json:"description"`
+			WhyMatters  *string `json:"why_matters"`
+			Tags        *string `json:"tags"`
+		} `json:"updates"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	inputs := make([]db.NodeUpdateInput, len(a.Updates))
+	for i, u := range a.Updates {
+		if u.ID == "" {
+			return nil, fmt.Errorf("update %d: id is required", i)
+		}
+		inputs[i] = db.NodeUpdateInput{
+			ID:          u.ID,
+			Label:       u.Label,
+			Description: u.Description,
+			WhyMatters:  u.WhyMatters,
+			Tags:        u.Tags,
+		}
+	}
+	nodes, err := h.store.UpdateNodesBatch(inputs)
+	if err != nil {
+		return nil, err
+	}
+	resp := struct {
+		Updated []*db.Node `json:"updated"`
+	}{Updated: nodes}
+	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 

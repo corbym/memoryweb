@@ -140,16 +140,18 @@ func addNode(t *testing.T, h *tools.Handler, label, domain string, extras map[st
 	}
 	tr := call(t, h, "remember", args)
 	mustNotError(t, tr)
-	var n struct {
-		ID string `json:"id"`
+	var resp struct {
+		Node struct {
+			ID string `json:"id"`
+		} `json:"node"`
 	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &n); err != nil {
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse add_node response: %v", err)
 	}
-	if n.ID == "" {
+	if resp.Node.ID == "" {
 		t.Fatal("add_node returned empty ID")
 	}
-	return n.ID
+	return resp.Node.ID
 }
 
 // searchIDs returns the node IDs from a search_nodes response.
@@ -378,11 +380,13 @@ func TestAddNode_WithOccurredAtDateOnly(t *testing.T) {
 		"occurred_at": "2026-04-01",
 	})
 	mustNotError(t, tr)
-	var n struct {
-		OccurredAt string `json:"occurred_at"`
+	var resp struct {
+		Node struct {
+			OccurredAt string `json:"occurred_at"`
+		} `json:"node"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &n)
-	if n.OccurredAt == "" {
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	if resp.Node.OccurredAt == "" {
 		t.Error("occurred_at not set in response")
 	}
 }
@@ -1788,7 +1792,7 @@ func TestUpdateNode_UpdatesDescription(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "My Decision", "proj", nil)
 
-	tr := call(t, h, "update", map[string]any{
+	tr := call(t, h, "revise", map[string]any{
 		"id":          id,
 		"description": "improved description with better search terms",
 	})
@@ -1813,7 +1817,7 @@ func TestUpdateNode_UpdatesMultipleFields(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Old Title", "proj", nil)
 
-	tr := call(t, h, "update", map[string]any{
+	tr := call(t, h, "revise", map[string]any{
 		"id":          id,
 		"label":       "New Title",
 		"why_matters": "now has an outcome",
@@ -1840,7 +1844,7 @@ func TestUpdateNode_UpdatesMultipleFields(t *testing.T) {
 
 func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "update", map[string]any{
+	tr := call(t, h, "revise", map[string]any{
 		"id":          "nonexistent-node-xxx",
 		"description": "whatever",
 	})
@@ -1852,7 +1856,7 @@ func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
 	id := addNode(t, h, "Will Be Archived", "proj", nil)
 	call(t, h, "forget", map[string]any{"id": id, "reason": "test"})
 
-	tr := call(t, h, "update", map[string]any{
+	tr := call(t, h, "revise", map[string]any{
 		"id":    id,
 		"label": "New Label",
 	})
@@ -1873,7 +1877,7 @@ func TestUpdateNode_SearchableAfterTagsUpdate(t *testing.T) {
 	}
 
 	// After adding tags, the query must find it.
-	call(t, h, "update", map[string]any{
+	call(t, h, "revise", map[string]any{
 		"id":   id,
 		"tags": "testing approval parameterised withNamesuffix",
 	})
@@ -1883,6 +1887,102 @@ func TestUpdateNode_SearchableAfterTagsUpdate(t *testing.T) {
 	if !contains(searchIDs(t, trAfter), id) {
 		t.Error("node not findable via tags after update_node")
 	}
+}
+
+// ── update_all ────────────────────────────────────────────────────────────────
+
+// TestUpdateAll_UpdatesMultipleNodes: three nodes updated in one call; all
+// changes are persisted and visible via search.
+func TestUpdateAll_UpdatesMultipleNodes(t *testing.T) {
+	_, h := newEnv(t)
+	id1 := addNode(t, h, "Node One", "proj", nil)
+	id2 := addNode(t, h, "Node Two", "proj", nil)
+	id3 := addNode(t, h, "Node Three", "proj", nil)
+
+	desc1 := "updated description one"
+	desc2 := "updated description two"
+	tags3 := "bulk update tag"
+
+	tr := call(t, h, "revise_all", map[string]any{
+		"updates": []map[string]any{
+			{"id": id1, "description": desc1},
+			{"id": id2, "description": desc2},
+			{"id": id3, "tags": tags3},
+		},
+	})
+	mustNotError(t, tr)
+
+	var result struct {
+		Updated []struct {
+			ID          string `json:"id"`
+			Description string `json:"description"`
+			Tags        string `json:"tags"`
+		} `json:"updated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse update_all response: %v", err)
+	}
+	if len(result.Updated) != 3 {
+		t.Fatalf("expected 3 updated nodes, got %d", len(result.Updated))
+	}
+
+	byID := map[string]struct {
+		Description string
+		Tags        string
+	}{}
+	for _, n := range result.Updated {
+		byID[n.ID] = struct {
+			Description string
+			Tags        string
+		}{n.Description, n.Tags}
+	}
+	if byID[id1].Description != desc1 {
+		t.Errorf("id1 description: got %q, want %q", byID[id1].Description, desc1)
+	}
+	if byID[id2].Description != desc2 {
+		t.Errorf("id2 description: got %q, want %q", byID[id2].Description, desc2)
+	}
+	if byID[id3].Tags != tags3 {
+		t.Errorf("id3 tags: got %q, want %q", byID[id3].Tags, tags3)
+	}
+}
+
+// TestUpdateAll_RollsBackOnError: if any entry references a non-existent ID
+// the whole batch must be rolled back and no changes persist.
+func TestUpdateAll_RollsBackOnError(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "Rollback Node", "proj", nil)
+
+	tr := call(t, h, "revise_all", map[string]any{
+		"updates": []map[string]any{
+			{"id": id, "description": "will be rolled back"},
+			{"id": "ghost-id-that-does-not-exist", "description": "invalid"},
+		},
+	})
+	mustError(t, tr)
+
+	// Verify the valid node was NOT updated.
+	recallTr := call(t, h, "recall", map[string]any{"id": id})
+	mustNotError(t, recallTr)
+	var nwe struct {
+		Node struct {
+			Description string `json:"description"`
+		} `json:"node"`
+	}
+	json.Unmarshal([]byte(text(t, recallTr)), &nwe)
+	if nwe.Node.Description == "will be rolled back" {
+		t.Error("description should have been rolled back, but was persisted")
+	}
+}
+
+// TestUpdateAll_EmptyUpdatesReturnsEmpty: calling with an empty updates list
+// returns an empty result without error.
+func TestUpdateAll_EmptyUpdatesReturnsEmpty(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "revise_all", map[string]any{
+		"updates": []map[string]any{},
+	})
+	mustNotError(t, tr)
 }
 
 // ── add_node tags ─────────────────────────────────────────────────────────────
@@ -1911,12 +2011,78 @@ func TestAddNode_WithTags_TagsInResponse(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var n struct {
-		Tags string `json:"tags"`
+	var resp struct {
+		Node struct {
+			Tags string `json:"tags"`
+		} `json:"node"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &n)
-	if n.Tags != "alpha beta gamma" {
-		t.Errorf("tags in response: got %q", n.Tags)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	if resp.Node.Tags != "alpha beta gamma" {
+		t.Errorf("tags in response: got %q", resp.Node.Tags)
+	}
+}
+
+// TestAddNode_ResponseShape: remember must return {node, suggested_connections}.
+func TestAddNode_ResponseShape(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"label":  "Shape test node",
+		"domain": "proj",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Node                 *struct{ ID string `json:"id"` }    `json:"node"`
+		SuggestedConnections *[]struct{ ID string `json:"id"` } `json:"suggested_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+	if resp.Node == nil {
+		t.Error("response must have a 'node' field")
+	}
+	if resp.SuggestedConnections == nil {
+		t.Error("response must have a 'suggested_connections' field (even if empty)")
+	}
+}
+
+// TestAddNode_ResponseIncludesSuggestedConnections: when a related node already
+// exists in the same domain, it should appear in suggested_connections.
+func TestAddNode_ResponseIncludesSuggestedConnections(t *testing.T) {
+	_, h := newEnv(t)
+	existingID := addNode(t, h, "RST crash root cause", "proj", map[string]any{
+		"description": "ROM calls RST $10 which hangs the boot sequence",
+	})
+
+	tr := call(t, h, "remember", map[string]any{
+		"label":       "RST crash investigation",
+		"domain":      "proj",
+		"description": "RST $10 handler analysis",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Node struct {
+			ID string `json:"id"`
+		} `json:"node"`
+		SuggestedConnections []struct {
+			ID     string `json:"id"`
+			Label  string `json:"label"`
+			Reason string `json:"reason"`
+		} `json:"suggested_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+
+	found := false
+	for _, s := range resp.SuggestedConnections {
+		if s.ID == existingID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected existingID %q in suggested_connections; got %+v", existingID, resp.SuggestedConnections)
 	}
 }
 
@@ -2043,12 +2209,14 @@ func TestAddNode_WithRelatedTo_UnknownIDSilentlySkipped(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var n struct {
-		ID string `json:"id"`
+	var resp struct {
+		Node struct {
+			ID string `json:"id"`
+		} `json:"node"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &n)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
 
-	gettr := call(t, h, "recall", map[string]any{"id": n.ID})
+	gettr := call(t, h, "recall", map[string]any{"id": resp.Node.ID})
 	mustNotError(t, gettr)
 
 	var nwe struct {
@@ -2086,7 +2254,7 @@ func TestAddNodes_WithTags_Searchable(t *testing.T) {
 // ── audit_log for update_node ─────────────────────────────────────────────────
 
 // TestAuditLog_RecordsUpdateNode: every call to update_node must write an
-// audit_log entry with action="update". The reason must name the changed
+// audit_log entry with action="revise". The reason must name the changed
 // fields and their old values.
 func TestAuditLog_RecordsUpdateNode(t *testing.T) {
 	dbPath, _, h := newEnvWithPath(t)
@@ -2094,7 +2262,7 @@ func TestAuditLog_RecordsUpdateNode(t *testing.T) {
 		"description": "original description",
 	})
 
-	mustNotError(t, call(t, h, "update", map[string]any{
+	mustNotError(t, call(t, h, "revise", map[string]any{
 		"id":          id,
 		"description": "improved description",
 		"why_matters": "now it matters more",
@@ -2287,9 +2455,15 @@ func TestAddNode_Transient_PersistedAndReturned(t *testing.T) {
 	var n struct {
 		Transient bool `json:"transient"`
 	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &n); err != nil {
+	var resp struct {
+		Node struct {
+			Transient bool `json:"transient"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse add_node response: %v", err)
 	}
+	n.Transient = resp.Node.Transient
 	if !n.Transient {
 		t.Error("transient=true should be present in add_node response")
 	}
