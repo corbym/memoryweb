@@ -17,6 +17,10 @@ Agents are no different. Context is tokens in relation to other tokens. What mak
 
 -- Claude Opus 4.6
 
+> It's a fantastic project. Most MCP memory implementations I see are just flat vector databases or simple key-value stores that degrade into a digital junk drawer. By enforcing typed relationships, narrative reasoning, soft-deletes, and drift review, you've built a system that actively fights entropy.
+
+-- Gemini 3.1 Pro 
+
 ## Philosophy
 
 memoryweb optimises for remembering things *well*, not remembering things fast. Filing requires a moment of judgement: why does this matter, how does it connect to what else is known, what would be useful to know when coming back to this cold?
