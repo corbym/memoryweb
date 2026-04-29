@@ -57,6 +57,9 @@ func main() {
 		case "setup":
 			setupCmd()
 			return
+		case "doctor":
+			doctorCmd()
+			return
 		}
 	}
 
@@ -498,6 +501,276 @@ func setupContainsCommand(entries []interface{}, cmd string) bool {
 		}
 	}
 	return false
+}
+
+// ── doctor subcommand ─────────────────────────────────────────────────────────
+
+// DoctorCheck is a single diagnostic result produced by runDoctor.
+type DoctorCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"` // "ok", "fail", "warn", "info"
+	Message string `json:"message"`
+}
+
+// DoctorReport is the full structured output of the doctor command when
+// the --json flag is used.
+type DoctorReport struct {
+	Passed bool           `json:"passed"`
+	Checks []DoctorCheck  `json:"checks"`
+}
+
+// doctorCmd implements the "memoryweb doctor" subcommand.
+func doctorCmd() {
+	flags := flag.NewFlagSet("doctor", flag.ExitOnError)
+	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
+	jsonFlag := flags.Bool("json", false, "output results as machine-readable JSON")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	store, err := db.New(*dbFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	home, _ := os.UserHomeDir()
+	if !runDoctor(store, os.Stdout, *dbFlag, home, *jsonFlag) {
+		os.Exit(1)
+	}
+}
+
+// runDoctor runs all diagnostic checks, writes output to out, and returns true
+// if all checks pass (i.e. no "fail" results). Informational ("info") and warning
+// ("warn") results do not affect the return value.
+func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode bool) bool {
+	var checks []DoctorCheck
+
+	add := func(name, status, message string) {
+		checks = append(checks, DoctorCheck{Name: name, Status: status, Message: message})
+	}
+
+	// ── 1. Database ───────────────────────────────────────────────────────────
+	applied, expected, schemaErr := store.SchemaVersion()
+	switch {
+	case schemaErr != nil:
+		add("Database", "fail", fmt.Sprintf("%s — could not read schema version: %v", dbPath, schemaErr))
+	case applied < expected:
+		add("Database", "fail", fmt.Sprintf("%s (WAL, schema v%d — expected v%d; run the binary to migrate)", dbPath, applied, expected))
+	default:
+		add("Database", "ok", fmt.Sprintf("%s (WAL, schema v%d)", dbPath, applied))
+	}
+
+	// ── 2. sqlite-vec / semantic search ───────────────────────────────────────
+	vecVer := store.VecVersion()
+	live, covered, embErr := store.EmbeddingCoverage()
+	switch {
+	case embErr != nil:
+		add("sqlite-vec", "warn", fmt.Sprintf("error checking coverage: %v", embErr))
+	case vecVer == "":
+		add("sqlite-vec", "warn", "not available (text search fallback active)")
+	case live == 0:
+		add("sqlite-vec", "ok", fmt.Sprintf("%s — no nodes to embed", vecVer))
+	case covered < live:
+		pct := int(float64(covered) * 100 / float64(live))
+		add("sqlite-vec", "warn", fmt.Sprintf("%s — %d/%d nodes embedded (%d%%) — run: memoryweb backfill", vecVer, covered, live, pct))
+	default:
+		add("sqlite-vec", "ok", fmt.Sprintf("%s — %d/%d nodes embedded (100%%)", vecVer, covered, live))
+	}
+
+	// ── 3–5. Ollama ───────────────────────────────────────────────────────────
+	ollamaBinOK := false
+	if _, err := exec.LookPath("ollama"); err != nil {
+		add("Ollama binary", "fail", "not found in PATH — install from https://ollama.com/download")
+	} else {
+		add("Ollama binary", "ok", "found")
+		ollamaBinOK = true
+	}
+
+	ollamaServerOK := false
+	if ollamaBinOK {
+		conn, err := net.DialTimeout("tcp", "localhost:11434", time.Second)
+		if err != nil {
+			add("Ollama server", "fail", "not reachable on localhost:11434 — run: ollama serve")
+		} else {
+			conn.Close()
+			add("Ollama server", "ok", "reachable on localhost:11434")
+			ollamaServerOK = true
+		}
+	} else {
+		add("Ollama server", "warn", "skipped (Ollama binary not found)")
+	}
+
+	if ollamaServerOK {
+		listOut, err := exec.Command("ollama", "list").Output()
+		if err != nil || !strings.Contains(string(listOut), "snowflake-arctic-embed") {
+			add("Ollama model", "fail", "snowflake-arctic-embed not found — run: ollama pull snowflake-arctic-embed")
+		} else {
+			add("Ollama model", "ok", "snowflake-arctic-embed ready")
+		}
+	} else {
+		add("Ollama model", "warn", "skipped (Ollama server not available)")
+	}
+
+	// ── 6. Claude Code hooks ──────────────────────────────────────────────────
+	hooksMsg, hooksStatus := doctorCheckHooks(home)
+	add("Claude hooks", hooksStatus, hooksMsg)
+
+	// ── 7. Graph stats (informational) ────────────────────────────────────────
+	liveNodes, archivedNodes, nodeErr := store.NodeCounts()
+	edges, edgeErr := store.EdgeCount()
+	domains, domErr := store.ListDomains()
+	aliases, aliasErr := store.ListAliases()
+
+	if nodeErr != nil || edgeErr != nil || domErr != nil || aliasErr != nil {
+		add("Graph", "info", "error reading graph stats")
+	} else {
+		domainStr := fmt.Sprintf("%d domain(s)", len(domains))
+		if len(domains) > 0 {
+			domainStr = fmt.Sprintf("%d domain(s) (%s)", len(domains), strings.Join(domains, ", "))
+		}
+		add("Graph", "info", fmt.Sprintf("%d live nodes, %d archived, %d edges, %s, %d alias(es)",
+			liveNodes, archivedNodes, edges, domainStr, len(aliases)))
+	}
+
+	// ── 8. Drift snapshot (informational) ─────────────────────────────────────
+	drift, driftErr := store.FindDrift("", 100)
+	if driftErr != nil {
+		add("Drift", "info", fmt.Sprintf("error reading drift candidates: %v", driftErr))
+	} else if len(drift) == 0 {
+		add("Drift", "info", "no candidates")
+	} else {
+		cats := map[string]int{}
+		for _, d := range drift {
+			switch {
+			case strings.HasPrefix(d.Reason, "explicitly marked"):
+				cats["contradicts"]++
+			case strings.HasPrefix(d.Reason, "label suggests"):
+				cats["stale labels"]++
+			case strings.HasPrefix(d.Reason, "open question"):
+				cats["old open questions"]++
+			case strings.HasPrefix(d.Reason, "possible duplicate"):
+				cats["duplicates"]++
+			default:
+				cats["transient"]++
+			}
+		}
+		var parts []string
+		for _, key := range []string{"contradicts", "stale labels", "old open questions", "duplicates", "transient"} {
+			if n := cats[key]; n > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", n, key))
+			}
+		}
+		add("Drift", "info", fmt.Sprintf("%d candidate(s): %s", len(drift), strings.Join(parts, ", ")))
+	}
+
+	// ── 9. Audit log recency (informational) ──────────────────────────────────
+	entry, ok, auditErr := store.LastAuditEntry()
+	if auditErr != nil {
+		add("Last activity", "info", fmt.Sprintf("error reading audit log: %v", auditErr))
+	} else if !ok {
+		add("Last activity", "info", "(no activity recorded)")
+	} else {
+		add("Last activity", "info", fmt.Sprintf("%s %s (node %q)",
+			entry.ActionedAt.Format("2006-01-02"), entry.Action, entry.NodeLabel))
+	}
+
+	// ── determine overall pass/fail ───────────────────────────────────────────
+	passed := true
+	for _, c := range checks {
+		if c.Status == "fail" {
+			passed = false
+			break
+		}
+	}
+
+	// ── emit output ───────────────────────────────────────────────────────────
+	if jsonMode {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(DoctorReport{Passed: passed, Checks: checks}); err != nil {
+			fmt.Fprintf(os.Stderr, "error: encode JSON: %v\n", err)
+		}
+		return passed
+	}
+
+	for _, c := range checks {
+		sym := map[string]string{
+			"ok":   "✓",
+			"fail": "✗",
+			"warn": "!",
+			"info": "i",
+		}[c.Status]
+		fmt.Fprintf(out, "[%s] %-16s %s\n", sym, c.Name+":", c.Message)
+	}
+	return passed
+}
+
+// doctorCheckHooks inspects ~/.claude/settings.local.json and returns a
+// human-readable message and status about the memoryweb hook configuration.
+func doctorCheckHooks(home string) (message, status string) {
+	settingsPath := filepath.Join(home, ".claude", "settings.local.json")
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return "settings.local.json not found — run: memoryweb setup", "fail"
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return fmt.Sprintf("settings.local.json is not valid JSON: %v", err), "fail"
+	}
+
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	saveCmd := doctorFindHookCommand(setupToSlice(hooks["Stop"]), "memoryweb_save_hook.sh")
+	precompactCmd := doctorFindHookCommand(setupToSlice(hooks["PreCompact"]), "memoryweb_precompact_hook.sh")
+
+	var issues []string
+	if saveCmd == "" {
+		issues = append(issues, "Stop/save hook not found")
+	} else if info, err := os.Stat(saveCmd); err != nil {
+		issues = append(issues, fmt.Sprintf("save hook script missing: %s", saveCmd))
+	} else if info.Mode()&0o111 == 0 {
+		issues = append(issues, fmt.Sprintf("save hook not executable: %s", saveCmd))
+	}
+
+	if precompactCmd == "" {
+		issues = append(issues, "PreCompact hook not found")
+	} else if info, err := os.Stat(precompactCmd); err != nil {
+		issues = append(issues, fmt.Sprintf("precompact hook script missing: %s", precompactCmd))
+	} else if info.Mode()&0o111 == 0 {
+		issues = append(issues, fmt.Sprintf("precompact hook not executable: %s", precompactCmd))
+	}
+
+	if len(issues) == 0 {
+		return "Stop and PreCompact hooks installed", "ok"
+	}
+	if saveCmd == "" && precompactCmd == "" {
+		return strings.Join(issues, "; ") + " — run: memoryweb setup", "fail"
+	}
+	return strings.Join(issues, "; "), "warn"
+}
+
+// doctorFindHookCommand scans a hooks slice for the first command path that
+// ends with the given suffix (e.g. "memoryweb_save_hook.sh").
+func doctorFindHookCommand(entries []interface{}, suffix string) string {
+	for _, e := range entries {
+		entry, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hs, _ := entry["hooks"].([]interface{})
+		for _, h := range hs {
+			hm, ok := h.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			cmd, _ := hm["command"].(string)
+			if strings.HasSuffix(cmd, suffix) {
+				return cmd
+			}
+		}
+	}
+	return ""
 }
 
 func dispatch(req Request, h *tools.Handler) (interface{}, *RPCError) {
