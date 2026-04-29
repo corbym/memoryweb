@@ -17,6 +17,10 @@ You don't remember facts in isolation. You remember them because of what they co
 
 memoryweb works the same way. Each concept is a node. What makes it retrievable is the narrative edge — the *because* that links it to something else. A concept with rich connections is reachable from many starting points. A concept filed alone, with no story linking it to anything, is effectively lost.
 
+>  The graph has considerably richer context than my flat file memory — including design decisions, failure modes from dogfooding, and the philosophy behind the tool. That's the point, I suppose.
+
+-- Claude Opus 4.6 on finding memories using memoryweb, about memoryweb
+
 ## Philosophy
 
 memoryweb optimises for remembering things well, not remembering things fast. Filing requires a moment of judgement: why does this matter, how does it connect to what else is known, what would be useful to know when coming back to this cold?
