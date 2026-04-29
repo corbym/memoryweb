@@ -119,6 +119,28 @@ memoryweb setup --hooks-dir /path/to/hooks           # explicit hooks directory
 memoryweb setup --db /path/to/your.db                # explicit DB path
 ```
 
+The `doctor` subcommand checks every part of a memoryweb installation and prints a structured health report. Use it after setup to verify everything is wired correctly, or run it in an agent session to check whether semantic search is available before relying on it.
+
+```bash
+memoryweb doctor                                     # check ~/.memoryweb.db
+memoryweb doctor --db /path/to/your.db               # explicit DB path
+memoryweb doctor --json                              # machine-readable JSON output
+```
+
+Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[i]` informational. The command exits with code 1 if any check fails. Example output:
+
+```
+[✓] Database:        ~/.memoryweb.db (WAL, schema v9)
+[✓] sqlite-vec:      v0.1.6 — 142/145 nodes embedded (98%)
+[✗] Ollama binary:   not found in PATH — install from https://ollama.com/download
+[!] Ollama server:   skipped (Ollama binary not found)
+[!] Ollama model:    skipped (Ollama server not available)
+[✓] Claude hooks:    Stop and PreCompact hooks installed
+[i] Graph:           145 live nodes, 12 archived, 203 edges, 4 domain(s) (deep-game, ...), 2 alias(es)
+[i] Drift:           3 candidate(s): 1 contradicts, 2 stale labels
+[i] Last activity:   2026-04-29 update (node "open question on backfill")
+```
+
 ## Build
 
 ```bash
