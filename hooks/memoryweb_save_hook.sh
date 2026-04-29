@@ -80,8 +80,8 @@ _esc="${_esc//$_dq/\\\"}"
 _esc="${_esc//$'\n'/\\n}"
 
 if [ -n "${_esc}" ]; then
-  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now.\\n\\n%s\\n\\nCall add_nodes with any decisions made, bugs found or fixed, design choices, or open questions. Add edges connecting related nodes. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n' "${_esc}"
+  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now.\\n\\n%s\\n\\nCall remember_all with any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n' "${_esc}"
 else
-  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now. Call add_nodes with any decisions made, bugs found or fixed, design choices, or open questions. Add edges connecting related nodes. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
+  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now. Call remember_all with any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
 fi
 

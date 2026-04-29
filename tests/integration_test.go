@@ -63,21 +63,21 @@ func TestSemanticSearchFindsRelatedConcept(t *testing.T) {
 
 	_, h := newEnv(t)
 
-	call(t, h, "add_node", map[string]any{
+	call(t, h, "remember", map[string]any{
 		"label":       "boot crash interrupts ROM",
 		"description": "System fails to complete POST sequence; ROM checksum error on startup",
 		"why_matters": "Critical startup failure pathway blocks all other operations",
 		"domain":      "test",
 	})
 
-	call(t, h, "add_node", map[string]any{
+	call(t, h, "remember", map[string]any{
 		"label":       "straitjacket tutorial movement",
 		"description": "Guide on practising escape from physical restraints",
 		"why_matters": "Physical training technique for stage performance",
 		"domain":      "test",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query": "startup failure",
 	})
 	if tr.IsError {
@@ -99,14 +99,14 @@ func TestSemanticSearchFindsRelatedConcept(t *testing.T) {
 func TestSemanticSearchFallsBackToLiteralIfVecUnavailable(t *testing.T) {
 	_, h := newEnv(t)
 
-	call(t, h, "add_node", map[string]any{
+	call(t, h, "remember", map[string]any{
 		"label":       "hardware boot literal",
 		"description": "ROM chip literal test description for fallback search",
 		"why_matters": "startup process verification",
 		"domain":      "test",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query": "ROM chip literal test",
 	})
 	if tr.IsError {
@@ -128,21 +128,21 @@ func TestSemanticSearchScopedByDomain(t *testing.T) {
 
 	_, h := newEnv(t)
 
-	call(t, h, "add_node", map[string]any{
+	call(t, h, "remember", map[string]any{
 		"label":       "boot failure in domain A",
 		"description": "System startup crash sequence in project A",
 		"why_matters": "Critical boot failure must be resolved in project A",
 		"domain":      "domain-a",
 	})
 
-	call(t, h, "add_node", map[string]any{
+	call(t, h, "remember", map[string]any{
 		"label":       "boot failure in domain B",
 		"description": "System startup crash sequence in project B",
 		"why_matters": "Critical boot failure must be resolved in project B",
 		"domain":      "domain-b",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "startup crash",
 		"domain": "domain-a",
 	})

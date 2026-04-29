@@ -138,7 +138,7 @@ func addNode(t *testing.T, h *tools.Handler, label, domain string, extras map[st
 	for k, v := range extras {
 		args[k] = v
 	}
-	tr := call(t, h, "add_node", args)
+	tr := call(t, h, "remember", args)
 	mustNotError(t, tr)
 	var n struct {
 		ID string `json:"id"`
@@ -206,13 +206,13 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		t.Fatalf("parse ListTools: %v", err)
 	}
 	want := []string{
-		"add_node", "add_edge", "get_node", "search_nodes",
-		"recent_changes", "find_connections", "timeline",
-		"add_alias", "list_aliases", "resolve_domain", "remove_alias",
-		"forget_node", "restore_node", "list_archived",
-		"drift", "summarise_domain",
-		"add_nodes", "add_edges",
-		"suggest_edges",
+		"remember", "connect", "recall", "search",
+		"recent", "why_connected", "history",
+		"alias_domain", "list_aliases", "resolve_domain", "remove_alias",
+		"forget", "restore", "forgotten",
+		"whats_stale", "orient",
+		"remember_all", "connect_all",
+		"suggest_connections",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {
@@ -372,7 +372,7 @@ func TestAddNode_HappyPath(t *testing.T) {
 
 func TestAddNode_WithOccurredAtDateOnly(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "add_node", map[string]any{
+	tr := call(t, h, "remember", map[string]any{
 		"label":       "Boot crash discovered",
 		"domain":      "deep-game",
 		"occurred_at": "2026-04-01",
@@ -389,7 +389,7 @@ func TestAddNode_WithOccurredAtDateOnly(t *testing.T) {
 
 func TestAddNode_WithOccurredAtRFC3339(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "add_node", map[string]any{
+	tr := call(t, h, "remember", map[string]any{
 		"label":       "Boot crash discovered",
 		"domain":      "deep-game",
 		"occurred_at": "2026-04-01T14:30:00Z",
@@ -399,7 +399,7 @@ func TestAddNode_WithOccurredAtRFC3339(t *testing.T) {
 
 func TestAddNode_InvalidOccurredAt(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "add_node", map[string]any{
+	tr := call(t, h, "remember", map[string]any{
 		"label":       "Bad date node",
 		"domain":      "deep-game",
 		"occurred_at": "not-a-date",
@@ -414,7 +414,7 @@ func TestAddNode_EmptyLabel_StillCreatesNode(t *testing.T) {
 	// The tool doesn't validate required fields itself; that's the MCP layer.
 	// An empty label is passed through — test that it doesn't panic.
 	_, h := newEnv(t)
-	tr := call(t, h, "add_node", map[string]any{
+	tr := call(t, h, "remember", map[string]any{
 		"label":  "",
 		"domain": "deep-game",
 	})
@@ -430,7 +430,7 @@ func TestGetNode_HappyPath(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Boot crash", "deep-game", nil)
 
-	tr := call(t, h, "get_node", map[string]any{"id": id})
+	tr := call(t, h, "recall", map[string]any{"id": id})
 	mustNotError(t, tr)
 
 	var nwe struct {
@@ -453,7 +453,7 @@ func TestGetNode_HappyPath(t *testing.T) {
 
 func TestGetNode_NotFound(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "get_node", map[string]any{"id": "does-not-exist"})
+	tr := call(t, h, "recall", map[string]any{"id": "does-not-exist"})
 	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "not found") {
 		t.Errorf("error should say 'not found', got: %s", text(t, tr))
@@ -468,7 +468,7 @@ func TestGetNode_ArchivedNodeIsHidden(t *testing.T) {
 		t.Fatalf("ArchiveNode: %v", err)
 	}
 
-	tr := call(t, h, "get_node", map[string]any{"id": id})
+	tr := call(t, h, "recall", map[string]any{"id": id})
 	mustError(t, tr) // archived → treated as not found
 	if !strings.Contains(text(t, tr), "not found") {
 		t.Errorf("archived node should report not found, got: %s", text(t, tr))
@@ -481,7 +481,7 @@ func TestSearchNodes_FindsByLabel(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "ULA memory write fix", "deep-game", nil)
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "ULA"})
+	tr := call(t, h, "search", map[string]any{"query": "ULA"})
 	mustNotError(t, tr)
 	ids := searchIDs(t, tr)
 	if !contains(ids, id) {
@@ -495,7 +495,7 @@ func TestSearchNodes_FindsByDescription(t *testing.T) {
 		"description": "direct writes bypass ROM interrupt handler",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "bypass ROM"})
+	tr := call(t, h, "search", map[string]any{"query": "bypass ROM"})
 	mustNotError(t, tr)
 	if !contains(searchIDs(t, tr), id) {
 		t.Error("search by description term did not return node")
@@ -508,7 +508,7 @@ func TestSearchNodes_FindsByWhyMatters(t *testing.T) {
 		"why_matters": "unblocks the straitjacket tutorial",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "straitjacket"})
+	tr := call(t, h, "search", map[string]any{"query": "straitjacket"})
 	mustNotError(t, tr)
 	if !contains(searchIDs(t, tr), id) {
 		t.Error("search by why_matters term did not return node")
@@ -520,7 +520,7 @@ func TestSearchNodes_EmptyQueryReturnsAll(t *testing.T) {
 	id1 := addNode(t, h, "Node Alpha", "project-x", nil)
 	id2 := addNode(t, h, "Node Beta", "project-x", nil)
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query": "", "domain": "project-x", "limit": 10,
 	})
 	mustNotError(t, tr)
@@ -535,7 +535,7 @@ func TestSearchNodes_NoMatch(t *testing.T) {
 	_, h := newEnv(t)
 	addNode(t, h, "Some node", "deep-game", nil)
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "xyzzy-no-match"})
+	tr := call(t, h, "search", map[string]any{"query": "xyzzy-no-match"})
 	mustNotError(t, tr) // no match is not an error
 	ids := searchIDs(t, tr)
 	if len(ids) != 0 {
@@ -548,7 +548,7 @@ func TestSearchNodes_DomainIsolation(t *testing.T) {
 	idA := addNode(t, h, "Alpha node", "domain-a", nil)
 	idB := addNode(t, h, "Alpha node", "domain-b", nil)
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "Alpha", "domain": "domain-a"})
+	tr := call(t, h, "search", map[string]any{"query": "Alpha", "domain": "domain-a"})
 	mustNotError(t, tr)
 	ids := searchIDs(t, tr)
 	if !contains(ids, idA) {
@@ -567,7 +567,7 @@ func TestSearchNodes_ArchivedNodeExcluded(t *testing.T) {
 		t.Fatalf("ArchiveNode: %v", err)
 	}
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "Deprecated"})
+	tr := call(t, h, "search", map[string]any{"query": "Deprecated"})
 	mustNotError(t, tr)
 	if contains(searchIDs(t, tr), id) {
 	t.Error("archived node should not appear in search results")
@@ -580,7 +580,7 @@ func TestSearchNodes_ArchivedRestored_ReappearsInSearch(t *testing.T) {
 
 	store.ArchiveNode(id, "test archive")
 	// verify hidden
-	if contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{"query": "Restored"})), id) {
+	if contains(searchIDs(t, call(t, h, "search", map[string]any{"query": "Restored"})), id) {
 		t.Fatal("should be hidden after archive")
 	}
 
@@ -588,7 +588,7 @@ func TestSearchNodes_ArchivedRestored_ReappearsInSearch(t *testing.T) {
 		t.Fatalf("RestoreNode: %v", err)
 	}
 	// verify reappears
-	if !contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{"query": "Restored"})), id) {
+	if !contains(searchIDs(t, call(t, h, "search", map[string]any{"query": "Restored"})), id) {
 		t.Error("node should reappear in search after restore")
 	}
 }
@@ -598,7 +598,7 @@ func TestSearchNodes_LimitIsRespected(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		addNode(t, h, "Limit test node", "ltest", nil)
 	}
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query": "Limit test", "domain": "ltest", "limit": 3,
 	})
 	mustNotError(t, tr)
@@ -614,7 +614,7 @@ func TestAddEdge_HappyPath(t *testing.T) {
 	from := addNode(t, h, "RST crash", "deep-game", nil)
 	to := addNode(t, h, "ULA fix", "deep-game", nil)
 
-	tr := call(t, h, "add_edge", map[string]any{
+	tr := call(t, h, "connect", map[string]any{
 		"from_node":    from,
 		"to_node":      to,
 		"relationship": "unblocks",
@@ -636,7 +636,7 @@ func TestAddEdge_NonExistentFromNode(t *testing.T) {
 	_, h := newEnv(t)
 	to := addNode(t, h, "ULA fix", "deep-game", nil)
 
-	tr := call(t, h, "add_edge", map[string]any{
+	tr := call(t, h, "connect", map[string]any{
 		"from_node":    "ghost-node-id",
 		"to_node":      to,
 		"relationship": "unblocks",
@@ -648,7 +648,7 @@ func TestAddEdge_NonExistentToNode(t *testing.T) {
 	_, h := newEnv(t)
 	from := addNode(t, h, "RST crash", "deep-game", nil)
 
-	tr := call(t, h, "add_edge", map[string]any{
+	tr := call(t, h, "connect", map[string]any{
 		"from_node":    from,
 		"to_node":      "ghost-node-id",
 		"relationship": "unblocks",
@@ -658,7 +658,7 @@ func TestAddEdge_NonExistentToNode(t *testing.T) {
 
 func TestAddEdge_BothNodesNonExistent(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "add_edge", map[string]any{
+	tr := call(t, h, "connect", map[string]any{
 		"from_node":    "ghost-a",
 		"to_node":      "ghost-b",
 		"relationship": "connects_to",
@@ -670,11 +670,11 @@ func TestGetNode_IncludesEdges(t *testing.T) {
 	_, h := newEnv(t)
 	from := addNode(t, h, "RST crash", "deep-game", nil)
 	to := addNode(t, h, "ULA fix", "deep-game", nil)
-	call(t, h, "add_edge", map[string]any{
+	call(t, h, "connect", map[string]any{
 		"from_node": from, "to_node": to, "relationship": "unblocks",
 	})
 
-	tr := call(t, h, "get_node", map[string]any{"id": from})
+	tr := call(t, h, "recall", map[string]any{"id": from})
 	mustNotError(t, tr)
 
 	var nwe struct {
@@ -700,12 +700,12 @@ func TestFindConnections_ReturnsEdgeBetweenNodes(t *testing.T) {
 	})
 	to := addNode(t, h, "ULA memory write fix", "deep-game", nil)
 	from := addNode(t, h, "RST boot crash second", "deep-game", nil)
-	call(t, h, "add_edge", map[string]any{
+	call(t, h, "connect", map[string]any{
 		"from_node": from, "to_node": to, "relationship": "unblocks",
 		"narrative": "direct writes bypass the ROM ISR",
 	})
 
-	tr := call(t, h, "find_connections", map[string]any{
+	tr := call(t, h, "why_connected", map[string]any{
 		"from_label": "RST boot crash second",
 		"to_label":   "ULA memory write",
 		"domain":     "deep-game",
@@ -725,7 +725,7 @@ func TestFindConnections_ReturnsEdgeBetweenNodes(t *testing.T) {
 
 func TestFindConnections_NoMatchReturnsNilNodes(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "find_connections", map[string]any{
+	tr := call(t, h, "why_connected", map[string]any{
 		"from_label": "nonexistent-thing-abc",
 		"to_label":   "another-nonexistent-xyz",
 	})
@@ -747,7 +747,7 @@ func TestFindConnections_ArchivedNodeNotMatched(t *testing.T) {
 	id := addNode(t, h, "Invisible archived node", "deep-game", nil)
 	store.ArchiveNode(id, "test")
 
-	tr := call(t, h, "find_connections", map[string]any{
+	tr := call(t, h, "why_connected", map[string]any{
 		"from_label": "Invisible archived",
 		"to_label":   "something else",
 	})
@@ -769,7 +769,7 @@ func TestRecentChanges_ReturnsNodes(t *testing.T) {
 	id1 := addNode(t, h, "Event Alpha", "proj", nil)
 	id2 := addNode(t, h, "Event Beta", "proj", nil)
 
-	tr := call(t, h, "recent_changes", map[string]any{"domain": "proj"})
+	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
 	var nodes []struct {
@@ -790,7 +790,7 @@ func TestRecentChanges_ArchivedNodeExcluded(t *testing.T) {
 	id := addNode(t, h, "Recent archived node", "proj", nil)
 	store.ArchiveNode(id, "test")
 
-	tr := call(t, h, "recent_changes", map[string]any{"domain": "proj"})
+	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
 	var nodes []struct {
@@ -809,7 +809,7 @@ func TestRecentChanges_DomainIsolation(t *testing.T) {
 	idA := addNode(t, h, "Alpha event", "domain-a", nil)
 	addNode(t, h, "Beta event", "domain-b", nil)
 
-	tr := call(t, h, "recent_changes", map[string]any{"domain": "domain-a"})
+	tr := call(t, h, "recent", map[string]any{"domain": "domain-a"})
 	mustNotError(t, tr)
 
 	var nodes []struct {
@@ -825,7 +825,7 @@ func TestRecentChanges_DomainIsolation(t *testing.T) {
 
 func TestRecentChanges_EmptyDB(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "recent_changes", map[string]any{})
+	tr := call(t, h, "recent", map[string]any{})
 	mustNotError(t, tr)
 }
 
@@ -837,7 +837,7 @@ func TestRecentChanges_GroupByDomain_MultipleDomains(t *testing.T) {
 	idB1 := addNode(t, h, "Beta one", "domain-b", nil)
 	idC1 := addNode(t, h, "Gamma one", "domain-c", nil)
 
-	tr := call(t, h, "recent_changes", map[string]any{
+	tr := call(t, h, "recent", map[string]any{
 		"group_by_domain": true,
 		"limit":           5,
 	})
@@ -883,7 +883,7 @@ func TestRecentChanges_GroupByDomain_PerDomainLimit(t *testing.T) {
 		addNode(t, h, fmt.Sprintf("Node %d", i), "limit-domain", nil)
 	}
 
-	tr := call(t, h, "recent_changes", map[string]any{
+	tr := call(t, h, "recent", map[string]any{
 		"group_by_domain": true,
 		"limit":           2, // per-domain cap
 	})
@@ -912,7 +912,7 @@ func TestRecentChanges_GroupByDomain_WithDomainSpecified_BehavesNormal(t *testin
 	addNode(t, h, "Node B", "domain-b", nil)
 
 	// group_by_domain=true but domain is specified → behaves as normal (flat list).
-	tr := call(t, h, "recent_changes", map[string]any{
+	tr := call(t, h, "recent", map[string]any{
 		"group_by_domain": true,
 		"domain":          "domain-a",
 	})
@@ -935,7 +935,7 @@ func TestRecentChanges_GroupByDomain_False_BehavesAsNormal(t *testing.T) {
 	id1 := addNode(t, h, "Node X", "domain-x", nil)
 	id2 := addNode(t, h, "Node Y", "domain-y", nil)
 
-	tr := call(t, h, "recent_changes", map[string]any{
+	tr := call(t, h, "recent", map[string]any{
 		"group_by_domain": false,
 	})
 	mustNotError(t, tr)
@@ -963,7 +963,7 @@ func TestTimeline_OrderedByOccurredAt(t *testing.T) {
 	id1 := addNode(t, h, "Early event", "proj", map[string]any{"occurred_at": "2026-01-01"})
 	id2 := addNode(t, h, "Late event", "proj", map[string]any{"occurred_at": "2026-06-01"})
 
-	tr := call(t, h, "timeline", map[string]any{"domain": "proj"})
+	tr := call(t, h, "history", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
 	var nodes []struct {
@@ -984,7 +984,7 @@ func TestTimeline_ExcludesNodesWithoutOccurredAt(t *testing.T) {
 	addNode(t, h, "No date node", "proj", nil) // no occurred_at
 	idDated := addNode(t, h, "Dated node", "proj", map[string]any{"occurred_at": "2026-03-01"})
 
-	tr := call(t, h, "timeline", map[string]any{"domain": "proj"})
+	tr := call(t, h, "history", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
 	var nodes []struct {
@@ -1006,7 +1006,7 @@ func TestTimeline_ArchivedNodeExcluded(t *testing.T) {
 	})
 	store.ArchiveNode(id, "test")
 
-	tr := call(t, h, "timeline", map[string]any{"domain": "proj"})
+	tr := call(t, h, "history", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
 	var nodes []struct {
@@ -1026,7 +1026,7 @@ func TestTimeline_DateRangeFilter(t *testing.T) {
 	idMar := addNode(t, h, "Mar event", "proj", map[string]any{"occurred_at": "2026-03-15"})
 	addNode(t, h, "Jun event", "proj", map[string]any{"occurred_at": "2026-06-15"})
 
-	tr := call(t, h, "timeline", map[string]any{
+	tr := call(t, h, "history", map[string]any{
 		"domain": "proj",
 		"from":   "2026-02-01",
 		"to":     "2026-04-30",
@@ -1044,13 +1044,13 @@ func TestTimeline_DateRangeFilter(t *testing.T) {
 
 func TestTimeline_InvalidFromDate(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "timeline", map[string]any{"from": "not-a-date"})
+	tr := call(t, h, "history", map[string]any{"from": "not-a-date"})
 	mustError(t, tr)
 }
 
 func TestTimeline_EmptyReturnsGracefully(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "timeline", map[string]any{})
+	tr := call(t, h, "history", map[string]any{})
 	mustNotError(t, tr)
 }
 
@@ -1060,9 +1060,9 @@ func TestAddAlias_SearchResolvesAlias(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Engine node", "deep-engine", nil)
 
-	call(t, h, "add_alias", map[string]any{"alias": "engine", "domain": "deep-engine"})
+	call(t, h, "alias_domain", map[string]any{"alias": "engine", "domain": "deep-engine"})
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "Engine", "domain": "engine"})
+	tr := call(t, h, "search", map[string]any{"query": "Engine", "domain": "engine"})
 	mustNotError(t, tr)
 	if !contains(searchIDs(t, tr), id) {
 		t.Error("alias should resolve to canonical domain in search")
@@ -1071,7 +1071,7 @@ func TestAddAlias_SearchResolvesAlias(t *testing.T) {
 
 func TestResolveDomain_ReturnsCanonical(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "add_alias", map[string]any{"alias": "dg", "domain": "deep-game"})
+	call(t, h, "alias_domain", map[string]any{"alias": "dg", "domain": "deep-game"})
 
 	tr := call(t, h, "resolve_domain", map[string]any{"name": "dg"})
 	mustNotError(t, tr)
@@ -1091,8 +1091,8 @@ func TestResolveDomain_UnknownAliasReturnsItself(t *testing.T) {
 
 func TestListAliases_ReturnsRegisteredAliases(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "add_alias", map[string]any{"alias": "dg", "domain": "deep-game"})
-	call(t, h, "add_alias", map[string]any{"alias": "sx", "domain": "sedex"})
+	call(t, h, "alias_domain", map[string]any{"alias": "dg", "domain": "deep-game"})
+	call(t, h, "alias_domain", map[string]any{"alias": "sx", "domain": "sedex"})
 
 	tr := call(t, h, "list_aliases", map[string]any{})
 	mustNotError(t, tr)
@@ -1106,7 +1106,7 @@ func TestListAliases_ReturnsRegisteredAliases(t *testing.T) {
 
 func TestRemoveAlias_RemovesExistingAlias(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "add_alias", map[string]any{"alias": "dg", "domain": "deep-game"})
+	call(t, h, "alias_domain", map[string]any{"alias": "dg", "domain": "deep-game"})
 
 	tr := call(t, h, "remove_alias", map[string]any{"alias": "dg"})
 	mustNotError(t, tr)
@@ -1135,10 +1135,10 @@ func TestRemoveAlias_SearchNoLongerResolvesRemovedAlias(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Engine node", "deep-engine", nil)
 
-	call(t, h, "add_alias", map[string]any{"alias": "engine", "domain": "deep-engine"})
+	call(t, h, "alias_domain", map[string]any{"alias": "engine", "domain": "deep-engine"})
 
 	// confirm alias resolves while it exists
-	if !contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{
+	if !contains(searchIDs(t, call(t, h, "search", map[string]any{
 		"query": "Engine", "domain": "engine",
 	})), id) {
 		t.Fatal("alias should resolve before removal")
@@ -1147,7 +1147,7 @@ func TestRemoveAlias_SearchNoLongerResolvesRemovedAlias(t *testing.T) {
 	mustNotError(t, call(t, h, "remove_alias", map[string]any{"alias": "engine"}))
 
 	// after removal, searching under the alias should return nothing
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query": "Engine", "domain": "engine",
 	})
 	mustNotError(t, tr)
@@ -1175,12 +1175,12 @@ func TestForgetNode_HidesFromSearch(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "test forget node", "test", nil)
 
-	mustNotError(t, call(t, h, "forget_node", map[string]any{
+	mustNotError(t, call(t, h, "forget", map[string]any{
 		"id":     id,
 		"reason": "stale",
 	}))
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query": "test forget node", "domain": "test",
 	})
 	mustNotError(t, tr)
@@ -1195,9 +1195,9 @@ func TestForgetNode_DoesNotDelete(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "forget does not delete", "test", nil)
 
-	mustNotError(t, call(t, h, "forget_node", map[string]any{"id": id}))
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": id}))
 
-	archivedTr := call(t, h, "list_archived", map[string]any{"domain": "test"})
+	archivedTr := call(t, h, "forgotten", map[string]any{"domain": "test"})
 	mustNotError(t, archivedTr)
 
 	var nodes []struct {
@@ -1228,18 +1228,18 @@ func TestRestoreNode_ReappearsInSearch(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "restore reappears", "test", nil)
 
-	mustNotError(t, call(t, h, "forget_node", map[string]any{
+	mustNotError(t, call(t, h, "forget", map[string]any{
 		"id": id, "reason": "testing restore",
 	}))
-	if contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{
+	if contains(searchIDs(t, call(t, h, "search", map[string]any{
 		"query": "restore reappears", "domain": "test",
 	})), id) {
 		t.Fatal("node should be hidden after forget_node")
 	}
 
-	mustNotError(t, call(t, h, "restore_node", map[string]any{"id": id}))
+	mustNotError(t, call(t, h, "restore", map[string]any{"id": id}))
 
-	if !contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{
+	if !contains(searchIDs(t, call(t, h, "search", map[string]any{
 		"query": "restore reappears", "domain": "test",
 	})), id) {
 		t.Error("node should reappear in search_nodes after restore_node")
@@ -1252,10 +1252,10 @@ func TestAuditLog_RecordsForgetAndRestore(t *testing.T) {
 	dbPath, _, h := newEnvWithPath(t)
 	id := addNode(t, h, "audit log test node", "test", nil)
 
-	mustNotError(t, call(t, h, "forget_node", map[string]any{
+	mustNotError(t, call(t, h, "forget", map[string]any{
 		"id": id, "reason": "test reason",
 	}))
-	mustNotError(t, call(t, h, "restore_node", map[string]any{"id": id}))
+	mustNotError(t, call(t, h, "restore", map[string]any{"id": id}))
 
 	// Open a second connection to read audit_log directly.
 	// WAL mode allows concurrent readers — no need to close the primary store.
@@ -1307,10 +1307,10 @@ func TestListArchived_ScopedByDomain(t *testing.T) {
 	id1 := addNode(t, h, "node in domain-1", "domain-1", nil)
 	id2 := addNode(t, h, "node in domain-2", "domain-2", nil)
 
-	mustNotError(t, call(t, h, "forget_node", map[string]any{"id": id1, "reason": "scope test"}))
-	mustNotError(t, call(t, h, "forget_node", map[string]any{"id": id2, "reason": "scope test"}))
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": id1, "reason": "scope test"}))
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": id2, "reason": "scope test"}))
 
-	archivedTr := call(t, h, "list_archived", map[string]any{"domain": "domain-1"})
+	archivedTr := call(t, h, "forgotten", map[string]any{"domain": "domain-1"})
 	mustNotError(t, archivedTr)
 
 	var nodes []struct {
@@ -1348,25 +1348,25 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	})
 
 	// Verify it's findable
-	if !contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{"query": "Stale"})), id) {
+	if !contains(searchIDs(t, call(t, h, "search", map[string]any{"query": "Stale"})), id) {
 		t.Fatal("node should be findable before forget")
 	}
 
 	// Archive it via the tool
-	mustNotError(t, call(t, h, "forget_node", map[string]any{
+	mustNotError(t, call(t, h, "forget", map[string]any{
 		"id":     id,
 		"reason": "framework was replaced by ABC",
 	}))
 
 	// Verify it's gone from all retrieval paths
-	if contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{"query": "Stale"})), id) {
+	if contains(searchIDs(t, call(t, h, "search", map[string]any{"query": "Stale"})), id) {
 		t.Error("should be hidden from search_nodes after forget_node")
 	}
-	if call(t, h, "get_node", map[string]any{"id": id}).IsError == false {
+	if call(t, h, "recall", map[string]any{"id": id}).IsError == false {
 		t.Error("should be hidden from get_node after forget_node")
 	}
 	recentIDs := func() []string {
-		tr := call(t, h, "recent_changes", map[string]any{"domain": "project-alpha"})
+		tr := call(t, h, "recent", map[string]any{"domain": "project-alpha"})
 		var nodes []struct {
 			ID string `json:"id"`
 		}
@@ -1382,7 +1382,7 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify it appears in list_archived
-	archivedTr := call(t, h, "list_archived", map[string]any{"domain": "project-alpha"})
+	archivedTr := call(t, h, "forgotten", map[string]any{"domain": "project-alpha"})
 	mustNotError(t, archivedTr)
 	var archivedNodes []struct {
 		ID string `json:"id"`
@@ -1399,10 +1399,10 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	}
 
 	// Restore it via the tool
-	mustNotError(t, call(t, h, "restore_node", map[string]any{"id": id}))
+	mustNotError(t, call(t, h, "restore", map[string]any{"id": id}))
 
 	// Verify it's visible again
-	if !contains(searchIDs(t, call(t, h, "search_nodes", map[string]any{"query": "Stale"})), id) {
+	if !contains(searchIDs(t, call(t, h, "search", map[string]any{"query": "Stale"})), id) {
 		t.Error("node should reappear in search after restore_node")
 	}
 	if !contains(recentIDs(), id) {
@@ -1410,7 +1410,7 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify it's no longer in list_archived
-	archivedTr = call(t, h, "list_archived", map[string]any{"domain": "project-alpha"})
+	archivedTr = call(t, h, "forgotten", map[string]any{"domain": "project-alpha"})
 	mustNotError(t, archivedTr)
 	json.Unmarshal([]byte(text(t, archivedTr)), &archivedNodes)
 	for _, n := range archivedNodes {
@@ -1427,9 +1427,9 @@ func TestArchiveWorkflow_MultipleNodes_OnlySomeArchived(t *testing.T) {
 	live2 := addNode(t, h, "Live node B", "proj", nil)
 	archived := addNode(t, h, "Archived node C", "proj", nil)
 
-	mustNotError(t, call(t, h, "forget_node", map[string]any{"id": archived, "reason": "reason"}))
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": archived, "reason": "reason"}))
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "node", "domain": "proj"})
+	tr := call(t, h, "search", map[string]any{"query": "node", "domain": "proj"})
 	ids := searchIDs(t, tr)
 
 	if !contains(ids, live1) {
@@ -1461,13 +1461,13 @@ func TestDriftContradictingEdge(t *testing.T) {
 	_, h := newEnv(t)
 	idA := addNode(t, h, "Approach Alpha", "test-drift-1", nil)
 	idB := addNode(t, h, "Approach Beta", "test-drift-1", nil)
-	mustNotError(t, call(t, h, "add_edge", map[string]any{
+	mustNotError(t, call(t, h, "connect", map[string]any{
 		"from_node":    idA,
 		"to_node":      idB,
 		"relationship": "contradicts",
 	}))
 
-	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-1"})
+	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-1"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1488,7 +1488,7 @@ func TestDriftSupersededLabel(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "old RST $10 approach", "test-drift-2", nil)
 
-	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-2"})
+	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-2"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1510,7 +1510,7 @@ func TestDriftStaleOpenQuestion(t *testing.T) {
 		"occurred_at": staleDate,
 	})
 
-	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-3"})
+	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-3"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1529,7 +1529,7 @@ func TestDriftDuplicateLabel(t *testing.T) {
 	id1 := addNode(t, h, "boot crash duplicate label", "test-drift-4", nil)
 	id2 := addNode(t, h, "boot crash duplicate label", "test-drift-4", nil)
 
-	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-4"})
+	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-4"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1551,7 +1551,7 @@ func TestDriftDoesNotSurfaceArchived(t *testing.T) {
 	id := addNode(t, h, "old archived stale thing", "test-drift-5", nil)
 	store.ArchiveNode(id, "test")
 
-	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-5"})
+	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-5"})
 	mustNotError(t, tr)
 	if strings.Contains(text(t, tr), id) {
 		t.Errorf("archived node (%s) should NOT appear in drift; got:\n%s", id, text(t, tr))
@@ -1565,7 +1565,7 @@ func TestDriftScopedByDomain(t *testing.T) {
 	idA := addNode(t, h, "old deprecated approach", "test-drift-a", nil)
 	addNode(t, h, "fresh new approach", "test-drift-b", nil)
 
-	tr := call(t, h, "drift", map[string]any{"domain": "test-drift-b"})
+	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-b"})
 	mustNotError(t, tr)
 	if strings.Contains(text(t, tr), idA) {
 		t.Errorf("node from test-drift-a (%s) should NOT appear in test-drift-b drift; got:\n%s", idA, text(t, tr))
@@ -1591,7 +1591,7 @@ func TestSummariseDomain_ReturnsNodes(t *testing.T) {
 		"why_matters": "third node why matters",
 	})
 
-	tr := call(t, h, "summarise_domain", map[string]any{"domain": "sum-domain"})
+	tr := call(t, h, "orient", map[string]any{"domain": "sum-domain"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1606,7 +1606,7 @@ func TestSummariseDomain_ReturnsNodes(t *testing.T) {
 // "nothing filed" message rather than empty content.
 func TestSummariseDomain_EmptyDomain(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "summarise_domain", map[string]any{"domain": "completely-empty-domain-xyz"})
+	tr := call(t, h, "orient", map[string]any{"domain": "completely-empty-domain-xyz"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 	if !strings.Contains(body, "Nothing has been filed") {
@@ -1622,7 +1622,7 @@ func TestSummariseDomain_ExcludesArchived(t *testing.T) {
 	hiddenID := addNode(t, h, "Hidden archived summarise node", "sum-archive-domain", nil)
 	store.ArchiveNode(hiddenID, "test archive")
 
-	tr := call(t, h, "summarise_domain", map[string]any{"domain": "sum-archive-domain"})
+	tr := call(t, h, "orient", map[string]any{"domain": "sum-archive-domain"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1644,7 +1644,7 @@ func TestSummariseDomain_IncludesRecentChanges(t *testing.T) {
 		"occurred_at": "2026-04-01",
 	})
 
-	tr := call(t, h, "summarise_domain", map[string]any{"domain": "sum-dated-domain"})
+	tr := call(t, h, "orient", map[string]any{"domain": "sum-dated-domain"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1660,7 +1660,7 @@ func TestSummariseDomain_IncludesRecentChanges(t *testing.T) {
 func TestAddNodesBulk(t *testing.T) {
 	_, h := newEnv(t)
 
-	tr := call(t, h, "add_nodes", map[string]any{
+	tr := call(t, h, "remember_all", map[string]any{
 		"nodes": []map[string]any{
 			{"label": "Bulk Node Alpha", "domain": "bulk-test"},
 			{"label": "Bulk Node Beta", "domain": "bulk-test", "description": "beta desc"},
@@ -1679,7 +1679,7 @@ func TestAddNodesBulk(t *testing.T) {
 
 	labels := []string{"Bulk Node Alpha", "Bulk Node Beta", "Bulk Node Gamma"}
 	for i, label := range labels {
-		searchTr := call(t, h, "search_nodes", map[string]any{
+		searchTr := call(t, h, "search", map[string]any{
 			"query": label, "domain": "bulk-test",
 		})
 		mustNotError(t, searchTr)
@@ -1695,7 +1695,7 @@ func TestAddNodesBulkRollsBackOnError(t *testing.T) {
 	_, h := newEnv(t)
 
 	// Third node has empty label — required field missing.
-	tr := call(t, h, "add_nodes", map[string]any{
+	tr := call(t, h, "remember_all", map[string]any{
 		"nodes": []map[string]any{
 			{"label": "Rollback Node One", "domain": "rollback-test"},
 			{"label": "Rollback Node Two", "domain": "rollback-test"},
@@ -1706,7 +1706,7 @@ func TestAddNodesBulkRollsBackOnError(t *testing.T) {
 
 	// The two valid nodes must not have been persisted.
 	for _, label := range []string{"Rollback Node One", "Rollback Node Two"} {
-		searchTr := call(t, h, "search_nodes", map[string]any{
+		searchTr := call(t, h, "search", map[string]any{
 			"query": label, "domain": "rollback-test",
 		})
 		mustNotError(t, searchTr)
@@ -1724,7 +1724,7 @@ func TestAddEdgesBulk(t *testing.T) {
 	idB := addNode(t, h, "Edge Bulk Node B", "edge-bulk-test", nil)
 	idC := addNode(t, h, "Edge Bulk Node C", "edge-bulk-test", nil)
 
-	tr := call(t, h, "add_edges", map[string]any{
+	tr := call(t, h, "connect_all", map[string]any{
 		"edges": []map[string]any{
 			{"from_node": idA, "to_node": idB, "relationship": "connects_to", "narrative": "A to B"},
 			{"from_node": idB, "to_node": idC, "relationship": "led_to", "narrative": "B to C"},
@@ -1741,7 +1741,7 @@ func TestAddEdgesBulk(t *testing.T) {
 	}
 
 	// Both edges should appear on get_node for A.
-	nodeTr := call(t, h, "get_node", map[string]any{"id": idA})
+	nodeTr := call(t, h, "recall", map[string]any{"id": idA})
 	mustNotError(t, nodeTr)
 	var nwe struct {
 		Edges []struct {
@@ -1762,7 +1762,7 @@ func TestAddEdgesBulkRollsBackOnError(t *testing.T) {
 	idB := addNode(t, h, "Edge Rollback Node B", "edge-rollback-test", nil)
 
 	// Second edge references a ghost node.
-	tr := call(t, h, "add_edges", map[string]any{
+	tr := call(t, h, "connect_all", map[string]any{
 		"edges": []map[string]any{
 			{"from_node": idA, "to_node": idB, "relationship": "connects_to", "narrative": "valid"},
 			{"from_node": idA, "to_node": "ghost-node-xyz", "relationship": "connects_to", "narrative": "invalid"},
@@ -1771,7 +1771,7 @@ func TestAddEdgesBulkRollsBackOnError(t *testing.T) {
 	mustError(t, tr)
 
 	// Node A should have no edges after rollback.
-	nodeTr := call(t, h, "get_node", map[string]any{"id": idA})
+	nodeTr := call(t, h, "recall", map[string]any{"id": idA})
 	mustNotError(t, nodeTr)
 	var nwe struct {
 		Edges []any `json:"edges"`
@@ -1788,7 +1788,7 @@ func TestUpdateNode_UpdatesDescription(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "My Decision", "proj", nil)
 
-	tr := call(t, h, "update_node", map[string]any{
+	tr := call(t, h, "update", map[string]any{
 		"id":          id,
 		"description": "improved description with better search terms",
 	})
@@ -1813,7 +1813,7 @@ func TestUpdateNode_UpdatesMultipleFields(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Old Title", "proj", nil)
 
-	tr := call(t, h, "update_node", map[string]any{
+	tr := call(t, h, "update", map[string]any{
 		"id":          id,
 		"label":       "New Title",
 		"why_matters": "now has an outcome",
@@ -1840,7 +1840,7 @@ func TestUpdateNode_UpdatesMultipleFields(t *testing.T) {
 
 func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "update_node", map[string]any{
+	tr := call(t, h, "update", map[string]any{
 		"id":          "nonexistent-node-xxx",
 		"description": "whatever",
 	})
@@ -1850,9 +1850,9 @@ func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
 func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Will Be Archived", "proj", nil)
-	call(t, h, "forget_node", map[string]any{"id": id, "reason": "test"})
+	call(t, h, "forget", map[string]any{"id": id, "reason": "test"})
 
-	tr := call(t, h, "update_node", map[string]any{
+	tr := call(t, h, "update", map[string]any{
 		"id":    id,
 		"label": "New Label",
 	})
@@ -1865,7 +1865,7 @@ func TestUpdateNode_SearchableAfterTagsUpdate(t *testing.T) {
 	id := addNode(t, h, "Parameterised test approval files need withNameSuffix", "proj", nil)
 
 	// Before updating tags, the oblique query should miss.
-	trBefore := call(t, h, "search_nodes", map[string]any{"query": "approval parameterised", "domain": "proj"})
+	trBefore := call(t, h, "search", map[string]any{"query": "approval parameterised", "domain": "proj"})
 	mustNotError(t, trBefore)
 	idsBefore := searchIDs(t, trBefore)
 	if contains(idsBefore, id) {
@@ -1873,12 +1873,12 @@ func TestUpdateNode_SearchableAfterTagsUpdate(t *testing.T) {
 	}
 
 	// After adding tags, the query must find it.
-	call(t, h, "update_node", map[string]any{
+	call(t, h, "update", map[string]any{
 		"id":   id,
 		"tags": "testing approval parameterised withNamesuffix",
 	})
 
-	trAfter := call(t, h, "search_nodes", map[string]any{"query": "approval parameterised", "domain": "proj"})
+	trAfter := call(t, h, "search", map[string]any{"query": "approval parameterised", "domain": "proj"})
 	mustNotError(t, trAfter)
 	if !contains(searchIDs(t, trAfter), id) {
 		t.Error("node not findable via tags after update_node")
@@ -1895,7 +1895,7 @@ func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
 		"tags": "approval parameterised withNameSuffix kotlin",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{"query": "withNameSuffix", "domain": "proj"})
+	tr := call(t, h, "search", map[string]any{"query": "withNameSuffix", "domain": "proj"})
 	mustNotError(t, tr)
 	if !contains(searchIDs(t, tr), id) {
 		t.Error("node not found via tags field search")
@@ -1904,7 +1904,7 @@ func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
 
 func TestAddNode_WithTags_TagsInResponse(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "add_node", map[string]any{
+	tr := call(t, h, "remember", map[string]any{
 		"label":  "Tagged Node",
 		"domain": "proj",
 		"tags":   "alpha beta gamma",
@@ -1930,7 +1930,7 @@ func TestAddNode_WithRelatedTo_PlainStringCreatesConnectsToEdge(t *testing.T) {
 		"related_to": []string{existingID},
 	})
 
-	tr := call(t, h, "get_node", map[string]any{"id": newID})
+	tr := call(t, h, "recall", map[string]any{"id": newID})
 	mustNotError(t, tr)
 
 	var nwe struct {
@@ -1965,7 +1965,7 @@ func TestAddNode_WithRelatedTo_ExplicitRelationshipObject(t *testing.T) {
 		},
 	})
 
-	tr := call(t, h, "get_node", map[string]any{"id": newID})
+	tr := call(t, h, "recall", map[string]any{"id": newID})
 	mustNotError(t, tr)
 
 	var nwe struct {
@@ -2005,7 +2005,7 @@ func TestAddNode_WithRelatedTo_MixedFormats(t *testing.T) {
 		},
 	})
 
-	tr := call(t, h, "get_node", map[string]any{"id": idC})
+	tr := call(t, h, "recall", map[string]any{"id": idC})
 	mustNotError(t, tr)
 
 	var nwe struct {
@@ -2036,7 +2036,7 @@ func TestAddNode_WithRelatedTo_MixedFormats(t *testing.T) {
 
 func TestAddNode_WithRelatedTo_UnknownIDSilentlySkipped(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "add_node", map[string]any{
+	tr := call(t, h, "remember", map[string]any{
 		"label":      "Safe Node",
 		"domain":     "proj",
 		"related_to": []string{"ghost-id-xxxx"},
@@ -2048,7 +2048,7 @@ func TestAddNode_WithRelatedTo_UnknownIDSilentlySkipped(t *testing.T) {
 	}
 	json.Unmarshal([]byte(text(t, tr)), &n)
 
-	gettr := call(t, h, "get_node", map[string]any{"id": n.ID})
+	gettr := call(t, h, "recall", map[string]any{"id": n.ID})
 	mustNotError(t, gettr)
 
 	var nwe struct {
@@ -2064,7 +2064,7 @@ func TestAddNode_WithRelatedTo_UnknownIDSilentlySkipped(t *testing.T) {
 
 func TestAddNodes_WithTags_Searchable(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "add_nodes", map[string]any{
+	tr := call(t, h, "remember_all", map[string]any{
 		"nodes": []map[string]any{
 			{
 				"label":  "Batch Node One",
@@ -2075,7 +2075,7 @@ func TestAddNodes_WithTags_Searchable(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	srTr := call(t, h, "search_nodes", map[string]any{"query": "uniqueterm", "domain": "proj"})
+	srTr := call(t, h, "search", map[string]any{"query": "uniqueterm", "domain": "proj"})
 	mustNotError(t, srTr)
 	ids := searchIDs(t, srTr)
 	if len(ids) == 0 {
@@ -2094,7 +2094,7 @@ func TestAuditLog_RecordsUpdateNode(t *testing.T) {
 		"description": "original description",
 	})
 
-	mustNotError(t, call(t, h, "update_node", map[string]any{
+	mustNotError(t, call(t, h, "update", map[string]any{
 		"id":          id,
 		"description": "improved description",
 		"why_matters": "now it matters more",
@@ -2162,7 +2162,7 @@ func TestSearchNodes_MultiWordFallback(t *testing.T) {
 		"tags":        "parameterised kotlin",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "testing approval parameterised",
 		"domain": "proj",
 	})
@@ -2178,7 +2178,7 @@ func TestSearchNodes_SingleWord_Unchanged(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "ULA memory write fix fallback test", "proj", nil)
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "ULA",
 		"domain": "proj",
 	})
@@ -2202,7 +2202,7 @@ func TestSearchNodes_MultiWordFallback_NoSpuriousResults(t *testing.T) {
 		"tags":        "parameterised",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "testing approval parameterised",
 		"domain": "proj",
 	})
@@ -2235,7 +2235,7 @@ id2 := addNode(t, h, "ID check node beta", "id-test-domain", map[string]any{
 "description": "second node",
 })
 
-tr := call(t, h, "summarise_domain", map[string]any{"domain": "id-test-domain"})
+tr := call(t, h, "orient", map[string]any{"domain": "id-test-domain"})
 mustNotError(t, tr)
 body := text(t, tr)
 
@@ -2277,7 +2277,7 @@ t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
 
 func TestAddNode_Transient_PersistedAndReturned(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "add_node", map[string]any{
+	tr := call(t, h, "remember", map[string]any{
 		"label":     "Sprint ticket ABC",
 		"domain":    "proj",
 		"transient": true,
@@ -2314,7 +2314,7 @@ func TestDrift_TransientOlderThan7Days_Surfaced(t *testing.T) {
 	}
 	rawDB.Close()
 
-	tr := call(t, h, "drift", map[string]any{"domain": "transient-test"})
+	tr := call(t, h, "whats_stale", map[string]any{"domain": "transient-test"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2332,7 +2332,7 @@ func TestDrift_TransientNewerThan7Days_NotSurfaced(t *testing.T) {
 		"transient": true,
 	})
 
-	tr := call(t, h, "drift", map[string]any{"domain": "transient-fresh"})
+	tr := call(t, h, "whats_stale", map[string]any{"domain": "transient-fresh"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2354,7 +2354,7 @@ func TestSuggestEdges_OverlappingTags(t *testing.T) {
 		"tags": "kotlin gradle build",
 	})
 
-	tr := call(t, h, "suggest_edges", map[string]any{"id": idA})
+	tr := call(t, h, "suggest_connections", map[string]any{"id": idA})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2371,7 +2371,7 @@ func TestSuggestEdges_SimilarLabelWords(t *testing.T) {
 	idB := addNode(t, h, "boot sequence timing", "proj", nil) // shares "boot"
 	addNode(t, h, "completely unrelated widget", "proj", nil)
 
-	tr := call(t, h, "suggest_edges", map[string]any{"id": idA})
+	tr := call(t, h, "suggest_connections", map[string]any{"id": idA})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2391,7 +2391,7 @@ func TestSuggestEdges_DoesNotReturnItself(t *testing.T) {
 		"tags": "uniquetag999",
 	})
 
-	tr := call(t, h, "suggest_edges", map[string]any{"id": id})
+	tr := call(t, h, "suggest_connections", map[string]any{"id": id})
 	mustNotError(t, tr)
 
 	var suggestions []struct {
@@ -2423,7 +2423,7 @@ func TestSuggestEdges_DomainScoping(t *testing.T) {
 		"tags": "kotlin testing",
 	})
 
-	tr := call(t, h, "suggest_edges", map[string]any{"id": idA})
+	tr := call(t, h, "suggest_connections", map[string]any{"id": idA})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2438,7 +2438,7 @@ func TestSuggestEdges_NoResults_ReturnsEmptyNotError(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "lone node in empty domain", "lone-domain-xyz", nil)
 
-	tr := call(t, h, "suggest_edges", map[string]any{"id": id})
+	tr := call(t, h, "suggest_connections", map[string]any{"id": id})
 	mustNotError(t, tr)
 	// Must parse as a JSON array (possibly empty).
 	var suggestions []interface{}
@@ -2466,7 +2466,7 @@ func TestSearchSemantic_ResponseIncludesDistance(t *testing.T) {
 		"why_matters": "prevents data corruption during upgrades",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "schema evolution approach",
 		"domain": "dist-test",
 	})
@@ -2499,7 +2499,7 @@ func TestSearchLike_ResponseHasNullDistance(t *testing.T) {
 
 	addNode(t, h, "unique xylophone phrase", "dist-like-test", nil)
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "unique xylophone phrase",
 		"domain": "dist-like-test",
 	})
@@ -2540,7 +2540,7 @@ func TestSearchSemantic_FindsRelatedContent(t *testing.T) {
 		"why_matters": "prevents data corruption and downtime during upgrades",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "schema evolution approach",
 		"domain": "semantic-test",
 	})
@@ -2563,7 +2563,7 @@ func TestSearchSemantic_ExcludesIrrelevantNode(t *testing.T) {
 		"why_matters": "dessert baking technique",
 	})
 
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "database schema migration upgrade strategy",
 		"domain": "semantic-test",
 	})
@@ -2591,7 +2591,7 @@ func TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings(t *testing.T) {
 	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "")
 
 	// Semantic search finds no embeddings → falls back to LIKE.
-	tr := call(t, h, "search_nodes", map[string]any{
+	tr := call(t, h, "search", map[string]any{
 		"query":  "schema migration",
 		"domain": "fallback-test",
 	})

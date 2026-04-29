@@ -258,7 +258,7 @@ func TestPrecompactHookAllowsOnReentry(t *testing.T) {
 // a superseded-label node (drift rule 2), and a contradicting pair (drift rule 1).
 //
 // It uses tools.Handler.CallTool — the same interface an MCP agent would use —
-// so the test exercises the real add_node / add_edge code paths.
+// so the test exercises the real remember / connect code paths.
 func seedRealisticDB(t *testing.T, dbPath string) {
 	t.Helper()
 
@@ -317,28 +317,28 @@ func seedRealisticDB(t *testing.T, dbPath string) {
 
 	// Domain: deep-game — a game development project with decisions, findings,
 	// and a superseded renderer approach.
-	webglID := call("add_node", map[string]any{
+	webglID := call("remember", map[string]any{
 		"label":       "WebGL Renderer Architecture Decision",
 		"domain":      "deep-game",
 		"description": "Chose WebGL for card rendering to support 3D flip animations at 60fps.",
 		"why_matters": "Sets the rendering budget for all card animations and constrains which browsers are supported.",
 		"tags":        "rendering architecture graphics performance",
 	})
-	cssID := call("add_node", map[string]any{
+	cssID := call("remember", map[string]any{
 		"label":       "CSS Transform Animation Approach",
 		"domain":      "deep-game",
 		"description": "Alternative proposal: use CSS perspective transforms instead of WebGL for card flips.",
 		"why_matters": "Simpler to implement but cannot reach 60fps on low-end Android; rejected in favour of WebGL.",
 		"tags":        "animation css frontend alternative",
 	})
-	call("add_node", map[string]any{
+	call("remember", map[string]any{
 		"label":       "Card Flip Animation Design",
 		"domain":      "deep-game",
 		"description": "Cards flip with a 180-degree Y-axis rotation over 300ms using a WebGL shader.",
 		"why_matters": "Core UX interaction; animation smoothness directly affects perceived game quality.",
 		"tags":        "animation ux card shader",
 	})
-	call("add_node", map[string]any{
+	call("remember", map[string]any{
 		"label":       "Multiplayer Sync Protocol Choice",
 		"domain":      "deep-game",
 		"description": "Decided on CRDT-based state sync over WebSockets to handle offline play.",
@@ -346,7 +346,7 @@ func seedRealisticDB(t *testing.T, dbPath string) {
 		"tags":        "multiplayer sync crdt websocket protocol",
 	})
 	// Superseded approach — label contains "Old" → drift rule 2.
-	call("add_node", map[string]any{
+	call("remember", map[string]any{
 		"label":       "Old Canvas-Based Renderer",
 		"domain":      "deep-game",
 		"description": "Original renderer using 2D canvas; replaced by WebGL pipeline in sprint 4.",
@@ -355,7 +355,7 @@ func seedRealisticDB(t *testing.T, dbPath string) {
 	})
 
 	// Contradicting pair — drift rule 1.
-	call("add_edge", map[string]any{
+	call("connect", map[string]any{
 		"from_node":    cssID,
 		"to_node":      webglID,
 		"relationship": "contradicts",
@@ -363,14 +363,14 @@ func seedRealisticDB(t *testing.T, dbPath string) {
 	})
 
 	// Domain: memoryweb-meta — decisions about this tool itself.
-	call("add_node", map[string]any{
+	call("remember", map[string]any{
 		"label":       "Hook Save Interval Configuration",
 		"domain":      "memoryweb-meta",
 		"description": "Save interval defaulted to 15 human messages to balance overhead vs. filing frequency.",
 		"why_matters": "Too frequent interrupts workflow; too infrequent risks losing session context at compaction.",
 		"tags":        "hook configuration interval tuning",
 	})
-	call("add_node", map[string]any{
+	call("remember", map[string]any{
 		"label":       "Dream Tool for Session Orientation",
 		"domain":      "memoryweb-meta",
 		"description": "Introduced a dream subcommand that surfaces recent nodes and drift candidates at hook trigger time.",
@@ -458,8 +458,8 @@ func TestSaveHookEmbedsDreamDigest(t *testing.T) {
 	// ── actionable guidance ───────────────────────────────────────────────────
 	// The filing instructions must follow the digest so Claude knows what to do.
 
-	if !strings.Contains(stopReason, "add_nodes") {
-		t.Errorf("stopReason should contain 'add_nodes' filing instruction; got:\n%s", stopReason)
+	if !strings.Contains(stopReason, "remember_all") {
+		t.Errorf("stopReason should contain 'remember_all' filing instruction; got:\n%s", stopReason)
 	}
 	if !strings.Contains(stopReason, "why_matters") {
 		t.Errorf("stopReason should contain 'why_matters' guidance; got:\n%s", stopReason)
@@ -493,7 +493,7 @@ func TestSaveHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 		t.Errorf("hook output is not valid JSON without dream binary: %v\ngot:\n%s", err, out)
 	}
 	stopReason, _ := envelope["stopReason"].(string)
-	if !strings.Contains(stopReason, "add_nodes") {
+	if !strings.Contains(stopReason, "remember_all") {
 		t.Errorf("stopReason should still contain filing instructions; got:\n%s", stopReason)
 	}
 }

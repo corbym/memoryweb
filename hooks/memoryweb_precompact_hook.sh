@@ -38,5 +38,5 @@ fi
 
 # First run: block and request a thorough filing pass.
 touch "${compacting_flag}"
-printf '{"continue":false,"stopReason":"Context is about to compact. This is your last chance to file anything important. Call add_nodes for every significant decision, finding, or open question from this session that is not already in memoryweb. Add edges. Be thorough \xe2\x80\x94 anything not filed now may be lost. When done, continue."}\n'
+printf '{"continue":false,"stopReason":"Context is about to compact. This is your last chance to file anything important. Call remember_all for every significant decision, finding, or open question from this session that is not already in memoryweb. Add edges. Be thorough \xe2\x80\x94 anything not filed now may be lost. When done, continue."}\n'
 
