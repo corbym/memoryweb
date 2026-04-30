@@ -23,7 +23,7 @@ jobs:
           failed=""
           for tag in $(git tag --list 'v*' --sort=version:refname); do
             echo "Triggering release for $tag"
-            if ! gh workflow run release.yml --ref main -f tag="$tag"; then
+            if ! gh workflow run release.yml --ref master -f tag="$tag"; then
               echo "WARNING: failed to trigger release for $tag"
               failed="$failed $tag"
             fi
