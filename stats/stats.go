@@ -47,28 +47,46 @@ var toolKinds = map[string]toolKind{
 	"disconnect": kindMaint, "visualise": kindMaint,
 }
 
+// stale type indices for byType field.
+const (
+	staleContradicts = iota
+	staleSuperseded
+	staleOpenQ
+	staleDuplicate
+	staleTransient
+)
+
 type callRec struct {
-	tool       string
-	kind       toolKind
-	isError    bool
-	ts         time.Time
-	nodesFiled int
-	transient  int
-	edgesFiled int
-	domain     string
+	tool        string
+	kind        toolKind
+	isError     bool
+	ts          time.Time
+	nodesFiled  int
+	transient   int
+	edgesFiled  int
+	domain      string
+	staleTotal  int    // candidates returned by whats_stale
+	staleByType [5]int // indexed by stale* constants
+	dupEdges    [4]int // dup candidate edge-count buckets: 0, 1-2, 3-5, 6+
 }
 
 type sessionData struct {
-	StartTS    time.Time `json:"start_ts"`
-	WKD        float64   `json:"wkd"`
-	Type       string    `json:"type"`
-	NodesFiled int       `json:"nodes"`
-	EdgesFiled int       `json:"edges"`
-	Orphans    int       `json:"orphans"`
-	Transient  int       `json:"transient"`
-	Ratio      float64   `json:"ratio"`
-	Burst      bool      `json:"burst"`
-	Client     string    `json:"client,omitempty"`
+	StartTS         time.Time `json:"start_ts"`
+	WKD             float64   `json:"wkd"`
+	Type            string    `json:"type"`
+	NodesFiled      int       `json:"nodes"`
+	EdgesFiled      int       `json:"edges"`
+	Orphans         int       `json:"orphans"`
+	Transient       int       `json:"transient"`
+	Ratio           float64   `json:"ratio"`
+	Burst           bool      `json:"burst"`
+	Client          string    `json:"client,omitempty"`
+	StaleChecks     int       `json:"stale_checks,omitempty"`
+	StaleCandidates int       `json:"stale_candidates,omitempty"`
+	DupEdge0        int       `json:"dup_edge_0,omitempty"`  // duplicate candidates with 0 edges
+	DupEdge12       int       `json:"dup_edge_1_2,omitempty"` // 1-2 edges
+	DupEdge35       int       `json:"dup_edge_3_5,omitempty"` // 3-5 edges
+	DupEdge6p       int       `json:"dup_edge_6p,omitempty"`  // 6+ edges
 }
 
 // Recorder observes tool calls and writes session summaries.
@@ -165,6 +183,8 @@ func (r *Recorder) Record(tool string, argsRaw json.RawMessage, resultText strin
 			cr.edgesFiled = parseEdgesCreated(resultText)
 		case "merge":
 			cr.edgesFiled = 1
+		case "whats_stale":
+			cr.staleTotal, cr.staleByType, cr.dupEdges = parseWhatsStaleResult(resultText)
 		}
 	}
 	r.calls = append(r.calls, cr)
@@ -234,13 +254,17 @@ func (r *Recorder) flush() (string, error) {
 // ── computation ──────────────────────────────────────────────────────────────
 
 type computedSession struct {
-	data       sessionData
-	duration   time.Duration
-	byTool     map[string]int
-	errors     int
-	totalCalls int
-	grade      string
-	domains    map[string]int
+	data            sessionData
+	duration        time.Duration
+	byTool          map[string]int
+	errors          int
+	totalCalls      int
+	grade           string
+	domains         map[string]int
+	staleChecks     int
+	staleCandidates int
+	staleByType     [5]int
+	dupEdges        [4]int
 }
 
 func (r *Recorder) computeSession() computedSession {
@@ -248,6 +272,9 @@ func (r *Recorder) computeSession() computedSession {
 	byTool := make(map[string]int)
 	domains := make(map[string]int)
 	var retrievalTotal, retrievalToWrite int
+	var staleChecks, staleCandidates int
+	var staleByType [5]int
+	var dupEdges [4]int
 
 	for i, c := range r.calls {
 		byTool[c.tool]++
@@ -267,6 +294,16 @@ func (r *Recorder) computeSession() computedSession {
 					retrievalToWrite++
 					break
 				}
+			}
+		}
+		if c.staleTotal > 0 {
+			staleChecks++
+			staleCandidates += c.staleTotal
+			for t := range staleByType {
+				staleByType[t] += c.staleByType[t]
+			}
+			for b := range dupEdges {
+				dupEdges[b] += c.dupEdges[b]
 			}
 		}
 	}
@@ -309,13 +346,23 @@ func (r *Recorder) computeSession() computedSession {
 			Ratio: math.Round(ratio*100) / 100,
 			Burst:  nodesFiled > 15,
 			Client: r.client,
+			StaleChecks:     staleChecks,
+			StaleCandidates: staleCandidates,
+			DupEdge0:        dupEdges[0],
+			DupEdge12:       dupEdges[1],
+			DupEdge35:       dupEdges[2],
+			DupEdge6p:       dupEdges[3],
 		},
-		duration:   time.Since(r.start),
-		byTool:     byTool,
-		errors:     errors,
-		totalCalls: len(r.calls),
-		grade:      grade,
-		domains:    domains,
+		duration:        time.Since(r.start),
+		byTool:          byTool,
+		errors:          errors,
+		totalCalls:      len(r.calls),
+		grade:           grade,
+		domains:         domains,
+		staleChecks:     staleChecks,
+		staleCandidates: staleCandidates,
+		staleByType:     staleByType,
+		dupEdges:        dupEdges,
 	}
 }
 
@@ -488,6 +535,27 @@ func (r *Recorder) formatSummary(sess computedSession, prior []sessionData) stri
 		sb.WriteString("  Session type  minimal - few calls, no substantive activity\n")
 	}
 
+	if sess.staleChecks > 0 {
+		typeNames := [5]string{"contradicts", "superseded", "stale", "duplicate", "transient"}
+		var parts []string
+		for i, n := range sess.staleByType {
+			if n > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", n, typeNames[i]))
+			}
+		}
+		breakdown := ""
+		if len(parts) > 0 {
+			breakdown = " (" + strings.Join(parts, ", ") + ")"
+		}
+		sb.WriteString(fmt.Sprintf("  Stale checks  %d call(s), %d candidate(s)%s\n",
+			sess.staleChecks, sess.staleCandidates, breakdown))
+		dupTotal := sess.dupEdges[0] + sess.dupEdges[1] + sess.dupEdges[2] + sess.dupEdges[3]
+		if dupTotal > 0 {
+			sb.WriteString(fmt.Sprintf("  Dup edges     %dx(0)  %dx(1-2)  %dx(3-5)  %dx(6+)\n",
+				sess.dupEdges[0], sess.dupEdges[1], sess.dupEdges[2], sess.dupEdges[3]))
+		}
+	}
+
 	if len(prior) > 0 {
 		now30 := now.AddDate(0, 0, -30)
 		now7 := now.AddDate(0, 0, -7)
@@ -585,6 +653,57 @@ func parseEdgesCreated(resultText string) int {
 		return r.EdgesCreated
 	}
 	return 1
+}
+
+// parseWhatsStaleResult parses the JSON result text from a whats_stale call.
+// Returns total candidate count, per-type counts ([contradicts, superseded,
+// stale, duplicate, transient]), and a dup-candidate edge-count histogram
+// ([0 edges, 1-2, 3-5, 6+]).
+func parseWhatsStaleResult(resultText string) (total int, byType [5]int, dupEdges [4]int) {
+	var candidates []struct {
+		Reason    string `json:"reason"`
+		EdgeCount int    `json:"edge_count"`
+	}
+	if json.Unmarshal([]byte(resultText), &candidates) != nil {
+		return
+	}
+	total = len(candidates)
+	for _, c := range candidates {
+		idx := staleTypeIdx(c.Reason)
+		byType[idx]++
+		if idx == staleDuplicate {
+			dupEdges[edgeBucket(c.EdgeCount)]++
+		}
+	}
+	return
+}
+
+func staleTypeIdx(reason string) int {
+	switch {
+	case strings.HasPrefix(reason, "explicitly"):
+		return staleContradicts
+	case strings.HasPrefix(reason, "label suggests"):
+		return staleSuperseded
+	case strings.HasPrefix(reason, "open question"):
+		return staleOpenQ
+	case strings.HasPrefix(reason, "possible duplicate"):
+		return staleDuplicate
+	default:
+		return staleTransient
+	}
+}
+
+func edgeBucket(n int) int {
+	switch {
+	case n == 0:
+		return 0
+	case n <= 2:
+		return 1
+	case n <= 5:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func imax(a, b int) int {

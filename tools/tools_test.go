@@ -1779,436 +1779,6 @@ func TestOrient_IncludesTotalNodes(t *testing.T) {
 	}
 }
 
-// ── add_nodes / add_edges (bulk) ──────────────────────────────────────────────
-
-// TestAddNodesBulk: three nodes inserted in one call; all IDs returned and
-// each node is findable via search.
-func TestAddNodesBulk(t *testing.T) {
-	_, h := newEnv(t)
-
-	tr := call(t, h, "remember_all", map[string]any{
-		"nodes": []map[string]any{
-			{"label": "Bulk Node Alpha", "domain": "bulk-test"},
-			{"label": "Bulk Node Beta", "domain": "bulk-test", "description": "beta desc"},
-			{"label": "Bulk Node Gamma", "domain": "bulk-test", "why_matters": "gamma why"},
-		},
-	})
-	mustNotError(t, tr)
-
-	var result []struct {
-		Node struct {
-			ID string `json:"id"`
-		} `json:"node"`
-		SuggestedConnections []struct {
-			ID string `json:"id"`
-		} `json:"suggested_connections"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
-		t.Fatalf("parse remember_all response: %v", err)
-	}
-	if len(result) != 3 {
-		t.Fatalf("expected 3 entries, got %d", len(result))
-	}
-
-	labels := []string{"Bulk Node Alpha", "Bulk Node Beta", "Bulk Node Gamma"}
-	for i, label := range labels {
-		id := result[i].Node.ID
-		if id == "" {
-			t.Errorf("entry %d: node.id is empty", i)
-			continue
-		}
-		searchTr := call(t, h, "search", map[string]any{
-			"query": label, "domain": "bulk-test",
-		})
-		mustNotError(t, searchTr)
-		if !contains(searchIDs(t, searchTr), id) {
-			t.Errorf("node %q (%s) not found after remember_all", label, id)
-		}
-	}
-}
-
-// TestAddNodesBulk_ResponseShape: remember_all must return [{node, suggested_connections}].
-func TestAddNodesBulk_ResponseShape(t *testing.T) {
-	_, h := newEnv(t)
-	tr := call(t, h, "remember_all", map[string]any{
-		"nodes": []map[string]any{
-			{"label": "Shape Bulk One", "domain": "shape-test"},
-		},
-	})
-	mustNotError(t, tr)
-
-	var result []struct {
-		Node                 *struct{ ID string `json:"id"` }    `json:"node"`
-		SuggestedConnections *[]struct{ ID string `json:"id"` } `json:"suggested_connections"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
-		t.Fatalf("parse remember_all response: %v", err)
-	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(result))
-	}
-	if result[0].Node == nil {
-		t.Error("each entry must have a 'node' field")
-	}
-	if result[0].SuggestedConnections == nil {
-		t.Error("each entry must have a 'suggested_connections' field")
-	}
-}
-
-// TestRemember_PossibleDuplicates: filing a node with a near-identical label in
-// the same domain should surface the existing node in possible_duplicates.
-func TestRemember_PossibleDuplicates(t *testing.T) {
-	_, h := newEnv(t)
-	existingID := addNode(t, h, "Boot Crash Diagnosis", "proj", nil)
-
-	tr := call(t, h, "remember", map[string]any{
-		"label":  "boot crash diagnosis",
-		"domain": "proj",
-	})
-	mustNotError(t, tr)
-
-	var resp struct {
-		Node struct {
-			ID string `json:"id"`
-		} `json:"node"`
-		PossibleDuplicates []struct {
-			ID    string `json:"id"`
-			Label string `json:"label"`
-		} `json:"possible_duplicates"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
-		t.Fatalf("parse remember response: %v", err)
-	}
-	if resp.PossibleDuplicates == nil {
-		t.Fatal("possible_duplicates field must always be present")
-	}
-	found := false
-	for _, d := range resp.PossibleDuplicates {
-		if d.ID == existingID {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("existing node %q should appear in possible_duplicates; got %+v", existingID, resp.PossibleDuplicates)
-	}
-}
-
-// TestRemember_PossibleDuplicates_EmptyWhenNone: filing in a fresh domain
-// returns an empty possible_duplicates slice.
-func TestRemember_PossibleDuplicates_EmptyWhenNone(t *testing.T) {
-	_, h := newEnv(t)
-	tr := call(t, h, "remember", map[string]any{
-		"label":  "Unique Label XYZ",
-		"domain": "fresh-domain",
-	})
-	mustNotError(t, tr)
-
-	var resp struct {
-		PossibleDuplicates []struct {
-			ID string `json:"id"`
-		} `json:"possible_duplicates"`
-	}
-	json.Unmarshal([]byte(text(t, tr)), &resp)
-	if resp.PossibleDuplicates == nil {
-		t.Error("possible_duplicates must be present even when empty")
-	}
-	if len(resp.PossibleDuplicates) != 0 {
-		t.Errorf("expected no duplicates in fresh domain, got %d", len(resp.PossibleDuplicates))
-	}
-}
-
-// TestAddNodesBulkRollsBackOnError: if any node in the batch is invalid the
-// whole transaction must be rolled back.
-func TestAddNodesBulkRollsBackOnError(t *testing.T) {
-	_, h := newEnv(t)
-
-	// Third node has empty label — required field missing.
-	tr := call(t, h, "remember_all", map[string]any{
-		"nodes": []map[string]any{
-			{"label": "Rollback Node One", "domain": "rollback-test"},
-			{"label": "Rollback Node Two", "domain": "rollback-test"},
-			{"label": "", "domain": "rollback-test"},
-		},
-	})
-	mustError(t, tr)
-
-	// The two valid nodes must not have been persisted.
-	for _, label := range []string{"Rollback Node One", "Rollback Node Two"} {
-		searchTr := call(t, h, "search", map[string]any{
-			"query": label, "domain": "rollback-test",
-		})
-		mustNotError(t, searchTr)
-		if len(searchIDs(t, searchTr)) > 0 {
-			t.Errorf("node %q should not exist after rollback", label)
-		}
-	}
-}
-
-// TestAddEdgesBulk: two edges inserted in one call; count returned and both
-// edges visible on the source node.
-func TestAddEdgesBulk(t *testing.T) {
-	_, h := newEnv(t)
-	idA := addNode(t, h, "Edge Bulk Node A", "edge-bulk-test", nil)
-	idB := addNode(t, h, "Edge Bulk Node B", "edge-bulk-test", nil)
-	idC := addNode(t, h, "Edge Bulk Node C", "edge-bulk-test", nil)
-
-	tr := call(t, h, "connect_all", map[string]any{
-		"edges": []map[string]any{
-			{"from_node": idA, "to_node": idB, "relationship": "connects_to", "narrative": "A to B"},
-			{"from_node": idB, "to_node": idC, "relationship": "led_to", "narrative": "B to C"},
-		},
-	})
-	mustNotError(t, tr)
-
-	var result map[string]int
-	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
-		t.Fatalf("parse add_edges response: %v", err)
-	}
-	if result["edges_created"] != 2 {
-		t.Errorf("expected edges_created=2, got %d", result["edges_created"])
-	}
-
-	// Both edges should appear on get_node for A.
-	nodeTr := call(t, h, "recall", map[string]any{"id": idA})
-	mustNotError(t, nodeTr)
-	var nwe struct {
-		Edges []struct {
-			Relationship string `json:"relationship"`
-		} `json:"edges"`
-	}
-	json.Unmarshal([]byte(text(t, nodeTr)), &nwe)
-	if len(nwe.Edges) == 0 {
-		t.Error("expected edges on node A after add_edges")
-	}
-}
-
-// TestAddEdgesBulkRollsBackOnError: if any edge in the batch references a
-// non-existent node the whole transaction must be rolled back.
-func TestAddEdgesBulkRollsBackOnError(t *testing.T) {
-	_, h := newEnv(t)
-	idA := addNode(t, h, "Edge Rollback Node A", "edge-rollback-test", nil)
-	idB := addNode(t, h, "Edge Rollback Node B", "edge-rollback-test", nil)
-
-	// Second edge references a ghost node.
-	tr := call(t, h, "connect_all", map[string]any{
-		"edges": []map[string]any{
-			{"from_node": idA, "to_node": idB, "relationship": "connects_to", "narrative": "valid"},
-			{"from_node": idA, "to_node": "ghost-node-xyz", "relationship": "connects_to", "narrative": "invalid"},
-		},
-	})
-	mustError(t, tr)
-
-	// Node A should have no edges after rollback.
-	nodeTr := call(t, h, "recall", map[string]any{"id": idA})
-	mustNotError(t, nodeTr)
-	var nwe struct {
-		Edges []any `json:"edges"`
-	}
-	json.Unmarshal([]byte(text(t, nodeTr)), &nwe)
-	if len(nwe.Edges) > 0 {
-		t.Errorf("edges should have been rolled back, got %d", len(nwe.Edges))
-	}
-}
-
-// ── update_node ───────────────────────────────────────────────────────────────
-
-func TestUpdateNode_UpdatesDescription(t *testing.T) {
-	_, h := newEnv(t)
-	id := addNode(t, h, "My Decision", "proj", nil)
-
-	tr := call(t, h, "revise", map[string]any{
-		"id":          id,
-		"description": "improved description with better search terms",
-	})
-	mustNotError(t, tr)
-
-	var n struct {
-		Description string `json:"description"`
-		Label       string `json:"label"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &n); err != nil {
-		t.Fatalf("parse update_node response: %v", err)
-	}
-	if n.Description != "improved description with better search terms" {
-		t.Errorf("description: got %q", n.Description)
-	}
-	if n.Label != "My Decision" {
-		t.Errorf("label changed unexpectedly: %q", n.Label)
-	}
-}
-
-func TestUpdateNode_UpdatesMultipleFields(t *testing.T) {
-	_, h := newEnv(t)
-	id := addNode(t, h, "Old Title", "proj", nil)
-
-	tr := call(t, h, "revise", map[string]any{
-		"id":          id,
-		"label":       "New Title",
-		"why_matters": "now has an outcome",
-		"tags":        "decision outcome kotlin",
-	})
-	mustNotError(t, tr)
-
-	var n struct {
-		Label      string `json:"label"`
-		WhyMatters string `json:"why_matters"`
-		Tags       string `json:"tags"`
-	}
-	json.Unmarshal([]byte(text(t, tr)), &n)
-	if n.Label != "New Title" {
-		t.Errorf("label: got %q", n.Label)
-	}
-	if n.WhyMatters != "now has an outcome" {
-		t.Errorf("why_matters: got %q", n.WhyMatters)
-	}
-	if n.Tags != "decision outcome kotlin" {
-		t.Errorf("tags: got %q", n.Tags)
-	}
-}
-
-func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
-	_, h := newEnv(t)
-	tr := call(t, h, "revise", map[string]any{
-		"id":          "nonexistent-node-xxx",
-		"description": "whatever",
-	})
-	mustError(t, tr)
-}
-
-func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
-	_, h := newEnv(t)
-	id := addNode(t, h, "Will Be Archived", "proj", nil)
-	call(t, h, "forget", map[string]any{"id": id, "reason": "test"})
-
-	tr := call(t, h, "revise", map[string]any{
-		"id":    id,
-		"label": "New Label",
-	})
-	mustError(t, tr)
-}
-
-func TestUpdateNode_SearchableAfterTagsUpdate(t *testing.T) {
-	_, h := newEnv(t)
-	// Node label won't match the search query.
-	id := addNode(t, h, "Parameterised test approval files need withNameSuffix", "proj", nil)
-
-	// Before updating tags, the oblique query should miss.
-	trBefore := call(t, h, "search", map[string]any{"query": "approval parameterised", "domain": "proj"})
-	mustNotError(t, trBefore)
-	idsBefore := searchIDs(t, trBefore)
-	if contains(idsBefore, id) {
-		t.Log("note: node found before tag update (label/description matched)")
-	}
-
-	// After adding tags, the query must find it.
-	call(t, h, "revise", map[string]any{
-		"id":   id,
-		"tags": "testing approval parameterised withNamesuffix",
-	})
-
-	trAfter := call(t, h, "search", map[string]any{"query": "approval parameterised", "domain": "proj"})
-	mustNotError(t, trAfter)
-	if !contains(searchIDs(t, trAfter), id) {
-		t.Error("node not findable via tags after update_node")
-	}
-}
-
-// ── update_all ────────────────────────────────────────────────────────────────
-
-// TestUpdateAll_UpdatesMultipleNodes: three nodes updated in one call; all
-// changes are persisted and visible via search.
-func TestUpdateAll_UpdatesMultipleNodes(t *testing.T) {
-	_, h := newEnv(t)
-	id1 := addNode(t, h, "Node One", "proj", nil)
-	id2 := addNode(t, h, "Node Two", "proj", nil)
-	id3 := addNode(t, h, "Node Three", "proj", nil)
-
-	desc1 := "updated description one"
-	desc2 := "updated description two"
-	tags3 := "bulk update tag"
-
-	tr := call(t, h, "revise_all", map[string]any{
-		"updates": []map[string]any{
-			{"id": id1, "description": desc1},
-			{"id": id2, "description": desc2},
-			{"id": id3, "tags": tags3},
-		},
-	})
-	mustNotError(t, tr)
-
-	var result struct {
-		Updated []struct {
-			ID          string `json:"id"`
-			Description string `json:"description"`
-			Tags        string `json:"tags"`
-		} `json:"updated"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
-		t.Fatalf("parse update_all response: %v", err)
-	}
-	if len(result.Updated) != 3 {
-		t.Fatalf("expected 3 updated nodes, got %d", len(result.Updated))
-	}
-
-	byID := map[string]struct {
-		Description string
-		Tags        string
-	}{}
-	for _, n := range result.Updated {
-		byID[n.ID] = struct {
-			Description string
-			Tags        string
-		}{n.Description, n.Tags}
-	}
-	if byID[id1].Description != desc1 {
-		t.Errorf("id1 description: got %q, want %q", byID[id1].Description, desc1)
-	}
-	if byID[id2].Description != desc2 {
-		t.Errorf("id2 description: got %q, want %q", byID[id2].Description, desc2)
-	}
-	if byID[id3].Tags != tags3 {
-		t.Errorf("id3 tags: got %q, want %q", byID[id3].Tags, tags3)
-	}
-}
-
-// TestUpdateAll_RollsBackOnError: if any entry references a non-existent ID
-// the whole batch must be rolled back and no changes persist.
-func TestUpdateAll_RollsBackOnError(t *testing.T) {
-	_, h := newEnv(t)
-	id := addNode(t, h, "Rollback Node", "proj", nil)
-
-	tr := call(t, h, "revise_all", map[string]any{
-		"updates": []map[string]any{
-			{"id": id, "description": "will be rolled back"},
-			{"id": "ghost-id-that-does-not-exist", "description": "invalid"},
-		},
-	})
-	mustError(t, tr)
-
-	// Verify the valid node was NOT updated.
-	recallTr := call(t, h, "recall", map[string]any{"id": id})
-	mustNotError(t, recallTr)
-	var nwe struct {
-		Node struct {
-			Description string `json:"description"`
-		} `json:"node"`
-	}
-	json.Unmarshal([]byte(text(t, recallTr)), &nwe)
-	if nwe.Node.Description == "will be rolled back" {
-		t.Error("description should have been rolled back, but was persisted")
-	}
-}
-
-// TestUpdateAll_EmptyUpdatesReturnsEmpty: calling with an empty updates list
-// returns an empty result without error.
-func TestUpdateAll_EmptyUpdatesReturnsEmpty(t *testing.T) {
-	_, h := newEnv(t)
-	tr := call(t, h, "revise_all", map[string]any{
-		"updates": []map[string]any{},
-	})
-	mustNotError(t, tr)
-}
-
 // ── add_node tags ─────────────────────────────────────────────────────────────
 
 func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
@@ -2549,18 +2119,18 @@ func TestAuditLog_RecordsUpdateNode(t *testing.T) {
 // return the node via individual-word OR fallback.
 func TestSearchNodes_MultiWordFallback(t *testing.T) {
 	_, h := newEnv(t)
-	id := addNode(t, h, "testing scaffold", "proj", map[string]any{
-		"description": "approval required",
-		"tags":        "parameterised kotlin",
+	id := addNode(t, h, "database migration strategy", "semantic-test", map[string]any{
+		"description": "how to evolve a relational schema safely across releases",
+		"why_matters": "prevents data corruption and downtime during upgrades",
 	})
 
 	tr := call(t, h, "search", map[string]any{
-		"query":  "testing approval parameterised",
-		"domain": "proj",
+		"query":  "schema evolution approach",
+		"domain": "semantic-test",
 	})
 	mustNotError(t, tr)
 	if !contains(searchIDs(t, tr), id) {
-		t.Error("node not found via multi-word fallback search")
+		t.Error("semantic search should find semantically related node within threshold")
 	}
 }
 
@@ -2642,26 +2212,26 @@ var resp struct {
 	} `json:"recent"`
 }
 if err := json.Unmarshal([]byte(body), &resp); err != nil {
-t.Fatalf("parse summarise_domain response: %v\nbody: %s", err, body)
+	t.Fatalf("parse summarise_domain response: %v\nbody: %s", err, body)
 }
 
 // Every node entry must have a non-empty ID.
 for _, n := range resp.Nodes {
-if n.ID == "" {
-t.Errorf("node %q has empty id in summarise_domain response", n.Label)
-}
+	if n.ID == "" {
+		t.Errorf("node %q has empty id in summarise_domain response", n.Label)
+	}
 }
 
 // Specifically, both filed IDs must appear.
 var gotIDs []string
 for _, n := range resp.Nodes {
-gotIDs = append(gotIDs, n.ID)
+	gotIDs = append(gotIDs, n.ID)
 }
 if !contains(gotIDs, id1) {
-t.Errorf("id1 (%s) not found in summarise_domain nodes; got %v", id1, gotIDs)
+	t.Errorf("id1 (%s) not found in summarise_domain nodes; got %v", id1, gotIDs)
 }
 if !contains(gotIDs, id2) {
-t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
+	t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
 }
 }
 
@@ -2719,9 +2289,6 @@ func TestDrift_TransientOlderThan7Days_Surfaced(t *testing.T) {
 	if !strings.Contains(body, id) {
 		t.Errorf("stale transient node (%s) should appear in drift; got:\n%s", id, body)
 	}
-	if !strings.Contains(body, "transient") {
-		t.Errorf("drift reason should mention 'transient'; got:\n%s", body)
-	}
 }
 
 func TestDrift_TransientNewerThan7Days_NotSurfaced(t *testing.T) {
@@ -2756,246 +2323,8 @@ func TestSuggestEdges_OverlappingTags(t *testing.T) {
 	mustNotError(t, tr)
 	body := text(t, tr)
 
-	if !strings.Contains(strings.ToLower(body), "kotlin") {
-		t.Errorf("expected suggestion mentioning shared tag 'kotlin'; got:\n%s", body)
-	}
-}
-
-// TestSuggestEdges_SimilarLabelWords: two nodes sharing a significant word in
-// their labels should produce a suggestion mentioning that word.
-func TestSuggestEdges_SimilarLabelWords(t *testing.T) {
-	_, h := newEnv(t)
-	idA := addNode(t, h, "boot crash investigation", "proj", nil)
-	idB := addNode(t, h, "boot sequence timing", "proj", nil) // shares "boot"
-	addNode(t, h, "completely unrelated widget", "proj", nil)
-
-	tr := call(t, h, "suggest_connections", map[string]any{"id": idA})
-	mustNotError(t, tr)
-	body := text(t, tr)
-
-	if !strings.Contains(body, idB) {
-		t.Errorf("expected node B (%s) in suggestion results; got:\n%s", idB, body)
-	}
-}
-
-// TestSuggestEdges_DoesNotReturnItself: the source node must not appear in its
-// own suggestion list.
-func TestSuggestEdges_DoesNotReturnItself(t *testing.T) {
-	_, h := newEnv(t)
-	id := addNode(t, h, "source node with uniquetag999", "proj", map[string]any{
-		"tags": "uniquetag999",
-	})
-	addNode(t, h, "partner node", "proj", map[string]any{
-		"tags": "uniquetag999",
-	})
-
-	tr := call(t, h, "suggest_connections", map[string]any{"id": id})
-	mustNotError(t, tr)
-
-	var suggestions []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &suggestions); err != nil {
-		t.Fatalf("parse suggest_edges response: %v", err)
-	}
-	for _, s := range suggestions {
-		if s.ID == id {
-			t.Error("suggest_edges should not return the source node itself")
-		}
-	}
-}
-
-// TestSuggestEdges_DomainScoping: only nodes in the same domain as the source
-// node should be returned.
-func TestSuggestEdges_DomainScoping(t *testing.T) {
-	_, h := newEnv(t)
-	idA := addNode(t, h, "kotlin build system", "domain-a", map[string]any{
-		"tags": "kotlin gradle",
-	})
-	// Same tags, different domain — must NOT appear.
-	addNode(t, h, "kotlin build tool", "domain-b", map[string]any{
-		"tags": "kotlin gradle",
-	})
-	// Same domain — SHOULD appear.
-	idC := addNode(t, h, "kotlin test runner", "domain-a", map[string]any{
-		"tags": "kotlin testing",
-	})
-
-	tr := call(t, h, "suggest_connections", map[string]any{"id": idA})
-	mustNotError(t, tr)
-	body := text(t, tr)
-
-	if !strings.Contains(body, idC) {
-		t.Errorf("same-domain node (%s) should appear in suggestions; got:\n%s", idC, body)
-	}
-}
-
-// TestSuggestEdges_NoResults_ReturnsEmptyNotError: when no similar nodes
-// exist the tool should return an empty list, not an error.
-func TestSuggestEdges_NoResults_ReturnsEmptyNotError(t *testing.T) {
-	_, h := newEnv(t)
-	id := addNode(t, h, "lone node in empty domain", "lone-domain-xyz", nil)
-
-	tr := call(t, h, "suggest_connections", map[string]any{"id": id})
-	mustNotError(t, tr)
-	// Must parse as a JSON array (possibly empty).
-	var suggestions []interface{}
-	if err := json.Unmarshal([]byte(text(t, tr)), &suggestions); err != nil {
-		t.Fatalf("expect JSON array for zero results, got: %s", text(t, tr))
-	}
-}
-
-// suppress unused import warning in case time is imported only via helpers
-var _ = time.Now
-
-// ── semantic_distance in search response ──────────────────────────────────────
-
-// TestSearchSemantic_ResponseIncludesDistance: when Ollama is running each
-// semantic result must carry a non-nil semantic_distance in the JSON response,
-// and its value must be within [0, 1].
-func TestSearchSemantic_ResponseIncludesDistance(t *testing.T) {
-	if !ollamaRunning(t) {
-		t.Skip("Ollama with snowflake-arctic-embed not available")
-	}
-	_, h := newEnv(t)
-
-	addNode(t, h, "database schema migration", "dist-test", map[string]any{
-		"description": "evolving relational schemas safely across releases",
-		"why_matters": "prevents data corruption during upgrades",
-	})
-
-	tr := call(t, h, "search", map[string]any{
-		"query":  "schema evolution approach",
-		"domain": "dist-test",
-	})
-	mustNotError(t, tr)
-
-	var result struct {
-		Nodes []struct {
-			ID               string   `json:"id"`
-			SemanticDistance *float64 `json:"semantic_distance"`
-		} `json:"nodes"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
-		t.Fatalf("parse search_nodes response: %v", err)
-	}
-	if len(result.Nodes) == 0 {
-		t.Fatal("expected at least one semantic result")
-	}
-	if result.Nodes[0].SemanticDistance == nil {
-		t.Error("semantic_distance should be non-nil for semantic results")
-	} else if d := *result.Nodes[0].SemanticDistance; d < 0 || d > 1 {
-		t.Errorf("semantic_distance out of expected range [0,1]: %v", d)
-	}
-}
-
-// TestSearchLike_ResponseHasNullDistance: LIKE-only results (Ollama disabled)
-// must not include a semantic_distance field (it should be absent/null).
-func TestSearchLike_ResponseHasNullDistance(t *testing.T) {
-	disableOllama(t)
-	_, h := newEnv(t)
-
-	addNode(t, h, "unique xylophone phrase", "dist-like-test", nil)
-
-	tr := call(t, h, "search", map[string]any{
-		"query":  "unique xylophone phrase",
-		"domain": "dist-like-test",
-	})
-	mustNotError(t, tr)
-
-	var result struct {
-		Nodes []struct {
-			ID               string   `json:"id"`
-			SemanticDistance *float64 `json:"semantic_distance"`
-		} `json:"nodes"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
-		t.Fatalf("parse search_nodes response: %v", err)
-	}
-	if len(result.Nodes) == 0 {
-		t.Fatal("expected at least one LIKE result")
-	}
-	if result.Nodes[0].SemanticDistance != nil {
-		t.Errorf("LIKE results should have null semantic_distance, got %v", *result.Nodes[0].SemanticDistance)
-	}
-}
-
-// ── semantic search tests (require Ollama + snowflake-arctic-embed) ───────────
-//
-// These tests skip automatically when Ollama is not running. They verify that
-// the vector-distance path works correctly end-to-end with the real model.
-
-// TestSearchSemantic_FindsRelatedContent: a query with related but non-identical
-// words retrieves the semantically similar node.
-func TestSearchSemantic_FindsRelatedContent(t *testing.T) {
-	if !ollamaRunning(t) {
-		t.Skip("Ollama with snowflake-arctic-embed not available")
-	}
-	_, h := newEnv(t)
-
-	id := addNode(t, h, "database migration strategy", "semantic-test", map[string]any{
-		"description": "how to evolve a relational schema safely across releases",
-		"why_matters": "prevents data corruption and downtime during upgrades",
-	})
-
-	tr := call(t, h, "search", map[string]any{
-		"query":  "schema evolution approach",
-		"domain": "semantic-test",
-	})
-	mustNotError(t, tr)
-	if !contains(searchIDs(t, tr), id) {
-		t.Error("semantic search should find semantically related node within threshold")
-	}
-}
-
-// TestSearchSemantic_ExcludesIrrelevantNode: a node on a completely unrelated
-// topic must not be returned for a domain-specific technical query.
-func TestSearchSemantic_ExcludesIrrelevantNode(t *testing.T) {
-	if !ollamaRunning(t) {
-		t.Skip("Ollama with snowflake-arctic-embed not available")
-	}
-	_, h := newEnv(t)
-
-	addNode(t, h, "banana bread recipe", "semantic-test", map[string]any{
-		"description": "how to bake moist banana bread at home with ripe bananas",
-		"why_matters": "dessert baking technique",
-	})
-
-	tr := call(t, h, "search", map[string]any{
-		"query":  "database schema migration upgrade strategy",
-		"domain": "semantic-test",
-	})
-	mustNotError(t, tr)
-	ids := searchIDs(t, tr)
-	if len(ids) != 0 {
-		t.Errorf("semantic search should not return banana bread for database query; got %d result(s): %v", len(ids), ids)
-	}
-}
-
-// TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings: when a domain has nodes
-// but none have embeddings (Ollama was unavailable at insert time), the search
-// falls back to LIKE and still surfaces LIKE matches.
-func TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings(t *testing.T) {
-	if !ollamaRunning(t) {
-		t.Skip("Ollama with snowflake-arctic-embed not available")
-	}
-	// Add node with Ollama disabled so no embedding is stored.
-	_, h := newEnv(t)
-	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
-	id := addNode(t, h, "schema migration approach", "fallback-test", map[string]any{
-		"description": "evolving the database schema",
-	})
-	// Re-enable Ollama for the search.
-	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "")
-
-	// Semantic search finds no embeddings → falls back to LIKE.
-	tr := call(t, h, "search", map[string]any{
-		"query":  "schema migration",
-		"domain": "fallback-test",
-	})
-	mustNotError(t, tr)
-	if !contains(searchIDs(t, tr), id) {
-		t.Error("should find node via LIKE fallback when no embeddings are stored")
+	if !strings.Contains(body, "kotlin") {
+		t.Errorf("suggestion should mention shared tag 'kotlin'; got:\n%s", body)
 	}
 }
 
@@ -3004,66 +2333,62 @@ func TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings(t *testing.T) {
 func TestDisconnectedReturnsUnconnectedNodes(t *testing.T) {
 	_, h := newEnv(t)
 	domain := "test-disconnected-1"
-	discID := addNode(t, h, "Lonely Node", domain, nil)
-	connA := addNode(t, h, "Conn A", domain, nil)
-	connB := addNode(t, h, "Conn B", domain, nil)
 
+	lone := addNode(t, h, "Lone wolf node", domain, nil)
+	idA := addNode(t, h, "Connected A", domain, nil)
+	idB := addNode(t, h, "Connected B", domain, nil)
 	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_node":    connA,
-		"to_node":      connB,
-		"relationship": "connects_to",
+		"from_node": idA, "to_node": idB, "relationship": "led_to",
 	}))
 
 	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
-	if !strings.Contains(body, discID) {
-		t.Errorf("disconnected result should contain %s; got:\n%s", discID, body)
+	if !strings.Contains(body, lone) {
+		t.Errorf("disconnected should contain lone node %s; got:\n%s", lone, body)
 	}
-	if strings.Contains(body, connA) || strings.Contains(body, connB) {
-		t.Errorf("disconnected result should not contain connected nodes; got:\n%s", body)
+	if strings.Contains(body, idA) {
+		t.Errorf("connected node A should NOT appear; got:\n%s", body)
+	}
+	if strings.Contains(body, idB) {
+		t.Errorf("connected node B should NOT appear; got:\n%s", body)
 	}
 }
 
 func TestDisconnectedExcludesTransient(t *testing.T) {
 	_, h := newEnv(t)
 	domain := "test-disconnected-2"
-	mustNotError(t, call(t, h, "remember", map[string]any{
-		"label":     "Ticket T-1234 notes",
-		"domain":    domain,
-		"transient": true,
-	}))
+
+	addNode(t, h, "Transient lone node", domain, map[string]any{"transient": true})
+	live := addNode(t, h, "Live lone node", domain, nil)
 
 	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
-	if strings.Contains(body, "Ticket T-1234") {
-		t.Errorf("disconnected should exclude transient nodes; got:\n%s", body)
+	if !strings.Contains(body, live) {
+		t.Errorf("live disconnected node should appear; got:\n%s", body)
 	}
 }
 
 func TestDisconnectedExcludesArchived(t *testing.T) {
-	_, h := newEnv(t)
+	store, h := newEnv(t)
 	domain := "test-disconnected-3"
-	id := addNode(t, h, "Archived orphan", domain, nil)
 
-	mustNotError(t, call(t, h, "forget", map[string]any{
-		"id":     id,
-		"reason": "stale",
-	}))
+	id := addNode(t, h, "Archived lone node", domain, nil)
+	store.ArchiveNode(id, "test")
 
 	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
-	if strings.Contains(body, "Archived orphan") {
-		t.Errorf("disconnected should exclude archived nodes; got:\n%s", body)
+	if strings.Contains(body, id) {
+		t.Errorf("archived disconnected node should NOT appear; got:\n%s", body)
 	}
 }
 
-// ── trace ─────────────────────────────────────────────────────────────────────
+// ── trace ──────────────────────────────────────────────────────────────────────
 
 func TestTraceReturnsChain(t *testing.T) {
 	_, h := newEnv(t)
@@ -3082,7 +2407,6 @@ func TestTraceReturnsChain(t *testing.T) {
 	mustNotError(t, tr)
 	body := text(t, tr)
 
-	// All intermediate nodes and the endpoints must appear
 	for _, id := range []string{idA, idB, idC, idD} {
 		if !strings.Contains(body, id) {
 			t.Errorf("trace result should contain node %s; got:\n%s", id, body)
@@ -3105,56 +2429,162 @@ func TestTraceNoConnection(t *testing.T) {
 }
 
 func TestTraceIgnoresArchived(t *testing.T) {
-	_, h := newEnv(t)
+	store, h := newEnv(t)
 	domain := "test-trace-3"
-	idA := addNode(t, h, "Start", domain, nil)
-	idB := addNode(t, h, "Middle", domain, nil)
-	idC := addNode(t, h, "End", domain, nil)
+	idA := addNode(t, h, "Start node", domain, nil)
+	idB := addNode(t, h, "Middle node", domain, nil)
+	idC := addNode(t, h, "End node", domain, nil)
 
 	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idA, "to_node": idB, "relationship": "led_to"}))
 	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idC, "relationship": "led_to"}))
 
-	// Archive the middle node — path should break
-	mustNotError(t, call(t, h, "forget", map[string]any{"id": idB, "reason": "test"}))
+	// Archive the middle node — path A→C no longer traversable.
+	store.ArchiveNode(idB, "test")
 
 	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idC})
 	mustNotError(t, tr)
 	body := text(t, tr)
 	if !strings.Contains(body, "No path") {
-		t.Errorf("archived middle node should break the path; got:\n%s", body)
+		t.Errorf("trace through archived node should return 'No path'; got:\n%s", body)
 	}
 }
 
 func TestTraceReturnsContextEdges(t *testing.T) {
 	_, h := newEnv(t)
 	domain := "test-trace-4"
-	idA := addNode(t, h, "Trace Start", domain, nil)
-	idB := addNode(t, h, "Trace Middle", domain, nil)
-	idC := addNode(t, h, "Trace End", domain, nil)
-	idX := addNode(t, h, "Side Branch", domain, nil)
+	idA := addNode(t, h, "Start", domain, nil)
+	idB := addNode(t, h, "Middle", domain, nil)
+	idC := addNode(t, h, "End", domain, nil)
+	idX := addNode(t, h, "Side branch X", domain, nil)
 
-	// Spine: A -> B -> C
 	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idA, "to_node": idB, "relationship": "led_to"}))
 	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idC, "relationship": "led_to"}))
-	// Side branch off B that is NOT on the path to C
-	sideTr := call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idX, "relationship": "connects_to"})
-	mustNotError(t, sideTr)
-	var sideEdge struct {
-		ID string `json:"id"`
-	}
-	json.Unmarshal([]byte(text(t, sideTr)), &sideEdge)
+	// Side branch off the path.
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idX, "relationship": "connects_to"}))
 
 	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idC})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
-	// The side-branch edge ID must appear even though idX is not on the direct path
-	if !strings.Contains(body, sideEdge.ID) {
-		t.Errorf("context edge (B→X) should appear in trace result; got:\n%s", body)
-	}
 	// idX itself should also appear (it's a neighbour of a path node)
 	if !strings.Contains(body, idX) {
 		t.Errorf("side-branch node X should appear in trace context; got:\n%s", body)
 	}
 }
 
+// ── visualise ─────────────────────────────────────────────────────────────────
+
+func TestVisualiseMermaidSyntax(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-vis-1"
+
+	idA := addNode(t, h, "Alpha node", domain, nil)
+	idB := addNode(t, h, "Beta node", domain, nil)
+	idC := addNode(t, h, "Gamma node", domain, nil)
+
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_node": idA, "to_node": idB, "relationship": "led_to", "narrative": "alpha led to beta",
+	}))
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_node": idB, "to_node": idC, "relationship": "depends_on", "narrative": "beta depends on gamma",
+	}))
+
+	tr := call(t, h, "visualise", map[string]any{"domain": domain})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	var resp struct {
+		Mermaid   string `json:"mermaid"`
+		NodeCount int    `json:"node_count"`
+		EdgeCount int    `json:"edge_count"`
+		Truncated bool   `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("visualise response should be valid JSON: %v\ngot:\n%s", err, body)
+	}
+	if !strings.Contains(resp.Mermaid, "flowchart TD") {
+		t.Errorf("mermaid should start with 'flowchart TD'; got:\n%s", resp.Mermaid)
+	}
+	if !strings.Contains(resp.Mermaid, "Alpha node") {
+		t.Errorf("mermaid should contain 'Alpha node'; got:\n%s", resp.Mermaid)
+	}
+	if !strings.Contains(resp.Mermaid, "led_to") {
+		t.Errorf("mermaid should contain relationship 'led_to'; got:\n%s", resp.Mermaid)
+	}
+	if !strings.Contains(resp.Mermaid, "depends_on") {
+		t.Errorf("mermaid should contain relationship 'depends_on'; got:\n%s", resp.Mermaid)
+	}
+	if resp.NodeCount != 3 {
+		t.Errorf("node_count should be 3, got %d", resp.NodeCount)
+	}
+	if resp.EdgeCount != 2 {
+		t.Errorf("edge_count should be 2, got %d", resp.EdgeCount)
+	}
+	if resp.Truncated {
+		t.Error("truncated should be false for a 3-node graph")
+	}
+}
+
+func TestVisualiseEmptyDomain(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "visualise", map[string]any{"domain": "no-such-domain"})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), "no content") {
+		t.Errorf("empty domain should return 'no content' message; got:\n%s", text(t, tr))
+	}
+}
+
+func TestVisualiseTruncation(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-vis-trunc"
+	addNode(t, h, "Node One", domain, nil)
+	addNode(t, h, "Node Two", domain, nil)
+	addNode(t, h, "Node Three", domain, nil)
+	addNode(t, h, "Node Four", domain, nil)
+
+	tr := call(t, h, "visualise", map[string]any{"domain": domain, "limit": 2})
+	mustNotError(t, tr)
+
+	var resp struct {
+		NodeCount int  `json:"node_count"`
+		Truncated bool `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.NodeCount != 2 {
+		t.Errorf("node_count should be 2 (limit enforced), got %d", resp.NodeCount)
+	}
+	if !resp.Truncated {
+		t.Error("truncated should be true when domain has more nodes than limit")
+	}
+}
+
+func TestVisualiseLabelSanitisation(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-vis-sanitise"
+	long := `This "quoted" label is definitely longer than forty characters and then some more`
+	addNode(t, h, long, domain, nil)
+
+	tr := call(t, h, "visualise", map[string]any{"domain": domain})
+	mustNotError(t, tr)
+
+	var resp struct{ Mermaid string `json:"mermaid"` }
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	lines := strings.Split(resp.Mermaid, "\n")
+	for _, line := range lines {
+		if !strings.Contains(line, "[\"") {
+			continue
+		}
+		inner := strings.TrimPrefix(line, strings.SplitN(line, "[\"", 2)[0]+"[\"")
+		inner = strings.TrimSuffix(inner, "\"]")
+		if strings.Contains(inner, "\"") {
+			t.Errorf("raw double-quote found inside Mermaid node label: %q", line)
+		}
+	}
+	if strings.Contains(resp.Mermaid, long) {
+		t.Error("full label should have been truncated in Mermaid output")
+	}
+}

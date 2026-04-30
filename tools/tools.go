@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/corbym/memoryweb/db"
@@ -371,6 +372,24 @@ func (h *Handler) ListTools() (interface{}, error) {
 				Required: []string{"from_id", "to_id"},
 			},
 		},
+		{
+			Name: "visualise",
+			Description: "Generate a Mermaid.js flowchart of the knowledge graph for a domain. " +
+				"Nodes are sorted by connectivity (most-connected first) and capped at `limit` (default 40, max 100). " +
+				"Returns a JSON object with `mermaid` (the diagram source), `node_count`, `edge_count`, and `truncated` (true when the domain has more nodes than the limit). " +
+				"When responding to the user, output the `mermaid` string inside a ```mermaid code block. " +
+				"If `truncated` is true, note that only the most-connected nodes are shown. " +
+				"Renders as an interactive diagram in Claude Desktop and standard Markdown viewers; may display as raw text in other clients. " +
+				"Best used on focused domains with fewer than 60 nodes.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"domain": {Type: "string", Description: "The domain to visualise"},
+					"limit":  {Type: "integer", Description: "Max nodes to include (default 40, max 100). Most-connected nodes are prioritised when truncating."},
+				},
+				Required: []string{"domain"},
+			},
+		},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -435,6 +454,8 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.findDisconnected(req.Arguments)
 	case "trace":
 		result, err = h.tracePath(req.Arguments)
+	case "visualise":
+		result, err = h.visualise(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -1114,6 +1135,79 @@ func (h *Handler) tracePath(args json.RawMessage) (*ToolResult, error) {
 	}
 	if len(result.Path) == 0 {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("No path found between %q and %q within 6 hops.", a.FromID, a.ToID)}}}, nil
+	}
+	b, _ := json.MarshalIndent(result, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+// sanitiseMermaidLabel truncates to 40 runes and escapes characters that break
+// Mermaid node label syntax (double-quotes, newlines).
+func sanitiseMermaidLabel(s string) string {
+	runes := []rune(s)
+	if len(runes) > 40 {
+		s = string(runes[:37]) + "..."
+	} else {
+		s = string(runes)
+	}
+	s = strings.ReplaceAll(s, "\"", "#quot;")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return s
+}
+
+func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Domain string `json:"domain"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.Domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if a.Limit <= 0 {
+		a.Limit = 40
+	}
+
+	nodes, edges, truncated, err := h.store.GetDomainGraph(a.Domain, a.Limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: `{"error":"no content found for domain"}`}}}, nil
+	}
+
+	// Build positional alias map (n0, n1, …) so Mermaid source stays readable.
+	idMap := make(map[string]string, len(nodes))
+	for i, n := range nodes {
+		idMap[n.ID] = fmt.Sprintf("n%d", i)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("flowchart TD\n")
+	for i, n := range nodes {
+		label := sanitiseMermaidLabel(n.Label)
+		fmt.Fprintf(&sb, "  n%d[\"%s\"]\n", i, label)
+	}
+	for _, e := range edges {
+		from, ok1 := idMap[e.FromNode]
+		to, ok2 := idMap[e.ToNode]
+		if !ok1 || !ok2 {
+			continue
+		}
+		fmt.Fprintf(&sb, "  %s -- \"%s\" --> %s\n", from, e.Relationship, to)
+	}
+
+	result := struct {
+		Mermaid   string `json:"mermaid"`
+		NodeCount int    `json:"node_count"`
+		EdgeCount int    `json:"edge_count"`
+		Truncated bool   `json:"truncated,omitempty"`
+	}{
+		Mermaid:   sb.String(),
+		NodeCount: len(nodes),
+		EdgeCount: len(edges),
+		Truncated: truncated,
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil

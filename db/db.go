@@ -62,6 +62,7 @@ type DriftCandidate struct {
 	Node          Node   `json:"node"`
 	ConflictsWith *Node  `json:"conflicts_with,omitempty"`
 	Reason        string `json:"reason"`
+	EdgeCount     int    `json:"edge_count"` // total edges (from + to) incident to this node
 }
 
 // NodeInput is the input type for AddNodesBatch.
@@ -1653,7 +1654,161 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	if len(out) > limit {
 		out = out[:limit]
 	}
+
+	// Enrich each candidate with its total edge count (from + to).
+	if len(out) > 0 {
+		ids := make([]string, len(out))
+		for i, c := range out {
+			ids[i] = c.Node.ID
+		}
+		ph := strings.Repeat("?,", len(ids))
+		ph = ph[:len(ph)-1]
+		args := make([]interface{}, len(ids)*2)
+		for i, id := range ids {
+			args[i] = id
+			args[len(ids)+i] = id
+		}
+		ecRows, ecErr := s.db.Query(
+			`SELECT id_val, COUNT(*) FROM (`+
+				`SELECT from_node AS id_val FROM edges WHERE from_node IN (`+ph+`) `+
+				`UNION ALL `+
+				`SELECT to_node AS id_val FROM edges WHERE to_node IN (`+ph+`)`+
+				`) GROUP BY id_val`,
+			args...,
+		)
+		if ecErr == nil {
+			counts := make(map[string]int)
+			for ecRows.Next() {
+				var id string
+				var cnt int
+				if ecRows.Scan(&id, &cnt) == nil {
+					counts[id] = cnt
+				}
+			}
+			ecRows.Close()
+			for i := range out {
+				out[i].EdgeCount = counts[out[i].Node.ID]
+			}
+		}
+	}
+
 	return out, nil
+}
+
+// GetDomainGraph returns the live nodes and the edges between them for a domain.
+// Nodes are sorted by edge count descending so the most-connected appear first;
+// the result is capped at limit (default 40, max 100). truncated is true when
+// the full node set was larger than limit.
+func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []Edge, truncated bool, err error) {
+	domain = s.ResolveAlias(domain)
+	if limit <= 0 {
+		limit = 40
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Step 1: all live nodes in the domain.
+	rows, err := s.db.Query(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		 FROM nodes WHERE archived_at IS NULL AND domain = ?`, domain)
+	if err != nil {
+		return
+	}
+	var allNodes []Node
+	for rows.Next() {
+		var n Node
+		var oa, aa sql.NullTime
+		if scanErr := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); scanErr != nil {
+			rows.Close()
+			err = scanErr
+			return
+		}
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		allNodes = append(allNodes, n)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return
+	}
+	if len(allNodes) == 0 {
+		return
+	}
+
+	// Step 2: count edges (from + to) per node to rank by connectivity.
+	ids := make([]string, len(allNodes))
+	for i, n := range allNodes {
+		ids[i] = n.ID
+	}
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+	rankArgs := make([]interface{}, len(ids)*2)
+	for i, id := range ids {
+		rankArgs[i] = id
+		rankArgs[len(ids)+i] = id
+	}
+	ecRows, ecErr := s.db.Query(
+		`SELECT id_val, COUNT(*) FROM (`+
+			`SELECT from_node AS id_val FROM edges WHERE from_node IN (`+ph+`) `+
+			`UNION ALL `+
+			`SELECT to_node AS id_val FROM edges WHERE to_node IN (`+ph+`)`+
+			`) GROUP BY id_val`,
+		rankArgs...,
+	)
+	counts := make(map[string]int)
+	if ecErr == nil {
+		for ecRows.Next() {
+			var id string
+			var cnt int
+			if ecRows.Scan(&id, &cnt) == nil {
+				counts[id] = cnt
+			}
+		}
+		ecRows.Close()
+	}
+
+	// Step 3: sort by edge count descending, then truncate.
+	sort.Slice(allNodes, func(i, j int) bool {
+		return counts[allNodes[i].ID] > counts[allNodes[j].ID]
+	})
+	if len(allNodes) > limit {
+		allNodes = allNodes[:limit]
+		truncated = true
+	}
+	nodes = allNodes
+
+	// Step 4: fetch edges whose both endpoints are in the result set.
+	edgeArgs := make([]interface{}, len(nodes)*2)
+	ph2 := strings.Repeat("?,", len(nodes))
+	ph2 = ph2[:len(ph2)-1]
+	for i, n := range nodes {
+		edgeArgs[i] = n.ID
+		edgeArgs[len(nodes)+i] = n.ID
+	}
+	eRows, eErr := s.db.Query(
+		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges `+
+			`WHERE from_node IN (`+ph2+`) AND to_node IN (`+ph2+`)`,
+		edgeArgs...,
+	)
+	if eErr != nil {
+		err = eErr
+		return
+	}
+	for eRows.Next() {
+		var e Edge
+		if eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt) == nil {
+			edges = append(edges, e)
+		}
+	}
+	eRows.Close()
+	err = eRows.Err()
+	return
 }
 
 // ── update ────────────────────────────────────────────────────────────────────
