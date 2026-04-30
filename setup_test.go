@@ -374,9 +374,6 @@ func TestSetupDryRunShowsDetectedAgents(t *testing.T) {
 // TestSetupMCPServerConfigIdempotent: writing the config twice for the same
 // agent must not duplicate the memoryweb entry.
 func TestSetupMCPServerConfigIdempotent(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		// On Linux only Claude Desktop is detectable; re-use that path.
-	}
 	tmpHome := t.TempDir()
 	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
 

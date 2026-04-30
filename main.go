@@ -499,31 +499,35 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string)
 
 	// ── Desktop agent detection ───────────────────────────────────────────────
 
-	exePath, _ := os.Executable()
-	desktopAgents := detectDesktopAgents(home)
-	for _, agent := range desktopAgents {
-		if dryRun {
-			preview := map[string]interface{}{
-				"mcpServers": map[string]interface{}{
-					"memoryweb": map[string]interface{}{
-						"command": exePath,
-						"env":     map[string]interface{}{"MEMORYWEB_DB": dbPath},
+	exePath, exeErr := os.Executable()
+	if exeErr != nil {
+		fmt.Fprintf(out, "Warning: cannot determine binary path — skipping desktop agent configuration: %v\n", exeErr)
+	} else {
+		desktopAgents := detectDesktopAgents(home)
+		for _, agent := range desktopAgents {
+			if dryRun {
+				preview := map[string]interface{}{
+					"mcpServers": map[string]interface{}{
+						"memoryweb": map[string]interface{}{
+							"command": exePath,
+							"env":     map[string]interface{}{"MEMORYWEB_DB": dbPath},
+						},
 					},
-				},
+				}
+				previewJSON, _ := json.MarshalIndent(preview, "", "  ")
+				fmt.Fprintf(out, "[dry-run] %s detected — would write to %s:\n%s\n",
+					agent.Name, agent.ConfigPath, previewJSON)
+				continue
 			}
-			previewJSON, _ := json.MarshalIndent(preview, "", "  ")
-			fmt.Fprintf(out, "[dry-run] %s detected — would write to %s:\n%s\n",
-				agent.Name, agent.ConfigPath, previewJSON)
-			continue
-		}
 
-		fmt.Fprintf(out, "Detected %s. Configure it? [y/N] ", agent.Name)
-		if setupReadYN(br) {
-			if err := setupWriteMCPServerConfig(agent.ConfigPath, exePath, dbPath); err != nil {
-				fmt.Fprintf(out, "Warning: could not configure %s: %v\n", agent.Name, err)
-			} else {
-				fmt.Fprintf(out, "%s configured. Restart %s to activate memoryweb.\n",
-					agent.Name, agent.Name)
+			fmt.Fprintf(out, "Detected %s. Configure it? [y/N] ", agent.Name)
+			if setupReadYN(br) {
+				if err := setupWriteMCPServerConfig(agent.ConfigPath, exePath, dbPath); err != nil {
+					fmt.Fprintf(out, "Warning: could not configure %s: %v\n", agent.Name, err)
+				} else {
+					fmt.Fprintf(out, "%s configured. Restart %s to activate memoryweb.\n",
+						agent.Name, agent.Name)
+				}
 			}
 		}
 	}
