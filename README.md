@@ -62,6 +62,7 @@ The `why_matters` field is not optional. A node without it is an event, not a de
 | `trace` | Find the shortest chain of relationships between two nodes (by ID). Returns intermediate nodes and edges up to 6 hops. Synthesise the result into a narrative explaining how one concept leads to the other. |
 | `orient` | Return all nodes for a domain structured for synthesis — current state, blockers, decisions, open questions. Includes `total_nodes` so you know when the view is truncated. |
 | `list_domains` | List all domains that have at least one live node. Use at session start to discover what domains exist before scoping a search. |
+| `check_for_updates` | Check whether a newer version of memoryweb is available. Returns current version, latest available version, and update instructions. |
 
 ### Archive / forget
 
@@ -166,6 +167,7 @@ Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[
 [i] Graph:           145 live nodes, 12 archived, 203 edges, 4 domain(s) (deep-game, ...), 2 alias(es)
 [i] Drift:           3 candidate(s): 1 contradicts, 2 stale labels
 [i] Last activity:   2026-04-29 update (node "open question on backfill")
+[i] Update:          running dev build — skipping update check
 ```
 
 ## Installation
@@ -177,6 +179,24 @@ Pre-built binaries are available on the [releases page](https://github.com/corby
 - [Windows (x86-64)](docs/install-windows.md)
 
 Once installed, see the **[User guide](docs/user-guide.md)** for how to orient the agent, what phrases to use, and how to get the most out of memoryweb in Claude Code, GitHub Copilot, Claude Desktop, and ChatGPT Desktop.
+
+## Updating
+
+To check whether a newer version is available, run:
+
+```bash
+memoryweb doctor
+```
+
+The `Update:` line in the output will tell you if a newer release is available and where to download it. You can also ask the agent directly — the `check_for_updates` tool checks GitHub for the latest release and tells you the current and latest versions.
+
+To update:
+
+1. Download the latest binary for your platform from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
+2. Replace the existing binary (build tip: rename to `memoryweb.tmp` first, then `mv memoryweb.tmp memoryweb` so the replacement is atomic).
+3. Restart your MCP client (Claude Code, Claude Desktop, ChatGPT Desktop, etc.) so it picks up the new binary.
+
+Your database is forward-compatible — the binary runs any pending migrations automatically on startup.
 
 ## Build
 

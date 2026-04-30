@@ -219,6 +219,33 @@ If memoryweb is connected, the agent will call the tool and return a result (an 
 
 ---
 
+## Updating
+
+To check whether a newer version is available:
+
+```powershell
+memoryweb doctor
+```
+
+The `[i] Update:` line will tell you if a newer release is available. You can also ask the agent — the `check_for_updates` tool checks GitHub and returns the current and latest versions.
+
+To update:
+
+1. Download the latest `.zip` from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
+2. Extract it to a temporary folder (e.g. `C:\memoryweb-new`).
+3. Replace the binary. If `memoryweb.exe` is in `C:\memoryweb\memoryweb_windows_amd64\`:
+
+   ```powershell
+   Copy-Item C:\memoryweb-new\memoryweb_windows_amd64\memoryweb.exe `
+     C:\memoryweb\memoryweb_windows_amd64\memoryweb.exe -Force
+   ```
+
+4. Restart your MCP client (Claude Desktop, ChatGPT Desktop, or Claude Code) so it picks up the new binary.
+
+Your database is forward-compatible — the binary runs any pending schema migrations automatically on startup.
+
+---
+
 ## Troubleshooting
 
 **`memoryweb: command not found` / `'memoryweb' is not recognized`**

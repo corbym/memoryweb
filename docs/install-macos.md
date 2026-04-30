@@ -272,6 +272,41 @@ If memoryweb is connected, the agent will call the tool and return a result (an 
 
 ---
 
+## Updating
+
+To check whether a newer version is available:
+
+```bash
+memoryweb doctor
+```
+
+The `[i] Update:` line will tell you if a newer release is available. You can also ask the agent — the `check_for_updates` tool checks GitHub and returns the current and latest versions.
+
+To update:
+
+1. Download the latest archive for your chip from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
+2. Extract and replace the binary atomically:
+
+   ```bash
+   tar -xzf ~/Downloads/memoryweb_vX.Y.Z_darwin_arm64.tar.gz -C ~/Downloads
+   sudo cp ~/Downloads/memoryweb_darwin_arm64/memoryweb /usr/local/bin/memoryweb.tmp
+   sudo mv /usr/local/bin/memoryweb.tmp /usr/local/bin/memoryweb
+   ```
+
+   > **Intel users:** replace `arm64` with `amd64` above.
+
+3. If macOS blocks the new binary, clear the quarantine flag:
+
+   ```bash
+   xattr -d com.apple.quarantine /usr/local/bin/memoryweb
+   ```
+
+4. Restart your MCP client (Claude Desktop, ChatGPT Desktop, or Claude Code) so it picks up the new binary.
+
+Your database is forward-compatible — the binary runs any pending schema migrations automatically on startup.
+
+---
+
 ## Troubleshooting
 
 **`memoryweb: command not found`**
