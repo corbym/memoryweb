@@ -99,7 +99,7 @@ Semantic search requires [Ollama](https://ollama.com) running locally with the `
 
 ## Step 6 — Run setup
 
-The `setup` subcommand installs the Claude Code hooks and, once Ollama is in your PATH, starts the server and pulls the model automatically.
+The `setup` subcommand installs the Claude Code hooks, detects desktop MCP clients (Claude Desktop and ChatGPT Desktop), and, once Ollama is in your PATH, starts the server and pulls the model automatically.
 
 ```bash
 memoryweb setup
@@ -109,6 +109,12 @@ The setup program will:
 - Detect that Ollama is installed and start the server if it is not already running.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
+- Detect **Claude Desktop** and **ChatGPT Desktop** (if installed) and ask whether to configure each one:
+  ```
+  Detected Claude Desktop. Configure it? [y/N]
+  Detected ChatGPT Desktop. Configure it? [y/N]
+  ```
+  Answering `y` writes the MCP server entry to the appropriate config file. You can also configure these manually (see Step 7).
 - Print a summary of what was configured.
 
 > **Note:** If you skipped Step 5 and Ollama is not yet installed, `setup` will offer to install it automatically. On macOS the automatic install path uses a Linux shell script that may not work correctly — complete Step 5 first if prompted.
@@ -136,6 +142,8 @@ Each line will show `[✓]` (pass), `[✗]` (fail), `[!]` (warning), or `[i]` (i
 ---
 
 ## Step 7 — Configure your AI client
+
+`memoryweb setup` (Step 6) configures Claude Desktop and ChatGPT Desktop automatically when it detects them. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
 
 ### Claude Desktop
 
@@ -165,6 +173,35 @@ Replace `YOUR_USERNAME` with your macOS username (run `whoami` in Terminal if yo
 Save the file, then **quit and relaunch Claude Desktop**. memoryweb will appear as an available tool in new conversations.
 
 > **Note:** Claude Desktop does not support hooks. To prompt the agent to file knowledge, add filing instructions to your system prompt manually.
+
+### ChatGPT Desktop
+
+Open (or create) the ChatGPT Desktop MCP config file:
+
+```
+~/Library/Application Support/ChatGPT/mcp.json
+```
+
+Add the following content (create the file if it does not exist):
+
+```json
+{
+  "mcpServers": {
+    "memoryweb": {
+      "command": "/usr/local/bin/memoryweb",
+      "env": {
+        "MEMORYWEB_DB": "/Users/YOUR_USERNAME/.memoryweb.db"
+      }
+    }
+  }
+}
+```
+
+Replace `YOUR_USERNAME` with your macOS username.
+
+Save the file, then **quit and relaunch ChatGPT Desktop**. memoryweb will appear as an available tool in new conversations.
+
+> **Note:** ChatGPT Desktop does not support hooks. Add filing instructions to your Custom Instructions (Settings → Personalization → Custom Instructions) to prompt the model to use memoryweb automatically.
 
 ### Claude Code
 
@@ -227,7 +264,7 @@ Also add memoryweb to your MCP config. Claude Code reads from `~/.claude.json` o
 
 ## Step 8 — Verify everything works
 
-Start a new conversation in Claude Desktop or Claude Code and ask the agent:
+Start a new conversation in Claude Desktop, ChatGPT Desktop, or Claude Code and ask the agent:
 
 > "Call `list_domains` and tell me what domains exist."
 
@@ -252,8 +289,8 @@ xattr -d com.apple.quarantine /usr/local/bin/memoryweb
 **Ollama model not found**
 Make sure Ollama is running (`ollama list` should return results). If it is not running, launch it from Applications or run `ollama serve` in Terminal.
 
-**Claude Desktop shows no memoryweb tools**
-Double-check the config path `~/Library/Application Support/Claude/claude_desktop_config.json` — note the space in "Application Support". Make sure the JSON is valid (no trailing commas). Quit and relaunch Claude Desktop fully.
+**Claude Desktop or ChatGPT Desktop shows no memoryweb tools**
+Double-check the config path — note the spaces in "Application Support" and the app name. Make sure the JSON is valid (no trailing commas). Quit and relaunch the application fully.
 
 **`memoryweb doctor` shows `[✗] Ollama binary: not found in PATH`**
 Ollama installs to `/usr/local/bin/ollama` on macOS. If it is missing from PATH, add `/usr/local/bin` to your `PATH` as shown above.

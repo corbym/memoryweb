@@ -116,7 +116,7 @@ ollama serve
 
 ## Step 5 — Run setup
 
-The `setup` subcommand installs the Claude Code hooks and, if Ollama is not yet installed, offers to install it automatically using the official Linux install script (`https://ollama.com/install.sh`). This is the only platform where `memoryweb setup` can install Ollama for you.
+The `setup` subcommand installs the Claude Code hooks and, if Ollama is not yet installed, offers to install it automatically using the official Linux install script (`https://ollama.com/install.sh`). On Linux, `memoryweb setup` can only auto-configure **Claude Desktop** (ChatGPT Desktop is not available on Linux).
 
 > **Note:** If you already installed Ollama in Step 4 and the server is running, `setup` will skip the install prompt, pull `snowflake-arctic-embed` if it is missing, and proceed straight to installing the hooks.
 
@@ -129,6 +129,11 @@ The setup program will:
 - If `ollama` is installed but the server is not running: start it in the background.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
+- Detect **Claude Desktop** (if `~/.config/Claude/` exists) and ask whether to configure it:
+  ```
+  Detected Claude Desktop. Configure it? [y/N]
+  ```
+  Answering `y` writes the MCP server entry to `~/.config/Claude/claude_desktop_config.json`.
 - Print a summary of what was configured.
 
 To preview what `setup` would do without writing any files:
@@ -154,6 +159,10 @@ Each line will show `[✓]` (pass), `[✗]` (fail), `[!]` (warning), or `[i]` (i
 ---
 
 ## Step 6 — Configure your AI client
+
+`memoryweb setup` (Step 5) configures Claude Desktop automatically when it detects the `~/.config/Claude/` directory. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
+
+> **Note:** ChatGPT Desktop is not available on Linux. If you are using a different desktop MCP client, consult that client's documentation for its config file location and use the same `mcpServers` JSON format shown below.
 
 ### Claude Desktop
 
