@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -284,6 +285,96 @@ func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 
 // ── setup subcommand ──────────────────────────────────────────────────────────
 
+// detectedAgent represents a desktop MCP client found on the system.
+type detectedAgent struct {
+	Name       string // human-readable name, e.g. "Claude Desktop"
+	ConfigPath string // path to the MCP server config JSON file
+}
+
+// agentSupportDir returns the OS-specific application-support directory rooted
+// at home. macOS: ~/Library/Application Support; Windows: %APPDATA%;
+// Linux/other: ~/.config.
+func agentSupportDir(home string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support")
+	case "windows":
+		if appdata := os.Getenv("APPDATA"); appdata != "" {
+			return appdata
+		}
+		return filepath.Join(home, "AppData", "Roaming")
+	default:
+		return filepath.Join(home, ".config")
+	}
+}
+
+// detectDesktopAgents returns desktop MCP clients that appear to be installed,
+// based on whether the application's data directory already exists.
+func detectDesktopAgents(home string) []detectedAgent {
+	support := agentSupportDir(home)
+	var agents []detectedAgent
+
+	// Claude Desktop — config file is claude_desktop_config.json inside the
+	// Claude/ subdirectory of the support dir.
+	claudeDir := filepath.Join(support, "Claude")
+	if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
+		agents = append(agents, detectedAgent{
+			Name:       "Claude Desktop",
+			ConfigPath: filepath.Join(claudeDir, "claude_desktop_config.json"),
+		})
+	}
+
+	// ChatGPT Desktop — not available on Linux.
+	if runtime.GOOS != "linux" {
+		chatgptDir := filepath.Join(support, "ChatGPT")
+		if info, err := os.Stat(chatgptDir); err == nil && info.IsDir() {
+			agents = append(agents, detectedAgent{
+				Name:       "ChatGPT Desktop",
+				ConfigPath: filepath.Join(chatgptDir, "mcp.json"),
+			})
+		}
+	}
+
+	return agents
+}
+
+// setupWriteMCPServerConfig reads the MCP server config at configPath (or
+// starts with an empty object if the file does not exist), ensures the
+// memoryweb entry is present under "mcpServers", and writes it back.
+// The operation is idempotent.
+func setupWriteMCPServerConfig(configPath, exePath, dbPath string) error {
+	var cfg map[string]interface{}
+	if data, err := os.ReadFile(configPath); err == nil {
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("cannot parse %s: %w", configPath, err)
+		}
+	}
+	if cfg == nil {
+		cfg = make(map[string]interface{})
+	}
+
+	servers, _ := cfg["mcpServers"].(map[string]interface{})
+	if servers == nil {
+		servers = make(map[string]interface{})
+	}
+	servers["memoryweb"] = map[string]interface{}{
+		"command": exePath,
+		"env": map[string]interface{}{
+			"MEMORYWEB_DB": dbPath,
+		},
+	}
+	cfg["mcpServers"] = servers
+
+	output, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	return os.WriteFile(configPath, output, 0644)
+}
+
 // setupCmd implements the "memoryweb setup" subcommand.
 func setupCmd() {
 	flags := flag.NewFlagSet("setup", flag.ExitOnError)
@@ -298,14 +389,19 @@ func setupCmd() {
 	}
 }
 
-// runSetup installs Claude Code hooks into ~/.claude/settings.local.json and
-// optionally sets up Ollama for semantic search. Separated from setupCmd so
-// tests can inject writers and readers.
+// runSetup installs Claude Code hooks into ~/.claude/settings.local.json,
+// detects desktop MCP clients (Claude Desktop, ChatGPT Desktop) and offers to
+// configure each one, then optionally sets up Ollama for semantic search.
+// Separated from setupCmd so tests can inject writers and readers.
 func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("cannot determine home directory: %w", err)
 	}
+
+	// Wrap in with a bufio.Reader once so that all y/N prompts share the same
+	// buffered reader and successive calls do not lose unconsumed bytes.
+	br := bufio.NewReader(in)
 
 	// Locate hooks directory.
 	if hooksDir == "" {
@@ -332,6 +428,8 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string)
 	if dbPath == "" {
 		dbPath = filepath.Join(home, ".memoryweb.db")
 	}
+
+	// ── Claude Code hooks ─────────────────────────────────────────────────────
 
 	// Read or start with an empty settings object.
 	settingsPath := filepath.Join(home, ".claude", "settings.local.json")
@@ -378,37 +476,68 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string)
 
 	settings["hooks"] = hooks
 
-	output, err := json.MarshalIndent(settings, "", "  ")
+	claudeOutput, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 
 	if dryRun {
-		fmt.Fprintln(out, string(output))
-		setupOllama(out, in, true)
-		return nil
+		fmt.Fprintln(out, string(claudeOutput))
+	} else {
+		stateDir := filepath.Join(home, ".memoryweb", "hook_state")
+		if err := os.MkdirAll(stateDir, 0755); err != nil {
+			return fmt.Errorf("create state dir: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Join(home, ".claude"), 0755); err != nil {
+			return fmt.Errorf("create .claude dir: %w", err)
+		}
+		if err := os.WriteFile(settingsPath, claudeOutput, 0644); err != nil {
+			return fmt.Errorf("write settings: %w", err)
+		}
+		fmt.Fprintln(out, "memoryweb hooks installed. Restart Claude Code to activate.")
 	}
 
-	stateDir := filepath.Join(home, ".memoryweb", "hook_state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0755); err != nil {
-		return fmt.Errorf("create .claude dir: %w", err)
-	}
-	if err := os.WriteFile(settingsPath, output, 0644); err != nil {
-		return fmt.Errorf("write settings: %w", err)
+	// ── Desktop agent detection ───────────────────────────────────────────────
+
+	exePath, _ := os.Executable()
+	desktopAgents := detectDesktopAgents(home)
+	for _, agent := range desktopAgents {
+		if dryRun {
+			preview := map[string]interface{}{
+				"mcpServers": map[string]interface{}{
+					"memoryweb": map[string]interface{}{
+						"command": exePath,
+						"env":     map[string]interface{}{"MEMORYWEB_DB": dbPath},
+					},
+				},
+			}
+			previewJSON, _ := json.MarshalIndent(preview, "", "  ")
+			fmt.Fprintf(out, "[dry-run] %s detected — would write to %s:\n%s\n",
+				agent.Name, agent.ConfigPath, previewJSON)
+			continue
+		}
+
+		fmt.Fprintf(out, "Detected %s. Configure it? [y/N] ", agent.Name)
+		if setupReadYN(br) {
+			if err := setupWriteMCPServerConfig(agent.ConfigPath, exePath, dbPath); err != nil {
+				fmt.Fprintf(out, "Warning: could not configure %s: %v\n", agent.Name, err)
+			} else {
+				fmt.Fprintf(out, "%s configured. Restart %s to activate memoryweb.\n",
+					agent.Name, agent.Name)
+			}
+		}
 	}
 
-	fmt.Fprintln(out, "memoryweb hooks installed. Restart Claude Code to activate.")
-	setupOllama(out, in, false)
+	// ── Ollama ────────────────────────────────────────────────────────────────
+
+	setupOllama(out, br, dryRun)
 	return nil
 }
 
 // setupOllama checks whether Ollama is installed and whether the
 // snowflake-arctic-embed model is pulled, prompting the user to install/pull
 // as needed. In dry-run mode it reports what would happen without prompting.
-func setupOllama(out io.Writer, in io.Reader, dryRun bool) {
+func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) {
 	_, err := exec.LookPath("ollama")
 	if err != nil {
 		// Ollama not installed.
@@ -495,12 +624,12 @@ func setupStartOllama(out io.Writer, dryRun bool) {
 
 // setupReadYN reads one line from in and returns true if the answer is "y".
 // Returns false on EOF or any other input.
-func setupReadYN(in io.Reader) bool {
-	scanner := bufio.NewScanner(in)
-	if scanner.Scan() {
-		return strings.ToLower(strings.TrimSpace(scanner.Text())) == "y"
+func setupReadYN(in *bufio.Reader) bool {
+	line, err := in.ReadString('\n')
+	if err != nil && len(line) == 0 {
+		return false
 	}
-	return false
+	return strings.ToLower(strings.TrimSpace(line)) == "y"
 }
 
 // setupToSlice safely converts an interface{} to []interface{}.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -225,6 +226,183 @@ func TestSetupIdempotent(t *testing.T) {
 	count := strings.Count(string(data), "memoryweb_save_hook.sh")
 	if count != 1 {
 		t.Errorf("save hook should appear exactly once after two runs; found %d; settings:\n%s", count, data)
+	}
+}
+
+// ── desktop agent detection tests ─────────────────────────────────────────────
+
+// agentSupportPath returns the platform-specific application support directory
+// rooted at home, mirroring the logic in agentSupportDir in main.go.
+func agentSupportPath(home string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support")
+	case "windows":
+		return filepath.Join(home, "AppData", "Roaming")
+	default:
+		return filepath.Join(home, ".config")
+	}
+}
+
+// TestSetupConfiguresClaudeDesktop: if the Claude Desktop data directory
+// exists, setup should detect it, and on "y" write claude_desktop_config.json
+// containing the memoryweb MCP server entry.
+func TestSetupConfiguresClaudeDesktop(t *testing.T) {
+	tmpHome := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
+
+	// Create the Claude Desktop support directory to simulate installation.
+	claudeDir := filepath.Join(agentSupportPath(tmpHome), "Claude")
+	os.MkdirAll(claudeDir, 0755)
+
+	// Provide "y" (configure Claude Desktop) then "n" (decline Ollama install).
+	out, code := runSetupCmdWithStdin(t, tmpHome, "y\nn\n", "--hooks-dir", hooksDir(t))
+	if code != 0 {
+		t.Fatalf("setup exited %d; output:\n%s", code, out)
+	}
+
+	configPath := filepath.Join(claudeDir, "claude_desktop_config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("claude_desktop_config.json not written: %v", err)
+	}
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("claude_desktop_config.json is not valid JSON: %v", err)
+	}
+	servers, _ := cfg["mcpServers"].(map[string]interface{})
+	if servers == nil {
+		t.Fatal("mcpServers key missing from claude_desktop_config.json")
+	}
+	if _, ok := servers["memoryweb"]; !ok {
+		t.Errorf("memoryweb entry missing from mcpServers; got: %v", servers)
+	}
+}
+
+// TestSetupDeclinesClaudeDesktop: answering "n" to the Claude Desktop prompt
+// should not write the config file.
+func TestSetupDeclinesClaudeDesktop(t *testing.T) {
+	tmpHome := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
+
+	claudeDir := filepath.Join(agentSupportPath(tmpHome), "Claude")
+	os.MkdirAll(claudeDir, 0755)
+
+	// Answer "n" for Claude Desktop, "n" for Ollama.
+	out, code := runSetupCmdWithStdin(t, tmpHome, "n\nn\n", "--hooks-dir", hooksDir(t))
+	if code != 0 {
+		t.Fatalf("setup exited %d; output:\n%s", code, out)
+	}
+
+	configPath := filepath.Join(claudeDir, "claude_desktop_config.json")
+	if _, err := os.Stat(configPath); err == nil {
+		t.Error("claude_desktop_config.json should NOT be written when user answers n")
+	}
+}
+
+// TestSetupConfiguresChatGPTDesktop: if the ChatGPT Desktop data directory
+// exists, setup should detect it and on "y" write mcp.json.
+// Skipped on Linux where ChatGPT Desktop is not available.
+func TestSetupConfiguresChatGPTDesktop(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("ChatGPT Desktop is not available on Linux — skip")
+	}
+	tmpHome := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
+
+	chatgptDir := filepath.Join(agentSupportPath(tmpHome), "ChatGPT")
+	os.MkdirAll(chatgptDir, 0755)
+
+	// Answer "y" (configure ChatGPT Desktop) then "n" (decline Ollama install).
+	out, code := runSetupCmdWithStdin(t, tmpHome, "y\nn\n", "--hooks-dir", hooksDir(t))
+	if code != 0 {
+		t.Fatalf("setup exited %d; output:\n%s", code, out)
+	}
+
+	configPath := filepath.Join(chatgptDir, "mcp.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("mcp.json not written: %v", err)
+	}
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("mcp.json is not valid JSON: %v", err)
+	}
+	servers, _ := cfg["mcpServers"].(map[string]interface{})
+	if servers == nil {
+		t.Fatal("mcpServers key missing from mcp.json")
+	}
+	if _, ok := servers["memoryweb"]; !ok {
+		t.Errorf("memoryweb entry missing from mcpServers; got: %v", servers)
+	}
+}
+
+// TestSetupDryRunShowsDetectedAgents: --dry-run should print detected desktop
+// agents with their would-be config paths, without writing any files.
+func TestSetupDryRunShowsDetectedAgents(t *testing.T) {
+	tmpHome := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
+
+	claudeDir := filepath.Join(agentSupportPath(tmpHome), "Claude")
+	os.MkdirAll(claudeDir, 0755)
+
+	// dry-run should require no stdin (no prompts).
+	out, code := runSetupCmdWithStdin(t, tmpHome, "", "--hooks-dir", hooksDir(t), "--dry-run")
+	if code != 0 {
+		t.Fatalf("setup --dry-run exited %d; output:\n%s", code, out)
+	}
+
+	if !strings.Contains(out, "Claude Desktop") {
+		t.Errorf("--dry-run should mention Claude Desktop; got:\n%s", out)
+	}
+	if !strings.Contains(out, "dry-run") {
+		t.Errorf("--dry-run should contain 'dry-run'; got:\n%s", out)
+	}
+	if !strings.Contains(out, "claude_desktop_config.json") {
+		t.Errorf("--dry-run should show the config path; got:\n%s", out)
+	}
+
+	// No file should have been written.
+	configPath := filepath.Join(claudeDir, "claude_desktop_config.json")
+	if _, err := os.Stat(configPath); err == nil {
+		t.Error("--dry-run must not write claude_desktop_config.json")
+	}
+}
+
+// TestSetupMCPServerConfigIdempotent: writing the config twice for the same
+// agent must not duplicate the memoryweb entry.
+func TestSetupMCPServerConfigIdempotent(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		// On Linux only Claude Desktop is detectable; re-use that path.
+	}
+	tmpHome := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
+
+	claudeDir := filepath.Join(agentSupportPath(tmpHome), "Claude")
+	os.MkdirAll(claudeDir, 0755)
+
+	args := []string{"--hooks-dir", hooksDir(t)}
+
+	// First run: answer "y" for Claude Desktop, "n" for Ollama.
+	if _, code := runSetupCmdWithStdin(t, tmpHome, "y\nn\n", args...); code != 0 {
+		t.Fatal("first setup run failed")
+	}
+	// Second run: answer "y" again.
+	if _, code := runSetupCmdWithStdin(t, tmpHome, "y\nn\n", args...); code != 0 {
+		t.Fatal("second setup run failed")
+	}
+
+	configPath := filepath.Join(claudeDir, "claude_desktop_config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	count := strings.Count(string(data), `"memoryweb"`)
+	if count != 1 {
+		t.Errorf("memoryweb entry should appear exactly once; found %d; config:\n%s", count, data)
 	}
 }
 
