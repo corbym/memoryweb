@@ -141,6 +141,14 @@ Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[
 [i] Last activity:   2026-04-29 update (node "open question on backfill")
 ```
 
+## Installation
+
+Pre-built binaries are available on the [releases page](https://github.com/corbym/memoryweb/releases/latest) for each platform. Step-by-step setup guides covering binary installation, Ollama, and MCP client configuration:
+
+- [macOS (Apple Silicon & Intel)](docs/install-macos.md)
+- [Linux (x86-64 & ARM64)](docs/install-linux.md)
+- [Windows (x86-64)](docs/install-windows.md)
+
 ## Build
 
 ```bash
