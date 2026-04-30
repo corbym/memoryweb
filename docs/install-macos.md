@@ -99,19 +99,19 @@ Semantic search requires [Ollama](https://ollama.com) running locally with the `
 
 ## Step 6 — Run setup
 
-The `setup` subcommand installs the Claude Code hooks and, if Ollama is already installed, pulls the model and starts the server.
-
-> **Important:** `memoryweb setup` **cannot install Ollama itself on macOS**. Its automatic install path uses the Linux install script (`https://ollama.com/install.sh`), which is not compatible with macOS. You must complete Step 5 (install Ollama via the `.dmg` or `brew`) before running `setup`. Once the `ollama` binary is in your PATH, `setup` will pull `snowflake-arctic-embed` and start the server automatically.
+The `setup` subcommand installs the Claude Code hooks and, once Ollama is in your PATH, starts the server and pulls the model automatically.
 
 ```bash
 memoryweb setup
 ```
 
 The setup program will:
-- Detect that Ollama is already installed and start the server if it is not running.
+- Detect that Ollama is installed and start the server if it is not already running.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
 - Print a summary of what was configured.
+
+> **Note:** If you skipped Step 5 and Ollama is not yet installed, `setup` will offer to install it automatically. On macOS the automatic install path uses a Linux shell script that may not work correctly — complete Step 5 first if prompted.
 
 To preview what `setup` would do without writing any files:
 
