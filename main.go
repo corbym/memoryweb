@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/corbym/memoryweb/db"
@@ -81,10 +83,21 @@ func main() {
 	jsonPath := os.Getenv("MEMORYWEB_STATS_JSON_FILE")
 	if humanPath != "" || jsonPath != "" {
 		rec = stats.New(humanPath, jsonPath)
-		defer func() {
+		flushStats := func() {
 			if _, err := rec.Flush(); err != nil {
 				log.Printf("[memoryweb] stats flush: %v", err)
 			}
+		}
+		defer flushStats()
+
+		// Also flush on SIGTERM / SIGINT so stats are written when the MCP
+		// host terminates the process rather than closing stdin cleanly.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+		go func() {
+			<-sigCh
+			flushStats()
+			os.Exit(0)
 		}()
 	}
 
