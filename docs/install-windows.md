@@ -52,6 +52,8 @@ You should see usage output.
 
 Semantic search requires [Ollama](https://ollama.com) running locally with the `snowflake-arctic-embed` model. This step is optional — memoryweb falls back to keyword search if Ollama is unavailable — but highly recommended.
 
+> **You must install Ollama before running `memoryweb setup`.** On Windows, `memoryweb setup` cannot install Ollama automatically — it relies on a Linux shell script that does not run on Windows. Install Ollama first, then run `setup`.
+
 1. Download the Windows installer from [https://ollama.com/download](https://ollama.com/download).
 2. Run the installer and follow the prompts. Ollama installs as a background service and adds an icon to the system tray.
 3. Open a Command Prompt or PowerShell and pull the embedding model:
@@ -74,14 +76,19 @@ Semantic search requires [Ollama](https://ollama.com) running locally with the `
 
 ## Step 4 — Run setup
 
-The `setup` subcommand installs the Claude Code hooks and confirms Ollama is configured correctly. Open a Command Prompt or PowerShell and run:
+The `setup` subcommand installs the Claude Code hooks. If Ollama is already installed and in PATH (Step 3), it will also pull the model and start the server automatically.
+
+> **Important:** `memoryweb setup` **cannot install Ollama itself on Windows**. Its automatic install path uses `sh -c "curl ... | sh"`, which requires a Unix shell that is not available by default on Windows. You must install Ollama first (Step 3). Once the `ollama` binary is in your PATH, `setup` will handle the model pull and server start.
+
+Open a Command Prompt or PowerShell and run:
 
 ```powershell
 memoryweb setup
 ```
 
 The setup program will:
-- Check that Ollama is running and the `snowflake-arctic-embed` model is available.
+- Detect that Ollama is already installed and start the server if it is not running.
+- Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `%USERPROFILE%\.claude\settings.local.json`.
 - Print a summary of what was configured.
 
