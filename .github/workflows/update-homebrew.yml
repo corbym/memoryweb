@@ -1,0 +1,90 @@
+name: Update Homebrew Tap
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-tap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout memoryweb
+        uses: actions/checkout@v4
+
+      - name: Download checksums
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          curl -fsSL "https://github.com/corbym/memoryweb/releases/download/${VERSION}/checksums.txt" \
+            -o checksums.txt
+
+      - name: Extract sha256 values
+        id: sha
+        run: |
+          sha_darwin_amd64=$(grep "darwin_amd64.tar.gz" checksums.txt | awk '{print $1}')
+          sha_darwin_arm64=$(grep "darwin_arm64.tar.gz" checksums.txt | awk '{print $1}')
+          sha_linux_amd64=$(grep  "linux_amd64.tar.gz"  checksums.txt | awk '{print $1}')
+          sha_linux_arm64=$(grep  "linux_arm64.tar.gz"  checksums.txt | awk '{print $1}')
+          echo "darwin_amd64=${sha_darwin_amd64}" >> "$GITHUB_OUTPUT"
+          echo "darwin_arm64=${sha_darwin_arm64}" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=${sha_linux_amd64}"   >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=${sha_linux_arm64}"   >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: corbym/homebrew-memoryweb
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          # Strip leading 'v' for the version field
+          VERSION_BARE="${VERSION#v}"
+          FORMULA="homebrew-tap/Formula/memoryweb.rb"
+
+          sed -i "s/version \".*\"/version \"${VERSION_BARE}\"/" "$FORMULA"
+
+          # Replace sha256 values by matching the line after each url pattern
+          python3 - <<'EOF'
+          import re, os
+
+          formula_path = os.environ.get("FORMULA", "homebrew-tap/Formula/memoryweb.rb")
+          with open(formula_path) as f:
+              content = f.read()
+
+          replacements = {
+              "darwin_amd64": os.environ["SHA_DARWIN_AMD64"],
+              "darwin_arm64": os.environ["SHA_DARWIN_ARM64"],
+              "linux_amd64":  os.environ["SHA_LINUX_AMD64"],
+              "linux_arm64":  os.environ["SHA_LINUX_ARM64"],
+          }
+
+          for arch, sha in replacements.items():
+              content = re.sub(
+                  r'(url "https://github\.com/corbym/memoryweb/releases/download/[^"]+_' + arch + r'[^"]*"\n\s+sha256 ")[0-9a-f]+"',
+                  r'\g<1>' + sha + '"',
+                  content,
+              )
+
+          with open(formula_path, "w") as f:
+              f.write(content)
+
+          print("Formula updated successfully")
+          EOF
+        env:
+          FORMULA: homebrew-tap/Formula/memoryweb.rb
+          SHA_DARWIN_AMD64: ${{ steps.sha.outputs.darwin_amd64 }}
+          SHA_DARWIN_ARM64: ${{ steps.sha.outputs.darwin_arm64 }}
+          SHA_LINUX_AMD64:  ${{ steps.sha.outputs.linux_amd64 }}
+          SHA_LINUX_ARM64:  ${{ steps.sha.outputs.linux_arm64 }}
+
+      - name: Commit and push to tap
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          cd homebrew-tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/memoryweb.rb
+          git diff --cached --quiet || git commit -m "Update memoryweb to ${VERSION}"
+          git push
