@@ -4,6 +4,12 @@
 //   - a machine-readable JSONL file, one JSON object per session (MEMORYWEB_STATS_JSON_FILE)
 //
 // Either path may be empty to disable that output.
+//
+// Crash safety: after every tool call the current session state is written to
+// humanPath+".current" / jsonPath+".current" (overwriting). On clean shutdown
+// those files are merged into the main logs and deleted. If the process is
+// killed with SIGKILL, the .current files survive and are recovered into the
+// main log on the next run.
 package stats
 
 import (
@@ -68,23 +74,73 @@ type sessionData struct {
 // Recorder observes tool calls and writes session summaries.
 // All exported methods are safe for concurrent use.
 type Recorder struct {
-	mu        sync.Mutex
-	humanPath string // human-readable log; may be empty
-	jsonPath  string // JSONL machine-readable log; may be empty
-	client    string // value of MEMORYWEB_CLIENT env var; may be empty
-	start     time.Time
-	calls     []callRec
+	mu          sync.Mutex
+	humanPath   string // human-readable log; may be empty
+	jsonPath    string // JSONL machine-readable log; may be empty
+	client      string // value of MEMORYWEB_CLIENT env var; may be empty
+	start       time.Time
+	calls       []callRec
+	flushed     bool // true once Flush() has been called
 }
 
 // New returns a Recorder. humanPath receives the human-readable summary;
 // jsonPath receives one JSON object per session (JSONL). Either may be empty.
 // The MEMORYWEB_CLIENT env var, if set, is stamped into each session record.
+// Any orphaned .current files from a previous crashed session are recovered
+// into the main logs before returning.
 func New(humanPath, jsonPath string) *Recorder {
-	return &Recorder{
+	r := &Recorder{
 		humanPath: humanPath,
 		jsonPath:  jsonPath,
 		client:    os.Getenv("MEMORYWEB_CLIENT"),
 		start:     time.Now().UTC(),
+	}
+	r.recoverCurrent()
+	return r
+}
+
+// recoverCurrent merges any orphaned *.current files from a previous crashed
+// session into the main log files, then deletes them.
+func (r *Recorder) recoverCurrent() {
+	if r.humanPath != "" {
+		cur := r.humanPath + ".current"
+		if data, err := os.ReadFile(cur); err == nil && len(data) > 0 {
+			if f, err := os.OpenFile(r.humanPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+				f.Write(data) //nolint:errcheck
+				f.Close()
+			}
+			os.Remove(cur) //nolint:errcheck
+		}
+	}
+	if r.jsonPath != "" {
+		cur := r.jsonPath + ".current"
+		if data, err := os.ReadFile(cur); err == nil && len(data) > 0 {
+			if f, err := os.OpenFile(r.jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+				f.Write(data) //nolint:errcheck
+				f.Close()
+			}
+			os.Remove(cur) //nolint:errcheck
+		}
+	}
+}
+
+// writeCurrent overwrites the *.current files with the latest session state.
+// Called after every tool call so the data survives a SIGKILL.
+// Must be called with r.mu held.
+func (r *Recorder) writeCurrent() {
+	if len(r.calls) == 0 {
+		return
+	}
+	sess := r.computeSession()
+	prior := r.readPriorSessions()
+
+	if r.humanPath != "" {
+		summary := r.formatSummary(sess, prior)
+		os.WriteFile(r.humanPath+".current", []byte(summary+"\n"), 0644) //nolint:errcheck
+	}
+	if r.jsonPath != "" {
+		dataJSON, _ := json.Marshal(sess.data)
+		os.WriteFile(r.jsonPath+".current", append(dataJSON, '\n'), 0644) //nolint:errcheck
 	}
 }
 
@@ -112,6 +168,7 @@ func (r *Recorder) Record(tool string, argsRaw json.RawMessage, resultText strin
 		}
 	}
 	r.calls = append(r.calls, cr)
+	r.writeCurrent()
 }
 
 // Flush computes the session summary, appends it to the log file, and returns
@@ -161,6 +218,14 @@ func (r *Recorder) flush() (string, error) {
 				firstErr = err
 			}
 		}
+	}
+
+	// Clean up .current files now that the data is in the main log.
+	if r.humanPath != "" {
+		os.Remove(r.humanPath + ".current") //nolint:errcheck
+	}
+	if r.jsonPath != "" {
+		os.Remove(r.jsonPath + ".current") //nolint:errcheck
 	}
 
 	return summary, firstErr
@@ -535,9 +600,6 @@ func imin(a, b int) int {
 	}
 	return b
 }
-
-
-
 
 
 
