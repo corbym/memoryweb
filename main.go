@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/corbym/memoryweb/db"
+	"github.com/corbym/memoryweb/stats"
 	"github.com/corbym/memoryweb/tools"
 )
 
@@ -73,6 +74,17 @@ func main() {
 
 	handler := tools.New(store)
 
+	// Stats recording — enabled when MEMORYWEB_STATS_FILE is set.
+	var rec *stats.Recorder
+	if statsPath := os.Getenv("MEMORYWEB_STATS_FILE"); statsPath != "" {
+		rec = stats.New(statsPath)
+		defer func() {
+			if _, err := rec.Flush(); err != nil {
+				log.Printf("[memoryweb] stats flush: %v", err)
+			}
+		}()
+	}
+
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	encoder := json.NewEncoder(os.Stdout)
@@ -94,7 +106,7 @@ func main() {
 			continue
 		}
 
-		result, rpcErr := dispatch(req, handler)
+		result, rpcErr := dispatch(req, handler, rec)
 		resp := Response{JSONRPC: "2.0", ID: req.ID}
 		if rpcErr != nil {
 			resp.Error = rpcErr
@@ -773,7 +785,7 @@ func doctorFindHookCommand(entries []interface{}, suffix string) string {
 	return ""
 }
 
-func dispatch(req Request, h *tools.Handler) (interface{}, *RPCError) {
+func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, *RPCError) {
 	switch req.Method {
 	case "initialize":
 		return handleInitialize(req.Params)
@@ -787,6 +799,21 @@ func dispatch(req Request, h *tools.Handler) (interface{}, *RPCError) {
 		result, err := h.CallTool(req.Params)
 		if err != nil {
 			return nil, &RPCError{Code: -32603, Message: err.Error()}
+		}
+		// Record the call for stats if enabled.
+		if rec != nil {
+			if tr, ok := result.(*tools.ToolResult); ok {
+				text := ""
+				if len(tr.Content) > 0 {
+					text = tr.Content[0].Text
+				}
+				var callReq struct {
+					Name      string          `json:"name"`
+					Arguments json.RawMessage `json:"arguments"`
+				}
+				json.Unmarshal(req.Params, &callReq)
+				rec.Record(callReq.Name, callReq.Arguments, text, tr.IsError)
+			}
 		}
 		return result, nil
 	default:

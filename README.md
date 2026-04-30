@@ -121,6 +121,24 @@ memoryweb setup --hooks-dir /path/to/hooks           # explicit hooks directory
 memoryweb setup --db /path/to/your.db                # explicit DB path
 ```
 
+The `stats` feature records tool usage for every MCP session and appends a structured summary to a log file. Enable it by setting `MEMORYWEB_STATS_FILE` in your environment or MCP config:
+
+```json
+{
+  "mcpServers": {
+    "memoryweb": {
+      "command": "/path/to/memoryweb",
+      "env": {
+        "MEMORYWEB_DB": "/Users/yourname/.memoryweb.db",
+        "MEMORYWEB_STATS_FILE": "/Users/yourname/.memoryweb-stats.log"
+      }
+    }
+  }
+}
+```
+
+Each session appends one entry to the file — a machine-readable `<!-- data: … -->` line followed by a human-readable summary. See [docs/stats.md](docs/stats.md) for how to read the output and what the scores mean.
+
 The `doctor` subcommand checks every part of a memoryweb installation and prints a structured health report. Use it after setup to verify everything is wired correctly, or run it in an agent session to check whether semantic search is available before relying on it.
 
 ```bash
