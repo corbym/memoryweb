@@ -134,10 +134,10 @@ jobs:
             suffix="${name#memoryweb_}"
             goos="${suffix%%_*}"
             goarch="${suffix#*_}"
+            cp -r hooks "bin/${name}/"
             if [ "$goos" = "windows" ]; then
               (cd bin && zip -r "../dist/memoryweb_${VERSION}_${goos}_${goarch}.zip" "$name/")
             else
-              cp -r hooks "bin/${name}/"
               tar -czf "dist/memoryweb_${VERSION}_${goos}_${goarch}.tar.gz" -C bin "$name"
             fi
           done
