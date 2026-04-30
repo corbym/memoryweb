@@ -20,11 +20,13 @@ const Instructions = "This tool is called memoryweb. Always refer to it as memor
 	"field before the session ends."
 
 type Handler struct {
-	store *db.Store
+	store       *db.Store
+	version     string
+	checkUpdate func() (string, error)
 }
 
-func New(store *db.Store) *Handler {
-	return &Handler{store: store}
+func New(store *db.Store, version string, checkUpdate func() (string, error)) *Handler {
+	return &Handler{store: store, version: version, checkUpdate: checkUpdate}
 }
 
 // MCP tool schema types
@@ -390,6 +392,14 @@ func (h *Handler) ListTools() (interface{}, error) {
 				Required: []string{"domain"},
 			},
 		},
+		{
+			Name:        "check_for_updates",
+			Description: "Check whether a newer version of memoryweb is available. Returns the current version, the latest available version, and instructions for updating. Call this when the user asks if memoryweb is up to date.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]Property{},
+			},
+		},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -456,6 +466,8 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.tracePath(req.Arguments)
 	case "visualise":
 		result, err = h.visualise(req.Arguments)
+	case "check_for_updates":
+		result, err = h.checkForUpdates(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -1211,5 +1223,32 @@ func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) checkForUpdates(_ json.RawMessage) (*ToolResult, error) {
+	info := func(msg string) *ToolResult {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}
+	}
+
+	if h.checkUpdate == nil {
+		return info("update check not available"), nil
+	}
+	if h.version == "dev" {
+		return info("running dev build — skipping update check"), nil
+	}
+	latest, err := h.checkUpdate()
+	if err != nil {
+		return info(fmt.Sprintf("could not reach update server: %v", err)), nil
+	}
+	if latest == h.version {
+		return info(fmt.Sprintf("memoryweb is up to date (%s)", h.version)), nil
+	}
+	return info(fmt.Sprintf(
+		"memoryweb %s is available (you are running %s). "+
+			"To update, download the binary for your platform from "+
+			"https://github.com/corbym/memoryweb/releases/latest and replace "+
+			"the existing binary, then restart your MCP client.",
+		latest, h.version,
+	)), nil
 }
 

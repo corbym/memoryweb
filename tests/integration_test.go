@@ -21,7 +21,7 @@ func newEnv(t *testing.T) (*db.Store, *tools.Handler) {
 		t.Fatalf("db.New: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	return store, tools.New(store)
+	return store, tools.New(store, "dev", nil)
 }
 
 func call(t *testing.T, h *tools.Handler, toolName string, arguments any) *tools.ToolResult {

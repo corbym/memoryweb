@@ -84,7 +84,7 @@ func TestRunDoctor_TextOutput_ContainsSections(t *testing.T) {
 
 	for _, want := range []string{
 		"Database:", "sqlite-vec:", "Ollama binary:", "Ollama server:", "Ollama model:",
-		"Claude hooks:", "Graph:", "Drift:", "Last activity:",
+		"Claude hooks:", "Graph:", "Drift:", "Last activity:", "Update:",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected section %q in output; got:\n%s", want, out)
@@ -226,3 +226,17 @@ func TestRunDoctor_AuditLog_ShowsLastActivity(t *testing.T) {
 	}
 }
 
+func TestRunDoctor_UpdateCheck_DevBuild(t *testing.T) {
+	store, dbPath := newTestStore(t)
+	home := t.TempDir()
+
+	// Version is "dev" in tests (the zero value of the package variable),
+	// so the update check should report the dev-build info message.
+	var buf bytes.Buffer
+	runDoctor(store, &buf, dbPath, home, false)
+	out := buf.String()
+
+	if !strings.Contains(out, "dev build") {
+		t.Errorf("expected 'dev build' in update check line; got:\n%s", out)
+	}
+}

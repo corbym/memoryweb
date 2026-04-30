@@ -23,6 +23,11 @@ import (
 	"github.com/corbym/memoryweb/tools"
 )
 
+// Version is the current build version. It is injected at build time via
+// -ldflags="-X main.Version=vX.Y.Z" by the release workflow; the default
+// value "dev" is used for local / untagged builds.
+var Version = "dev"
+
 // JSON-RPC 2.0 types
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -75,7 +80,7 @@ func main() {
 	}
 	defer store.Close()
 
-	handler := tools.New(store)
+	handler := tools.New(store, Version, checkLatestRelease)
 
 	// Stats recording — enabled when MEMORYWEB_STATS_FILE and/or
 	// MEMORYWEB_STATS_JSON_FILE are set.
@@ -835,6 +840,21 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 			entry.ActionedAt.Format("2006-01-02"), entry.Action, entry.NodeLabel))
 	}
 
+	// ── 10. Update check ──────────────────────────────────────────────────────
+	if Version == "dev" {
+		add("Update", "info", "running dev build — skipping update check")
+	} else {
+		latest, updateErr := checkLatestRelease()
+		switch {
+		case updateErr != nil:
+			add("Update", "info", "could not check (offline or rate-limited)")
+		case latest == Version:
+			add("Update", "ok", fmt.Sprintf("up to date (%s)", Version))
+		default:
+			add("Update", "warn", fmt.Sprintf("%s available — download from https://github.com/corbym/memoryweb/releases/latest", latest))
+		}
+	}
+
 	// ── determine overall pass/fail ───────────────────────────────────────────
 	passed := true
 	for _, c := range checks {
@@ -934,6 +954,35 @@ func doctorFindHookCommand(entries []interface{}, suffix string) string {
 	return ""
 }
 
+// checkLatestRelease fetches the latest release tag from GitHub and returns it.
+// It returns an error on network failure, non-200 response, or malformed JSON.
+func checkLatestRelease() (string, error) {
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/corbym/memoryweb/releases/latest", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "memoryweb")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+	}
+	var body struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+	if body.TagName == "" {
+		return "", fmt.Errorf("empty tag_name in response")
+	}
+	return body.TagName, nil
+}
+
 func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, *RPCError) {
 	switch req.Method {
 	case "initialize":
@@ -975,7 +1024,7 @@ func handleInitialize(params json.RawMessage) (interface{}, *RPCError) {
 		"protocolVersion": "2024-11-05",
 		"serverInfo": map[string]interface{}{
 			"name":    "memoryweb",
-			"version": "0.1.0",
+			"version": Version,
 		},
 		"capabilities": map[string]interface{}{
 			"tools": map[string]interface{}{},

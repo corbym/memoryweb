@@ -274,6 +274,38 @@ If memoryweb is connected, the agent will call the tool and return a result (an 
 
 ---
 
+## Updating
+
+To check whether a newer version is available:
+
+```bash
+memoryweb doctor
+```
+
+The `[i] Update:` line will tell you if a newer release is available. You can also ask the agent — the `check_for_updates` tool checks GitHub and returns the current and latest versions.
+
+To update:
+
+1. Download the latest archive for your architecture from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
+2. Extract and replace the binary atomically:
+
+   ```bash
+   curl -L -o /tmp/memoryweb.tar.gz \
+     https://github.com/corbym/memoryweb/releases/download/vX.Y.Z/memoryweb_vX.Y.Z_linux_amd64.tar.gz
+   tar -xzf /tmp/memoryweb.tar.gz -C /tmp
+   sudo cp /tmp/memoryweb_linux_amd64/memoryweb /usr/local/bin/memoryweb.tmp
+   sudo mv /usr/local/bin/memoryweb.tmp /usr/local/bin/memoryweb
+   sudo chmod +x /usr/local/bin/memoryweb
+   ```
+
+   > **ARM64 users:** replace `amd64` with `arm64` in the URLs and paths above.
+
+3. Restart your MCP client (Claude Desktop or Claude Code) so it picks up the new binary.
+
+Your database is forward-compatible — the binary runs any pending schema migrations automatically on startup.
+
+---
+
 ## Troubleshooting
 
 **`memoryweb: command not found`**

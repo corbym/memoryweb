@@ -73,7 +73,7 @@ func newEnvWithPath(t *testing.T) (string, *db.Store, *tools.Handler) {
 		t.Fatalf("db.New: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	return dbPath, store, tools.New(store)
+	return dbPath, store, tools.New(store, "dev", nil)
 }
 
 // newEnv creates an isolated Store+Handler. All existing tests use this.
@@ -2586,5 +2586,57 @@ func TestVisualiseLabelSanitisation(t *testing.T) {
 	}
 	if strings.Contains(resp.Mermaid, long) {
 		t.Error("full label should have been truncated in Mermaid output")
+	}
+}
+
+// ── check_for_updates tests ───────────────────────────────────────────────────
+
+func newHandlerWithVersion(t *testing.T, version string, checker func() (string, error)) *tools.Handler {
+	t.Helper()
+	_, store, _ := newEnvWithPath(t)
+	return tools.New(store, version, checker)
+}
+
+func TestCheckForUpdates_UpToDate(t *testing.T) {
+	h := newHandlerWithVersion(t, "v1.0.0", func() (string, error) { return "v1.0.0", nil })
+	tr := call(t, h, "check_for_updates", map[string]any{})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), "up to date") {
+		t.Errorf("expected 'up to date' message; got: %s", text(t, tr))
+	}
+}
+
+func TestCheckForUpdates_UpdateAvailable(t *testing.T) {
+	h := newHandlerWithVersion(t, "v1.0.0", func() (string, error) { return "v2.0.0", nil })
+	tr := call(t, h, "check_for_updates", map[string]any{})
+	mustNotError(t, tr)
+	got := text(t, tr)
+	if !strings.Contains(got, "v2.0.0") {
+		t.Errorf("expected latest version 'v2.0.0' in message; got: %s", got)
+	}
+	if !strings.Contains(got, "v1.0.0") {
+		t.Errorf("expected current version 'v1.0.0' in message; got: %s", got)
+	}
+	if !strings.Contains(got, "releases/latest") {
+		t.Errorf("expected download URL in message; got: %s", got)
+	}
+}
+
+func TestCheckForUpdates_DevBuild(t *testing.T) {
+	h := newHandlerWithVersion(t, "dev", func() (string, error) { return "v2.0.0", nil })
+	tr := call(t, h, "check_for_updates", map[string]any{})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), "dev build") {
+		t.Errorf("expected 'dev build' skip message; got: %s", text(t, tr))
+	}
+}
+
+func TestCheckForUpdates_NetworkError(t *testing.T) {
+	h := newHandlerWithVersion(t, "v1.0.0", func() (string, error) { return "", fmt.Errorf("connection refused") })
+	tr := call(t, h, "check_for_updates", map[string]any{})
+	// Network failures must not be a tool-level error — they are advisory.
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), "could not reach") {
+		t.Errorf("expected advisory message on error; got: %s", text(t, tr))
 	}
 }
