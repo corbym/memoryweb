@@ -1,6 +1,9 @@
-// Package stats records tool usage metrics for a memoryweb MCP session
-// and writes human-readable summaries to a log file.
-// Enabled by setting MEMORYWEB_STATS_FILE to a writable path.
+// Package stats records tool usage metrics for a memoryweb MCP session.
+// It writes two separate outputs:
+//   - a human-readable log (MEMORYWEB_STATS_FILE)
+//   - a machine-readable JSONL file, one JSON object per session (MEMORYWEB_STATS_JSON_FILE)
+//
+// Either path may be empty to disable that output.
 package stats
 
 import (
@@ -59,20 +62,30 @@ type sessionData struct {
 	Transient  int       `json:"transient"`
 	Ratio      float64   `json:"ratio"`
 	Burst      bool      `json:"burst"`
+	Client     string    `json:"client,omitempty"`
 }
 
 // Recorder observes tool calls and writes session summaries.
 // All exported methods are safe for concurrent use.
 type Recorder struct {
-	mu      sync.Mutex
-	outPath string
-	start   time.Time
-	calls   []callRec
+	mu        sync.Mutex
+	humanPath string // human-readable log; may be empty
+	jsonPath  string // JSONL machine-readable log; may be empty
+	client    string // value of MEMORYWEB_CLIENT env var; may be empty
+	start     time.Time
+	calls     []callRec
 }
 
-// New returns a Recorder that appends to outPath.
-func New(outPath string) *Recorder {
-	return &Recorder{outPath: outPath, start: time.Now().UTC()}
+// New returns a Recorder. humanPath receives the human-readable summary;
+// jsonPath receives one JSON object per session (JSONL). Either may be empty.
+// The MEMORYWEB_CLIENT env var, if set, is stamped into each session record.
+func New(humanPath, jsonPath string) *Recorder {
+	return &Recorder{
+		humanPath: humanPath,
+		jsonPath:  jsonPath,
+		client:    os.Getenv("MEMORYWEB_CLIENT"),
+		start:     time.Now().UTC(),
+	}
 }
 
 // Record observes one tool call. argsRaw is the raw JSON arguments;
@@ -117,13 +130,40 @@ func (r *Recorder) flush() (string, error) {
 	prior := r.readPriorSessions()
 	summary := r.formatSummary(sess, prior)
 
-	f, err := os.OpenFile(r.outPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return summary, err
+	var firstErr error
+
+	// Write human-readable log.
+	if r.humanPath != "" {
+		f, err := os.OpenFile(r.humanPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			firstErr = err
+		} else {
+			_, err = fmt.Fprintln(f, summary)
+			f.Close()
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
 	}
-	defer f.Close()
-	_, err = fmt.Fprintln(f, summary)
-	return summary, err
+
+	// Write JSON object to JSONL file.
+	if r.jsonPath != "" {
+		dataJSON, _ := json.Marshal(sess.data)
+		f, err := os.OpenFile(r.jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+		} else {
+			_, err = fmt.Fprintf(f, "%s\n", dataJSON)
+			f.Close()
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	return summary, firstErr
 }
 
 // ── computation ──────────────────────────────────────────────────────────────
@@ -202,7 +242,8 @@ func (r *Recorder) computeSession() computedSession {
 			NodesFiled: nodesFiled, EdgesFiled: edgesFiled,
 			Orphans: orphans, Transient: transientFiled,
 			Ratio: math.Round(ratio*100) / 100,
-			Burst: nodesFiled > 15,
+			Burst:  nodesFiled > 15,
+			Client: r.client,
 		},
 		duration:   time.Since(r.start),
 		byTool:     byTool,
@@ -233,8 +274,41 @@ func WKDGrade(wkd float64) string {
 
 // ── prior session reading ─────────────────────────────────────────────────────
 
+// readPriorSessions reads historical session data.
+// It prefers the JSONL file (one JSON object per line); if that is not
+// configured it falls back to scanning the human log for legacy
+// <!-- data: … --> lines so that existing log files keep working.
 func (r *Recorder) readPriorSessions() []sessionData {
-	f, err := os.Open(r.outPath)
+	if r.jsonPath != "" {
+		return readJSONL(r.jsonPath)
+	}
+	return readLegacyDataLines(r.humanPath)
+}
+
+func readJSONL(path string) []sessionData {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var out []sessionData
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var sd sessionData
+		if json.Unmarshal([]byte(line), &sd) == nil {
+			out = append(out, sd)
+		}
+	}
+	return out
+}
+
+func readLegacyDataLines(path string) []sessionData {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
@@ -276,13 +350,10 @@ func (r *Recorder) formatSummary(sess computedSession, prior []sessionData) stri
 	var sb strings.Builder
 	now := time.Now().UTC()
 
-	// Machine-readable data line first so readPriorSessions finds it.
-	dataJSON, _ := json.Marshal(sess.data)
-	sb.WriteString("<!-- data: ")
-	sb.Write(dataJSON)
-	sb.WriteString(" -->\n")
-
 	sb.WriteString(fmt.Sprintf("\n=== memoryweb session -- %s ===\n", now.Format("2006-01-02 15:04 UTC")))
+	if sess.data.Client != "" {
+		sb.WriteString(fmt.Sprintf("Client        %s\n", sess.data.Client))
+	}
 
 	mins := int(sess.duration.Minutes())
 	if mins < 1 {
@@ -464,4 +535,9 @@ func imin(a, b int) int {
 	}
 	return b
 }
+
+
+
+
+
 

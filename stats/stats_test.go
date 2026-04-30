@@ -1,6 +1,7 @@
 package stats_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ func call(r *stats.Recorder, tool string, args map[string]any, result string, is
 
 func TestWKD_FilingWithConnections(t *testing.T) {
 	dir := t.TempDir()
-	r := stats.New(filepath.Join(dir, "stats.log"))
+	r := stats.New(filepath.Join(dir, "stats.log"), filepath.Join(dir, "stats.jsonl"))
 
 	// Orient at start (retrieval)
 	call(r, "orient", map[string]any{"domain": "proj"}, `{"total_nodes":10}`, false)
@@ -44,7 +45,7 @@ func TestWKD_FilingWithConnections(t *testing.T) {
 
 func TestWKD_PureRetrieval(t *testing.T) {
 	dir := t.TempDir()
-	r := stats.New(filepath.Join(dir, "stats.log"))
+	r := stats.New(filepath.Join(dir, "stats.log"), "")
 
 	for i := 0; i < 6; i++ {
 		call(r, "search", map[string]any{"query": "something"}, `{"nodes":[]}`, false)
@@ -63,7 +64,7 @@ func TestWKD_PureRetrieval(t *testing.T) {
 
 func TestWKD_OrphansArePenalised(t *testing.T) {
 	dir := t.TempDir()
-	r := stats.New(filepath.Join(dir, "stats.log"))
+	r := stats.New(filepath.Join(dir, "stats.log"), "")
 
 	// File 4 nodes, connect none
 	for i := 0; i < 4; i++ {
@@ -82,7 +83,7 @@ func TestWKD_OrphansArePenalised(t *testing.T) {
 
 func TestWKD_TransientPenalty(t *testing.T) {
 	dir := t.TempDir()
-	r := stats.New(filepath.Join(dir, "stats.log"))
+	r := stats.New(filepath.Join(dir, "stats.log"), "")
 
 	call(r, "remember", map[string]any{"label": "sprint note", "domain": "proj", "transient": true}, `{"node":{"id":"t"}}`, false)
 	call(r, "remember", map[string]any{"label": "sprint note 2", "domain": "proj", "transient": true}, `{"node":{"id":"t2"}}`, false)
@@ -120,7 +121,8 @@ func TestGrade_Boundaries(t *testing.T) {
 func TestFlush_WritesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "stats.log")
-	r := stats.New(path)
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	r := stats.New(path, jsonPath)
 
 	call(r, "orient", map[string]any{"domain": "proj"}, `{"total_nodes":5}`, false)
 	call(r, "remember", map[string]any{"label": "Decision X", "domain": "proj"}, `{"node":{"id":"d-1"}}`, false)
@@ -131,18 +133,26 @@ func TestFlush_WritesFile(t *testing.T) {
 		t.Fatalf("Flush: %v", err)
 	}
 
-	// File must exist
+	// Human file must exist without data line
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("stats file not created: %v", err)
 	}
-
-	// Must contain machine-readable data line and human summary
 	content, _ := os.ReadFile(path)
-	if !strings.Contains(string(content), "<!-- data:") {
-		t.Error("stats file should contain data line")
+	if strings.Contains(string(content), "<!-- data:") {
+		t.Error("human stats file should NOT contain <!-- data: --> line")
 	}
 	if !strings.Contains(string(content), "memoryweb session") {
 		t.Error("stats file should contain session header")
+	}
+
+	// JSON file must exist and contain valid JSON
+	if _, err := os.Stat(jsonPath); err != nil {
+		t.Fatalf("json stats file not created: %v", err)
+	}
+	jsonContent, _ := os.ReadFile(jsonPath)
+	var sd map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(jsonContent), &sd); err != nil {
+		t.Errorf("json stats file should contain valid JSON: %v\ncontent: %s", err, jsonContent)
 	}
 
 	// Return value should be the summary
@@ -154,21 +164,15 @@ func TestFlush_WritesFile(t *testing.T) {
 func TestFlush_CumulativeTrend(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "stats.log")
+	jsonPath := filepath.Join(dir, "stats.jsonl")
 
-	// Write two prior sessions manually.
-	prior := `<!-- data: {"start_ts":"2026-04-28T10:00:00Z","wkd":12.0,"type":"filing","nodes":3,"edges":2,"orphans":1,"transient":0,"ratio":0.60,"burst":false} -->
-=== memoryweb session — 2026-04-28 10:00 UTC ===
-prior session content
-=== end ===
-
-<!-- data: {"start_ts":"2026-04-29T10:00:00Z","wkd":16.5,"type":"filing","nodes":4,"edges":4,"orphans":0,"transient":0,"ratio":0.75,"burst":false} -->
-=== memoryweb session — 2026-04-29 10:00 UTC ===
-prior session content
-=== end ===
+	// Write two prior sessions as JSONL.
+	prior := `{"start_ts":"2026-04-28T10:00:00Z","wkd":12.0,"type":"filing","nodes":3,"edges":2,"orphans":1,"transient":0,"ratio":0.60,"burst":false}
+{"start_ts":"2026-04-29T10:00:00Z","wkd":16.5,"type":"filing","nodes":4,"edges":4,"orphans":0,"transient":0,"ratio":0.75,"burst":false}
 `
-	os.WriteFile(path, []byte(prior), 0644)
+	os.WriteFile(jsonPath, []byte(prior), 0644)
 
-	r := stats.New(path)
+	r := stats.New(path, jsonPath)
 	call(r, "remember", map[string]any{"label": "N", "domain": "proj"}, `{"node":{"id":"n"}}`, false)
 	call(r, "connect", map[string]any{"from_node": "n", "to_node": "x", "relationship": "led_to"}, `{"id":"e"}`, false)
 

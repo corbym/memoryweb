@@ -74,10 +74,13 @@ func main() {
 
 	handler := tools.New(store)
 
-	// Stats recording — enabled when MEMORYWEB_STATS_FILE is set.
+	// Stats recording — enabled when MEMORYWEB_STATS_FILE and/or
+	// MEMORYWEB_STATS_JSON_FILE are set.
 	var rec *stats.Recorder
-	if statsPath := os.Getenv("MEMORYWEB_STATS_FILE"); statsPath != "" {
-		rec = stats.New(statsPath)
+	humanPath := os.Getenv("MEMORYWEB_STATS_FILE")
+	jsonPath := os.Getenv("MEMORYWEB_STATS_JSON_FILE")
+	if humanPath != "" || jsonPath != "" {
+		rec = stats.New(humanPath, jsonPath)
 		defer func() {
 			if _, err := rec.Flush(); err != nil {
 				log.Printf("[memoryweb] stats flush: %v", err)

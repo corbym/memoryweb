@@ -1,7 +1,13 @@
 # Session stats — reading the output and what the scores mean
 
-memoryweb can record a structured summary of every MCP session. Enable it by
-setting `MEMORYWEB_STATS_FILE` to a writable path in your MCP server config:
+memoryweb records a structured summary of every MCP session split across two
+separate files:
+
+- **Human-readable log** (`MEMORYWEB_STATS_FILE`) — plain text, one entry per session.
+- **Machine-readable JSONL** (`MEMORYWEB_STATS_JSON_FILE`) — one JSON object per line,
+  used for trend computation and programmatic analysis.
+
+Set either or both paths in your MCP server config:
 
 ```json
 {
@@ -10,26 +16,26 @@ setting `MEMORYWEB_STATS_FILE` to a writable path in your MCP server config:
       "command": "/path/to/memoryweb",
       "env": {
         "MEMORYWEB_DB": "/Users/yourname/.memoryweb.db",
-        "MEMORYWEB_STATS_FILE": "/Users/yourname/.memoryweb-stats.log"
+        "MEMORYWEB_STATS_FILE": "/Users/yourname/.memoryweb-stats.log",
+        "MEMORYWEB_STATS_JSON_FILE": "/Users/yourname/.memoryweb-stats.jsonl"
       }
     }
   }
 }
 ```
 
-When the session ends the server appends one entry to the file. The file grows
-over time — one entry per session. You can `tail` it, open it in a text editor,
-or `grep` the machine-readable `<!-- data: … -->` lines for programmatic
-analysis.
+Both files grow over time — one entry per session. You can `tail` the log, open
+it in a text editor, or `jq` the JSONL file for programmatic analysis.
 
 ---
 
 ## Example output
 
-```
-<!-- data: {"start_ts":"2026-04-30T09:15:00Z","wkd":18.5,"type":"filing","nodes":5,"edges":4,"orphans":1,"transient":1,"ratio":0.67,"burst":false} -->
+Human-readable log (`~/.memoryweb-stats.log`):
 
+```
 === memoryweb session -- 2026-04-30 09:15 UTC ===
+Client        copilot
 Active 12 min | 14 tool calls across deep-game (3), sedex (2)
   Most used    search x4, remember x3, connect x3, orient x2, recall x2
   Retrieval    67% retrieval->action ratio (good - checks before filing)
@@ -42,6 +48,12 @@ Active 12 min | 14 tool calls across deep-game (3), sedex (2)
   WKD median    14.2 (30d)  17.8 (7d)  ^ improving
   Retrieval pct 25% of sessions were retrieval-only
 === end ===
+```
+
+JSONL file (`~/.memoryweb-stats.jsonl`):
+
+```json
+{"start_ts":"2026-04-30T09:15:00Z","wkd":18.5,"type":"filing","nodes":5,"edges":4,"orphans":1,"transient":1,"ratio":0.67,"burst":false,"client":"copilot"}
 ```
 
 ---
@@ -166,39 +178,50 @@ The trend block appears when there are prior sessions in the log file.
 
 ---
 
-## Machine-readable data line
+## Machine-readable JSONL file
 
-Every entry begins with a `<!-- data: … -->` comment containing a JSON object.
-This lets you parse the log with standard tools.
+Every session appends one compact JSON object (single line) to
+`MEMORYWEB_STATS_JSON_FILE`. After three sessions the file looks like:
 
-```json
-{
-  "start_ts":  "2026-04-30T09:15:00Z",
-  "wkd":       18.5,
-  "type":      "filing",
-  "nodes":     5,
-  "edges":     4,
-  "orphans":   1,
-  "transient": 1,
-  "ratio":     0.67,
-  "burst":     false
-}
+```
+{"start_ts":"2026-04-28T10:00:00Z","wkd":12.0,"type":"filing","nodes":3,"edges":2,"orphans":1,"transient":0,"ratio":0.60,"burst":false}
+{"start_ts":"2026-04-29T10:00:00Z","wkd":16.5,"type":"filing","nodes":4,"edges":4,"orphans":0,"transient":0,"ratio":0.75,"burst":false}
+{"start_ts":"2026-04-30T09:15:00Z","wkd":18.5,"type":"filing","nodes":5,"edges":4,"orphans":1,"transient":1,"ratio":0.67,"burst":false}
 ```
 
-Extract all data lines:
+One line per session, forever. Standard JSONL — any tool that speaks JSON can
+read it directly.
+
+### Fields
+
+| Field | Type | What it means |
+|-------|------|---------------|
+| `start_ts` | ISO8601 string | When the session started (UTC) |
+| `wkd` | float | WKD score for this session |
+| `type` | string | `filing`, `retrieval`, or `minimal` |
+| `nodes` | int | Nodes filed this session |
+| `edges` | int | Edges filed this session |
+| `orphans` | int | Nodes filed but not connected |
+| `transient` | int | Transient nodes filed |
+| `ratio` | float | Retrieval-before-write ratio (0–1) |
+| `burst` | bool | True if > 15 nodes filed (excluded from trend median) |
+| `client` | string | Value of `MEMORYWEB_CLIENT` env var (e.g. `copilot`, `claude`); omitted if not set |
+
+### Querying
 
 ```bash
-grep '^<!-- data:' ~/.memoryweb-stats.log \
-  | sed 's/<!-- data: //;s/ -->//' \
-  | jq -s .
-```
+# pretty-print all sessions
+jq -s '.' ~/.memoryweb-stats.jsonl
 
-Plot WKD over time:
+# WKD over time as CSV
+jq -r '[.start_ts, .wkd] | @csv' ~/.memoryweb-stats.jsonl
 
-```bash
-grep '^<!-- data:' ~/.memoryweb-stats.log \
-  | sed 's/<!-- data: //;s/ -->//' \
-  | jq -r '[.start_ts, .wkd] | @csv'
+# sessions graded A (wkd >= 25)
+jq 'select(.wkd >= 25)' ~/.memoryweb-stats.jsonl
+
+# 7-day median WKD (requires jq 1.6+)
+jq -s '[.[] | select(.burst == false and .type == "filing")] | map(.wkd) | sort | .[length/2]' \
+  ~/.memoryweb-stats.jsonl
 ```
 
 ---
