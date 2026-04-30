@@ -1,0 +1,35 @@
+name: Backfill Release Hooks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Trigger release workflow for all tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          failed=""
+          for tag in $(git tag --list 'v*' --sort=version:refname); do
+            echo "Triggering release for $tag"
+            if ! gh workflow run release.yml --ref main -f tag="$tag"; then
+              echo "WARNING: failed to trigger release for $tag"
+              failed="$failed $tag"
+            fi
+            sleep 10
+          done
+          if [ -n "$failed" ]; then
+            echo "The following tags failed to trigger:$failed"
+            exit 1
+          fi

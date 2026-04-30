@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to rebuild and release (e.g. v1.4.2)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -39,6 +45,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
 
       - name: Set up Go
@@ -80,7 +87,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.cc }}
-        run: go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" -o bin/memoryweb_${{ matrix.goos }}_${{ matrix.goarch }}/memoryweb${{ matrix.ext }} .
+        run: go build -ldflags="-s -w -X main.Version=${{ inputs.tag || github.ref_name }}" -o bin/memoryweb_${{ matrix.goos }}_${{ matrix.goarch }}/memoryweb${{ matrix.ext }} .
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -95,7 +102,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
+
+      - name: Fetch hooks from main if not present at tag
+        run: |
+          if [ ! -d hooks ] || [ -z "$(find hooks -maxdepth 1 -name '*.sh' 2>/dev/null)" ]; then
+            git fetch origin main
+            git checkout origin/main -- hooks/
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -113,12 +128,13 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ inputs.tag || github.ref_name }}"
           for dir in bin/memoryweb_*/; do
             name=$(basename "$dir")
             suffix="${name#memoryweb_}"
             goos="${suffix%%_*}"
             goarch="${suffix#*_}"
+            cp -r hooks "bin/${name}/"
             if [ "$goos" = "windows" ]; then
               (cd bin && zip -r "../dist/memoryweb_${VERSION}_${goos}_${goarch}.zip" "$name/")
             else
@@ -127,10 +143,22 @@ jobs:
           done
           cd dist && sha256sum ./* > checksums.txt
 
+      - name: Delete existing release assets (backfill mode)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r asset; do
+            echo "Deleting existing asset: $asset"
+            gh release delete-asset "$TAG" "$asset" --yes || true
+          done
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: dist/*
-          generate_release_notes: true
+          generate_release_notes: ${{ github.event_name != 'workflow_dispatch' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
