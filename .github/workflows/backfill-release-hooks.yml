@@ -2,6 +2,11 @@ name: Backfill Release Hooks
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to backfill (leave empty to backfill all tags)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -21,7 +26,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           failed=""
-          for tag in $(git tag --list 'v*' --sort=version:refname); do
+          if [ -n "${{ inputs.tag }}" ]; then
+            tags="${{ inputs.tag }}"
+          else
+            tags=$(git tag --list 'v*' --sort=version:refname)
+          fi
+          for tag in $tags; do
             echo "Triggering release for $tag"
             if ! gh workflow run release.yml --ref master -f tag="$tag"; then
               echo "WARNING: failed to trigger release for $tag"
