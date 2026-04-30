@@ -151,6 +151,8 @@ Pre-built binaries are available on the [releases page](https://github.com/corby
 - [Linux (x86-64 & ARM64)](docs/install-linux.md)
 - [Windows (x86-64)](docs/install-windows.md)
 
+Once installed, see the **[User guide](docs/user-guide.md)** for how to orient the agent, what phrases to use, and how to get the most out of memoryweb in Claude Code, GitHub Copilot, and Claude Desktop.
+
 ## Build
 
 ```bash
