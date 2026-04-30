@@ -361,7 +361,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "trace",
-			Description: "Find the shortest chain of relationships connecting two concepts (by node ID). Returns all intermediate nodes and edges. Synthesise the result into a clear narrative explaining how one concept leads to the other. Returns 'No path found' if the two nodes are not connected within 6 hops.",
+			Description: "Find the shortest chain of relationships connecting two concepts (by node ID). Returns the ordered path in `path` and all edges connected to any node along that chain in `edges` — including branches not on the direct route. Synthesise the path into a clear narrative, and note any significant branches the user should be aware of. Returns 'No path found' if the two nodes are not connected within 6 hops.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -1112,7 +1112,7 @@ func (h *Handler) tracePath(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(result.Nodes) == 0 {
+	if len(result.Path) == 0 {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("No path found between %q and %q within 6 hops.", a.FromID, a.ToID)}}}, nil
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")

@@ -881,9 +881,10 @@ func scanNodeRows(rows *sql.Rows) ([]Node, error) {
 	return nodes, rows.Err()
 }
 
-// PathResult holds the shortest path between two nodes.
+// PathResult holds the shortest path between two nodes and all edges
+// incident to any node on that path (spine edges + context branches).
 type PathResult struct {
-	Nodes []Node `json:"nodes"`
+	Path  []Node `json:"path"`
 	Edges []Edge `json:"edges"`
 }
 
@@ -901,7 +902,7 @@ func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error)
 		if err != nil {
 			return nil, err
 		}
-		return &PathResult{Nodes: []Node{n.Node}, Edges: nil}, nil
+		return &PathResult{Path: []Node{n.Node}, Edges: nil}, nil
 	}
 
 	// BFS: each entry is a path (slice of node IDs) from fromID to the frontier.
@@ -971,8 +972,10 @@ func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error)
 	return &PathResult{}, nil // no path found
 }
 
-// materialisePath fetches full Node and Edge structs for a completed BFS path.
+// materialisePath fetches full Node structs for the path and all edges
+// incident to any node on the path (spine edges + context branches).
 func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) {
+	_ = edgeIDs // we now fetch all incident edges instead of just spine edges
 	nodes := make([]Node, 0, len(nodeIDs))
 	for _, id := range nodeIDs {
 		nwe, err := s.GetNode(id)
@@ -981,18 +984,39 @@ func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) 
 		}
 		nodes = append(nodes, nwe.Node)
 	}
-	edges := make([]Edge, 0, len(edgeIDs))
-	for _, id := range edgeIDs {
+
+	// Build placeholder list for IN clause.
+	placeholders := make([]string, len(nodeIDs))
+	args := make([]interface{}, len(nodeIDs)*2)
+	for i, id := range nodeIDs {
+		placeholders[i] = "?"
+		args[i] = id
+		args[len(nodeIDs)+i] = id
+	}
+	ph := strings.Join(placeholders, ", ")
+
+	rows, err := s.db.Query(
+		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
+		 WHERE from_node IN (`+ph+`) OR to_node IN (`+ph+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var edges []Edge
+	for rows.Next() {
 		var e Edge
-		err := s.db.QueryRow(
-			`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges WHERE id = ?`, id,
-		).Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
-		if err != nil {
+		if err := rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		edges = append(edges, e)
 	}
-	return &PathResult{Nodes: nodes, Edges: edges}, nil
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &PathResult{Path: nodes, Edges: edges}, nil
 }
 // searchByWords executes a fallback query that matches nodes containing ANY of
 // the provided words in ANY of the searchable fields (label, description,

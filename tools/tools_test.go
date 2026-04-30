@@ -3125,3 +3125,36 @@ func TestTraceIgnoresArchived(t *testing.T) {
 	}
 }
 
+func TestTraceReturnsContextEdges(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-trace-4"
+	idA := addNode(t, h, "Trace Start", domain, nil)
+	idB := addNode(t, h, "Trace Middle", domain, nil)
+	idC := addNode(t, h, "Trace End", domain, nil)
+	idX := addNode(t, h, "Side Branch", domain, nil)
+
+	// Spine: A -> B -> C
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idA, "to_node": idB, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idC, "relationship": "led_to"}))
+	// Side branch off B that is NOT on the path to C
+	sideTr := call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idX, "relationship": "connects_to"})
+	mustNotError(t, sideTr)
+	var sideEdge struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal([]byte(text(t, sideTr)), &sideEdge)
+
+	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idC})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	// The side-branch edge ID must appear even though idX is not on the direct path
+	if !strings.Contains(body, sideEdge.ID) {
+		t.Errorf("context edge (B→X) should appear in trace result; got:\n%s", body)
+	}
+	// idX itself should also appear (it's a neighbour of a path node)
+	if !strings.Contains(body, idX) {
+		t.Errorf("side-branch node X should appear in trace context; got:\n%s", body)
+	}
+}
+

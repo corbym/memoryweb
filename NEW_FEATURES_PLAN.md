@@ -29,18 +29,18 @@ For each feature below:
 ---
 
 ## 2. `trace` (Multi-hop Retrieval)
-**Goal:** Expose the shortest chain of reasoning between any two nodes.
+**Goal:** Expose the shortest chain of reasoning between two nodes, plus all edges incident to any node on that chain so the agent can see the surrounding territory, not just the spine.
 
 ### Tests (`tools/tools_test.go`):
-- `TestTraceReturnsChain`: Add nodes A -> B -> C -> D. Call `trace` from A to D. Assert intermediate nodes B, C and all connecting edges are returned.
+- `TestTraceReturnsChain`: Add nodes A -> B -> C -> D. Call `trace` from A to D. Assert all four node IDs appear in the result.
 - `TestTraceNoConnection`: Call `trace` between two nodes in disconnected subgraphs. Assert a clear empty/not-found response (not an error).
 - `TestTraceIgnoresArchived`: Add A -> B -> C. Archive B. Assert `trace` from A to C returns no path.
+- `TestTraceReturnsContextEdges`: Add path A -> B -> C, and a side-branch edge B -> X. Assert the side-branch edge (B→X) appears in the result even though X is not on the path.
 
 ### Implementation:
-- **DB (`db/db.go`)**: Add `FindPath(fromId, toId string, maxDepth int) ([]Node, []Edge, error)`.
-  *Query:* Use a SQLite Recursive CTE (`WITH RECURSIVE`) to perform BFS traversal of `edges` up to `maxDepth` (hard cap: 6), joining `nodes` where `archived_at IS NULL`. Return the **shortest path** only.
+- **DB (`db/db.go`)**: `PathResult` has two fields: `Path []Node` (ordered spine) and `Edges []Edge` (ALL edges incident to any path node — spine + context branches). `FindPath` performs BFS (hard cap: 6 hops). After finding the path, `materialisePath` fetches all edges `WHERE from_node IN (path_ids) OR to_node IN (path_ids)`.
 - **Tool (`tools/tools.go`)**: Add `trace`
-  *Description Guidance:* "Find the chain of relationships connecting two concepts. The result includes intermediate nodes and edges. Synthesize the steps into a clear, continuous narrative explaining how A leads to B."
+  *Description Guidance:* "Find the shortest chain of relationships connecting two concepts (by node ID). Returns the ordered path in `path` and all edges connected to any node along that chain in `edges` — including branches not on the direct route. Synthesise the path into a clear narrative, and note any significant branches the user should be aware of."
 
 ---
 
