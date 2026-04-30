@@ -881,6 +881,119 @@ func scanNodeRows(rows *sql.Rows) ([]Node, error) {
 	return nodes, rows.Err()
 }
 
+// PathResult holds the shortest path between two nodes.
+type PathResult struct {
+	Nodes []Node `json:"nodes"`
+	Edges []Edge `json:"edges"`
+}
+
+// FindPath returns the shortest path between fromID and toID using a BFS
+// traversal of edges. Only live (non-archived) nodes are traversed; archived
+// nodes act as walls. maxDepth caps the search at that many hops (hard limit: 6).
+// Returns an empty PathResult (no error) when no path exists.
+func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error) {
+	if maxDepth <= 0 || maxDepth > 6 {
+		maxDepth = 6
+	}
+	if fromID == toID {
+		// Trivial: source == destination.
+		n, err := s.GetNode(fromID)
+		if err != nil {
+			return nil, err
+		}
+		return &PathResult{Nodes: []Node{n.Node}, Edges: nil}, nil
+	}
+
+	// BFS: each entry is a path (slice of node IDs) from fromID to the frontier.
+	type path struct {
+		nodes []string
+		edges []string // edge IDs in order
+	}
+	queue := []path{{nodes: []string{fromID}}}
+	visited := map[string]bool{fromID: true}
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		tail := cur.nodes[len(cur.nodes)-1]
+		if len(cur.nodes)-1 >= maxDepth {
+			continue // depth limit reached without finding target
+		}
+
+		// Fetch all edges from or to the current tail node (undirected traversal).
+		rows, err := s.db.Query(`
+			SELECT e.id, e.from_node, e.to_node, e.relationship, e.narrative, e.created_at
+			FROM edges e
+			JOIN nodes nf ON nf.id = e.from_node AND nf.archived_at IS NULL
+			JOIN nodes nt ON nt.id = e.to_node   AND nt.archived_at IS NULL
+			WHERE e.from_node = ? OR e.to_node = ?`, tail, tail)
+		if err != nil {
+			return nil, err
+		}
+		var neighbours []struct {
+			edge      Edge
+			neighbour string
+		}
+		for rows.Next() {
+			var e Edge
+			if err := rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			next := e.ToNode
+			if next == tail {
+				next = e.FromNode
+			}
+			neighbours = append(neighbours, struct {
+				edge      Edge
+				neighbour string
+			}{e, next})
+		}
+		rows.Close()
+
+		for _, nb := range neighbours {
+			if visited[nb.neighbour] {
+				continue
+			}
+			newPath := path{
+				nodes: append(append([]string{}, cur.nodes...), nb.neighbour),
+				edges: append(append([]string{}, cur.edges...), nb.edge.ID),
+			}
+			if nb.neighbour == toID {
+				// Found it — materialise the result.
+				return s.materialisePath(newPath.nodes, newPath.edges)
+			}
+			visited[nb.neighbour] = true
+			queue = append(queue, newPath)
+		}
+	}
+	return &PathResult{}, nil // no path found
+}
+
+// materialisePath fetches full Node and Edge structs for a completed BFS path.
+func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) {
+	nodes := make([]Node, 0, len(nodeIDs))
+	for _, id := range nodeIDs {
+		nwe, err := s.GetNode(id)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, nwe.Node)
+	}
+	edges := make([]Edge, 0, len(edgeIDs))
+	for _, id := range edgeIDs {
+		var e Edge
+		err := s.db.QueryRow(
+			`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges WHERE id = ?`, id,
+		).Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		edges = append(edges, e)
+	}
+	return &PathResult{Nodes: nodes, Edges: edges}, nil
+}
 // searchByWords executes a fallback query that matches nodes containing ANY of
 // the provided words in ANY of the searchable fields (label, description,
 // why_matters, tags). Results are ordered by updated_at DESC.
@@ -2053,3 +2166,45 @@ func (s *Store) LastAuditEntry() (entry AuditEntry, ok bool, err error) {
 	return entry, true, nil
 }
 
+// FindDisconnected returns live, non-transient nodes that have no edges// (neither as from_node nor as to_node), optionally scoped to a domain.
+func (s *Store) FindDisconnected(domain string) ([]Node, error) {
+	domain = s.ResolveAlias(domain)
+
+	const baseQ = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		FROM nodes
+		WHERE archived_at IS NULL
+		  AND transient = 0
+		  AND id NOT IN (SELECT from_node FROM edges UNION SELECT to_node FROM edges)`
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if domain != "" {
+		rows, err = s.db.Query(baseQ+` AND domain = ? ORDER BY created_at DESC LIMIT 50`, domain)
+	} else {
+		rows, err = s.db.Query(baseQ + ` ORDER BY created_at DESC LIMIT 50`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		var oa, aa sql.NullTime
+		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters,
+			&n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); err != nil {
+			return nil, err
+		}
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}

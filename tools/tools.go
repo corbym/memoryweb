@@ -338,17 +338,39 @@ func (h *Handler) ListTools() (interface{}, error) {
 			Properties: map[string]Property{},
 		},
 	},
-	{
-		Name:        "disconnect",
-		Description: "Remove a connection between two memories by edge ID. Obtain the edge ID from recall. This is a hard delete — the connection cannot be restored.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]Property{
-				"id": {Type: "string", Description: "ID of the edge to remove"},
+		{
+			Name:        "disconnect",
+			Description: "Remove a connection between two memories by edge ID. Obtain the edge ID from recall. This is a hard delete — the connection cannot be restored.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"id": {Type: "string", Description: "ID of the edge to remove"},
+				},
+				Required: []string{"id"},
 			},
-			Required: []string{"id"},
 		},
-	},
+		{
+			Name:        "disconnected",
+			Description: "Return live, non-transient nodes with zero connections. Use this to find dropped context. Present findings to the user and suggest either linking them to related concepts using connect, or archiving them with forget if they are no longer relevant.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"domain": {Type: "string", Description: "Optional domain to scope the search"},
+				},
+			},
+		},
+		{
+			Name:        "trace",
+			Description: "Find the shortest chain of relationships connecting two concepts (by node ID). Returns all intermediate nodes and edges. Synthesise the result into a clear narrative explaining how one concept leads to the other. Returns 'No path found' if the two nodes are not connected within 6 hops.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"from_id": {Type: "string", Description: "ID of the starting node"},
+					"to_id":   {Type: "string", Description: "ID of the destination node"},
+				},
+				Required: []string{"from_id", "to_id"},
+			},
+		},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -409,6 +431,10 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.listDomains(req.Arguments)
 	case "disconnect":
 		result, err = h.disconnect(req.Arguments)
+	case "disconnected":
+		result, err = h.findDisconnected(req.Arguments)
+	case "trace":
+		result, err = h.tracePath(req.Arguments)
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -1051,5 +1077,45 @@ func (h *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Connection %q removed.", a.ID)}}}, nil
+}
+
+func (h *Handler) findDisconnected(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	nodes, err := h.store.FindDisconnected(a.Domain)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "No disconnected memories found."}}}, nil
+	}
+	b, _ := json.MarshalIndent(nodes, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) tracePath(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		FromID string `json:"from_id"`
+		ToID   string `json:"to_id"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.FromID == "" || a.ToID == "" {
+		return nil, fmt.Errorf("from_id and to_id are required")
+	}
+	result, err := h.store.FindPath(a.FromID, a.ToID, 6)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Nodes) == 0 {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("No path found between %q and %q within 6 hops.", a.FromID, a.ToID)}}}, nil
+	}
+	b, _ := json.MarshalIndent(result, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 

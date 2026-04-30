@@ -215,7 +215,7 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		"whats_stale", "orient",
 		"remember_all", "connect_all",
 		"suggest_connections",
-		"list_domains", "disconnect",
+		"list_domains", "disconnect", "disconnected", "trace",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {
@@ -2998,3 +2998,130 @@ func TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings(t *testing.T) {
 		t.Error("should find node via LIKE fallback when no embeddings are stored")
 	}
 }
+
+// ── disconnected ──────────────────────────────────────────────────────────────
+
+func TestDisconnectedReturnsUnconnectedNodes(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-disconnected-1"
+	discID := addNode(t, h, "Lonely Node", domain, nil)
+	connA := addNode(t, h, "Conn A", domain, nil)
+	connB := addNode(t, h, "Conn B", domain, nil)
+
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_node":    connA,
+		"to_node":      connB,
+		"relationship": "connects_to",
+	}))
+
+	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, discID) {
+		t.Errorf("disconnected result should contain %s; got:\n%s", discID, body)
+	}
+	if strings.Contains(body, connA) || strings.Contains(body, connB) {
+		t.Errorf("disconnected result should not contain connected nodes; got:\n%s", body)
+	}
+}
+
+func TestDisconnectedExcludesTransient(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-disconnected-2"
+	mustNotError(t, call(t, h, "remember", map[string]any{
+		"label":     "Ticket T-1234 notes",
+		"domain":    domain,
+		"transient": true,
+	}))
+
+	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if strings.Contains(body, "Ticket T-1234") {
+		t.Errorf("disconnected should exclude transient nodes; got:\n%s", body)
+	}
+}
+
+func TestDisconnectedExcludesArchived(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-disconnected-3"
+	id := addNode(t, h, "Archived orphan", domain, nil)
+
+	mustNotError(t, call(t, h, "forget", map[string]any{
+		"id":     id,
+		"reason": "stale",
+	}))
+
+	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if strings.Contains(body, "Archived orphan") {
+		t.Errorf("disconnected should exclude archived nodes; got:\n%s", body)
+	}
+}
+
+// ── trace ─────────────────────────────────────────────────────────────────────
+
+func TestTraceReturnsChain(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-trace-1"
+	idA := addNode(t, h, "Node A", domain, nil)
+	idB := addNode(t, h, "Node B", domain, nil)
+	idC := addNode(t, h, "Node C", domain, nil)
+	idD := addNode(t, h, "Node D", domain, nil)
+
+	// A -> B -> C -> D
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idA, "to_node": idB, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idC, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idC, "to_node": idD, "relationship": "led_to"}))
+
+	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idD})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	// All intermediate nodes and the endpoints must appear
+	for _, id := range []string{idA, idB, idC, idD} {
+		if !strings.Contains(body, id) {
+			t.Errorf("trace result should contain node %s; got:\n%s", id, body)
+		}
+	}
+}
+
+func TestTraceNoConnection(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-trace-2"
+	idA := addNode(t, h, "Island A", domain, nil)
+	idB := addNode(t, h, "Island B", domain, nil)
+
+	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idB})
+	mustNotError(t, tr) // no path is not an error
+	body := text(t, tr)
+	if !strings.Contains(body, "No path") {
+		t.Errorf("no-path result should say 'No path'; got:\n%s", body)
+	}
+}
+
+func TestTraceIgnoresArchived(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-trace-3"
+	idA := addNode(t, h, "Start", domain, nil)
+	idB := addNode(t, h, "Middle", domain, nil)
+	idC := addNode(t, h, "End", domain, nil)
+
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idA, "to_node": idB, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idC, "relationship": "led_to"}))
+
+	// Archive the middle node — path should break
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": idB, "reason": "test"}))
+
+	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idC})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "No path") {
+		t.Errorf("archived middle node should break the path; got:\n%s", body)
+	}
+}
+

@@ -47,6 +47,7 @@ The `why_matters` field is not optional. A node without it is an event, not a de
 | `connect` | Connect two nodes with a typed relationship and narrative *because*. Both nodes must exist first. |
 | `connect_all` | Batch version of `connect` — insert multiple connections in one transaction. |
 | `disconnect` | Remove a connection by edge ID. Hard delete — cannot be restored. Obtain the ID from `recall`. |
+| `disconnected` | Return live, non-transient nodes that have zero connections. Use this to surface dropped context — nodes that were filed but never linked into the graph. Present findings to the user and suggest either connecting them or archiving them. |
 | `suggest_connections` | Given a node ID, return up to 5 candidate connections from the same domain. Read-only. |
 
 ### Retrieving memories
@@ -58,6 +59,7 @@ The `why_matters` field is not optional. A node without it is an event, not a de
 | `recent` | What was filed recently. Set `group_by_domain=true` (with no domain) to see activity broken down per domain. |
 | `history` | Nodes ordered by when they actually occurred. Supports `from`/`to` date range filtering. |
 | `why_connected` | Look up the reasoning linking two named concepts. |
+| `trace` | Find the shortest chain of relationships between two nodes (by ID). Returns intermediate nodes and edges up to 6 hops. Synthesise the result into a narrative explaining how one concept leads to the other. |
 | `orient` | Return all nodes for a domain structured for synthesis — current state, blockers, decisions, open questions. Includes `total_nodes` so you know when the view is truncated. |
 | `list_domains` | List all domains that have at least one live node. Use at session start to discover what domains exist before scoping a search. |
 
