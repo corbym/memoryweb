@@ -21,33 +21,36 @@ permissions:
   actions: write
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set build matrix
+        id: set-matrix
+        run: |
+          FULL='[
+            {"os":"ubuntu-latest","goos":"linux","goarch":"amd64","cc":"gcc"},
+            {"os":"ubuntu-latest","goos":"linux","goarch":"arm64","cc":"aarch64-linux-gnu-gcc"},
+            {"os":"macos-latest","goos":"darwin","goarch":"amd64","cc":"clang"},
+            {"os":"macos-latest","goos":"darwin","goarch":"arm64","cc":"clang"},
+            {"os":"windows-latest","goos":"windows","goarch":"amd64","cc":"gcc","ext":".exe"}
+          ]'
+          FILTER="${{ inputs.os_filter }}"
+          if [ -z "$FILTER" ]; then
+            MATRIX="$FULL"
+          else
+            MATRIX=$(echo "$FULL" | jq -c --arg f "$FILTER" \
+              '[.[] | select(($f | split(",") | map(ltrimstr(" ") | rtrimstr(" "))) | contains([.goos]))]')
+          fi
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: setup
     strategy:
       matrix:
-        include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            cc: gcc
-          - os: ubuntu-latest
-            goos: linux
-            goarch: arm64
-            cc: aarch64-linux-gnu-gcc
-          - os: macos-latest
-            goos: darwin
-            goarch: amd64
-            cc: clang
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
-            cc: clang
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-            cc: gcc
-            ext: .exe
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    if: ${{ inputs.os_filter == '' || contains(inputs.os_filter, matrix.goos) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
