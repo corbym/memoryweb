@@ -417,7 +417,15 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string)
 		if err != nil {
 			return fmt.Errorf("cannot determine binary path: %w", err)
 		}
-		hooksDir = filepath.Join(filepath.Dir(exe), "hooks")
+		binDir := filepath.Dir(exe)
+		// Primary: hooks/ next to the binary (dev / tarball install).
+		candidate := filepath.Join(binDir, "hooks")
+		if _, err := os.Stat(candidate); err != nil {
+			// Fallback: <prefix>/share/memoryweb/hooks (Homebrew / FHS install).
+			// Binary lives at <prefix>/bin/memoryweb; hooks at <prefix>/share/memoryweb/hooks.
+			candidate = filepath.Join(filepath.Dir(binDir), "share", "memoryweb", "hooks")
+		}
+		hooksDir = candidate
 	}
 
 	saveHook := filepath.Join(hooksDir, "memoryweb_save_hook.sh")
