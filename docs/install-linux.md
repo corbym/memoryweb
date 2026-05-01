@@ -133,6 +133,12 @@ If you want the hooks in a specific directory:
 memoryweb setup --hooks-dir /path/to/hooks
 ```
 
+> **Advisory:** `setup` stores the database path inside your MCP client configs. If you passed `--db /custom/path.db`, also add the path to your shell profile so that CLI commands (`memoryweb doctor`, `memoryweb dream`, `memoryweb backfill`, etc.) use the same database:
+> ```bash
+> echo 'export MEMORYWEB_DB="/custom/path.db"' >> ~/.bashrc && source ~/.bashrc
+> ```
+> If you used the default path (`~/.memoryweb.db`), no action is needed — the binary falls back to that path automatically.
+
 After setup, run `memoryweb doctor` to verify every component is wired correctly:
 
 ```bash
