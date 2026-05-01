@@ -57,6 +57,9 @@ type Notification struct {
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "--version", "-v", "version":
+			fmt.Println(Version)
+			return
 		case "dream":
 			dreamCmd()
 			return

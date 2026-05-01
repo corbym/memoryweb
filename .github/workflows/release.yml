@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build:
@@ -162,3 +163,12 @@ jobs:
           generate_release_notes: ${{ github.event_name != 'workflow_dispatch' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger Homebrew tap update
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ inputs.tag || github.ref_name }}"
+          gh workflow run update-homebrew.yml \
+            --repo corbym/memoryweb \
+            -f tag="${VERSION}"
