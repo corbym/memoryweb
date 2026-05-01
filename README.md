@@ -156,7 +156,14 @@ Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[
 
 ## Installation
 
-Pre-built binaries are available on the [releases page](https://github.com/corbym/memoryweb/releases/latest) for each platform. Step-by-step setup guides covering binary installation, Ollama, and MCP client configuration:
+**Homebrew (macOS and Linux — recommended):**
+
+```bash
+brew tap corbym/memoryweb
+brew install memoryweb
+```
+
+Pre-built binaries are also available on the [releases page](https://github.com/corbym/memoryweb/releases/latest) for each platform. Step-by-step setup guides covering installation, Ollama, and MCP client configuration:
 
 - [macOS (Apple Silicon & Intel)](docs/install-macos.md)
 - [Linux (x86-64 & ARM64)](docs/install-linux.md)
@@ -175,6 +182,14 @@ memoryweb doctor
 The `Update:` line in the output will tell you if a newer release is available and where to download it. You can also ask the agent directly — the `check_for_updates` tool checks GitHub for the latest release and tells you the current and latest versions.
 
 To update:
+
+**Homebrew:**
+
+```bash
+brew update && brew upgrade memoryweb
+```
+
+**Manual:**
 
 1. Download the latest binary for your platform from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
 2. Replace the existing binary (build tip: rename to `memoryweb.tmp` first, then `mv memoryweb.tmp memoryweb` so the replacement is atomic).

@@ -1,6 +1,29 @@
 # Installing memoryweb on Linux
 
-memoryweb ships two Linux binaries — one for **x86-64** (standard desktop/server CPUs) and one for **ARM64** (Raspberry Pi 4/5, AWS Graviton, Ampere, and similar). Follow the steps below for your machine.
+memoryweb ships pre-built Linux binaries for x86-64 and ARM64. The recommended installation method is Homebrew.
+
+---
+
+## Option 1 — Homebrew (recommended)
+
+[Homebrew on Linux](https://docs.brew.sh/Homebrew-on-Linux) works on x86-64 and ARM64 and handles architecture detection, PATH configuration, and updates automatically. If Homebrew is not yet installed, see the [Homebrew on Linux installation guide](https://docs.brew.sh/Homebrew-on-Linux) to install it first.
+
+Once Homebrew is installed, tap the memoryweb formula and install:
+
+```bash
+brew tap corbym/memoryweb
+brew install memoryweb
+```
+
+The binary is added to your PATH and the hook scripts are installed to `$(brew --prefix)/share/memoryweb/hooks/`.
+
+Once the install finishes, skip to [Step 4 — Install Ollama](#step-4--install-ollama-for-semantic-search).
+
+---
+
+## Option 2 — Manual installation
+
+If you are not using Homebrew, follow the steps below.
 
 ---
 
@@ -200,7 +223,10 @@ Replace `YOUR_USERNAME` with your Linux username (run `whoami` if you are unsure
 
 ### Claude Code
 
-Claude Code picks up the hooks installed by `memoryweb setup` automatically. If you skipped the setup step, locate the hook scripts in the release archive under the `hooks/` directory:
+Claude Code picks up the hooks installed by `memoryweb setup` automatically. If you skipped the setup step, locate the hook scripts:
+
+- **Homebrew install:** the scripts are already at `$(brew --prefix)/share/memoryweb/hooks/` — use those paths directly in the config below.
+- **Manual install:** extract the scripts from the release archive:
 
 ```bash
 tar -xzf /tmp/memoryweb.tar.gz -C /tmp
@@ -284,7 +310,15 @@ memoryweb doctor
 
 The `[i] Update:` line will tell you if a newer release is available. You can also ask the agent — the `check_for_updates` tool checks GitHub and returns the current and latest versions.
 
-To update:
+### Homebrew update
+
+```bash
+brew update && brew upgrade memoryweb
+```
+
+Homebrew selects the correct architecture automatically. Restart your MCP client afterwards.
+
+### Manual update
 
 1. Download the latest archive for your architecture from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
 2. Extract and replace the binary atomically:

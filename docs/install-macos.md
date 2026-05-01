@@ -1,6 +1,27 @@
 # Installing memoryweb on macOS
 
-memoryweb ships two macOS binaries — one for **Apple Silicon** (M1, M2, M3, M4 and later) and one for **Intel** (older Macs). Follow the steps below for your machine.
+memoryweb ships pre-built macOS binaries for Apple Silicon (M1, M2, M3, M4) and Intel. The recommended way to install is via Homebrew.
+
+---
+
+## Option 1 — Homebrew (recommended)
+
+If you have [Homebrew](https://brew.sh) installed, tap the memoryweb formula and install:
+
+```bash
+brew tap corbym/memoryweb
+brew install memoryweb
+```
+
+Homebrew automatically selects the correct binary for your chip, installs it to your PATH, and places the hook scripts in `$(brew --prefix)/share/memoryweb/hooks/` (e.g. `/opt/homebrew/share/memoryweb/hooks/` on Apple Silicon, `/usr/local/share/memoryweb/hooks/` on Intel). Gatekeeper quarantine is handled automatically — Step 4 below is not required.
+
+Once the install finishes, skip to [Step 5 — Install Ollama](#step-5--install-ollama-for-semantic-search).
+
+---
+
+## Option 2 — Manual installation
+
+If you prefer not to use Homebrew, or Homebrew is not installed, follow the steps below.
 
 ---
 
@@ -56,7 +77,9 @@ You should see usage output. If you see "command not found", check that `/usr/lo
 
 ---
 
-## Step 4 — Allow the binary through Gatekeeper
+## Step 4 — Allow the binary through Gatekeeper (manual install only)
+
+> **Homebrew users:** skip this step. Homebrew handles Gatekeeper quarantine automatically.
 
 macOS may block the binary the first time you run it because it was downloaded from the internet. If you see a dialog saying *"memoryweb cannot be opened because Apple cannot check it for malicious software"*:
 
@@ -241,7 +264,7 @@ Claude Code picks up the hooks installed by `memoryweb setup` automatically. If 
 }
 ```
 
-The hook scripts ship inside the release archive under the `hooks/` directory. Copy them somewhere permanent (e.g. `~/.config/memoryweb/hooks/`) and update the paths above.
+If you installed via **Homebrew**, the hook scripts are already at `$(brew --prefix)/share/memoryweb/hooks/` — use `$(brew --prefix)/share/memoryweb/hooks/memoryweb_save_hook.sh` and `$(brew --prefix)/share/memoryweb/hooks/memoryweb_precompact_hook.sh` as the paths above. If you installed **manually**, the hook scripts ship inside the release archive under the `hooks/` directory. Copy them somewhere permanent (e.g. `~/.config/memoryweb/hooks/`) and update the paths above.
 
 Restart Claude Code to activate. After the next AI response you should see the hooks fire at the bottom of the terminal.
 
@@ -282,7 +305,15 @@ memoryweb doctor
 
 The `[i] Update:` line will tell you if a newer release is available. You can also ask the agent — the `check_for_updates` tool checks GitHub and returns the current and latest versions.
 
-To update:
+### Homebrew update
+
+```bash
+brew update && brew upgrade memoryweb
+```
+
+Homebrew selects the correct binary for your chip and handles Gatekeeper quarantine automatically. Restart your MCP client afterwards.
+
+### Manual update
 
 1. Download the latest archive for your chip from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
 2. Extract and replace the binary atomically:
