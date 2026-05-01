@@ -17,7 +17,7 @@ brew install memoryweb
 
 The binary is added to your PATH and the hook scripts are installed to `$(brew --prefix)/share/memoryweb/hooks/`.
 
-Once the install finishes, skip to [Step 4 — Install Ollama](#step-4--install-ollama-for-semantic-search).
+Once the install finishes, skip to [Step 4 — Run setup](#step-4--run-setup).
 
 ---
 
@@ -101,54 +101,16 @@ echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 
 ---
 
-## Step 4 — Install Ollama (for semantic search)
+## Step 4 — Run setup
 
-Semantic search requires [Ollama](https://ollama.com) running locally with the `snowflake-arctic-embed` model. This step is optional — memoryweb falls back to keyword search if Ollama is unavailable — but highly recommended.
-
-Install Ollama using the official install script:
-
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-This installs the `ollama` binary and sets up a systemd service that starts Ollama automatically.
-
-Pull the embedding model:
-
-```bash
-ollama pull snowflake-arctic-embed
-```
-
-This downloads about 130 MB. Wait for it to complete.
-
-Verify Ollama is running:
-
-```bash
-ollama list
-```
-
-You should see `snowflake-arctic-embed` in the output.
-
-If Ollama is not running as a service, start it manually in a separate terminal:
-
-```bash
-ollama serve
-```
-
----
-
-## Step 5 — Run setup
-
-The `setup` subcommand installs the Claude Code hooks and, if Ollama is not yet installed, offers to install it automatically using the official Linux install script (`https://ollama.com/install.sh`). On Linux, `memoryweb setup` can only auto-configure **Claude Desktop** (ChatGPT Desktop is not available on Linux).
-
-> **Note:** If you already installed Ollama in Step 4 and the server is running, `setup` will skip the install prompt, pull `snowflake-arctic-embed` if it is missing, and proceed straight to installing the hooks.
+The `setup` subcommand installs the Claude Code hooks and handles Ollama for semantic search automatically — including installing it if needed, starting the server, and pulling the model. On Linux, `memoryweb setup` can auto-configure **Claude Desktop** (ChatGPT Desktop is not available on Linux).
 
 ```bash
 memoryweb setup
 ```
 
 The setup program will:
-- If `ollama` is not in PATH: prompt you to install it via `https://ollama.com/install.sh`.
+- If `ollama` is not in PATH: prompt you to install it automatically via `https://ollama.com/install.sh`.
 - If `ollama` is installed but the server is not running: start it in the background.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
@@ -179,11 +141,39 @@ memoryweb doctor
 
 Each line will show `[✓]` (pass), `[✗]` (fail), `[!]` (warning), or `[i]` (info). Fix any `[✗]` items before proceeding.
 
+### Manual Ollama install (alternative)
+
+Semantic search requires [Ollama](https://ollama.com) running locally with the `snowflake-arctic-embed` model. This is optional — memoryweb falls back to keyword search if Ollama is unavailable — but highly recommended. If you prefer to install Ollama manually before running setup, or if setup's automatic installer fails:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+This installs the `ollama` binary and sets up a systemd service that starts Ollama automatically. Then pull the embedding model:
+
+```bash
+ollama pull snowflake-arctic-embed
+```
+
+This downloads about 130 MB. Wait for it to complete. Verify Ollama is running:
+
+```bash
+ollama list
+```
+
+You should see `snowflake-arctic-embed` in the output. If Ollama is not running as a service, start it manually:
+
+```bash
+ollama serve
+```
+
+Then run `memoryweb setup` again.
+
 ---
 
-## Step 6 — Configure your AI client
+## Step 5 — Configure your AI client
 
-`memoryweb setup` (Step 5) configures Claude Desktop automatically when it detects the `~/.config/Claude/` directory. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
+`memoryweb setup` (Step 4) configures Claude Desktop automatically when it detects the `~/.config/Claude/` directory. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
 
 > **Note:** ChatGPT Desktop is not available on Linux. If you are using a different desktop MCP client, consult that client's documentation for its config file location and use the same `mcpServers` JSON format shown below.
 
@@ -290,7 +280,7 @@ Restart Claude Code to activate. After the next AI response you should see the h
 
 ---
 
-## Step 7 — Verify everything works
+## Step 6 — Verify everything works
 
 Start a new conversation in Claude Desktop or Claude Code and ask the agent:
 
