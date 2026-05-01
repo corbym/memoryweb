@@ -32,12 +32,8 @@ class Memoryweb < Formula
   end
 
   def install
-    arch = Hardware::CPU.intel? ? "amd64" : "arm64"
-    os   = OS.mac? ? "darwin" : "linux"
-    dir  = "memoryweb_#{os}_#{arch}"
-
-    bin.install "#{dir}/memoryweb"
-    (share/"memoryweb/hooks").install Dir["#{dir}/hooks/*"]
+    bin.install "memoryweb"
+    (share/"memoryweb/hooks").install Dir["hooks/*"]
   end
 
   test do
