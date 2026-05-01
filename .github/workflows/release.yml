@@ -10,6 +10,11 @@ on:
         description: 'Tag to rebuild and release (e.g. v1.4.2)'
         required: true
         type: string
+      os_filter:
+        description: 'OS(es) to build (comma-separated: windows, linux, darwin). Leave empty for all.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -42,6 +47,7 @@ jobs:
             cc: gcc
             ext: .exe
     runs-on: ${{ matrix.os }}
+    if: ${{ inputs.os_filter == '' || contains(inputs.os_filter, matrix.goos) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -203,9 +209,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ inputs.tag }}"
+          OS_FILTER="${{ inputs.os_filter }}"
           gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r asset; do
-            echo "Deleting existing asset: $asset"
-            gh release delete-asset "$TAG" "$asset" --yes || true
+            if [ -z "$OS_FILTER" ]; then
+              echo "Deleting existing asset: $asset"
+              gh release delete-asset "$TAG" "$asset" --yes || true
+            else
+              IFS=',' read -ra OSES <<< "$OS_FILTER"
+              for os in "${OSES[@]}"; do
+                os=$(echo "$os" | tr -d ' ')
+                if echo "$asset" | grep -q "_${os}_"; then
+                  echo "Deleting existing asset: $asset"
+                  gh release delete-asset "$TAG" "$asset" --yes || true
+                  break
+                fi
+              done
+            fi
           done
 
       - name: Create GitHub Release
