@@ -10,6 +10,11 @@ on:
         description: 'Tag to rebuild and release (e.g. v1.4.2)'
         required: true
         type: string
+      os_filter:
+        description: 'OS(es) to build (comma-separated: windows, linux, darwin). Leave empty for all.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -42,6 +47,7 @@ jobs:
             cc: gcc
             ext: .exe
     runs-on: ${{ matrix.os }}
+    if: ${{ inputs.os_filter == '' || contains(inputs.os_filter, matrix.goos) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,6 +95,59 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.cc }}
         run: go build -ldflags="-s -w -X main.Version=${{ inputs.tag || github.ref_name }}" -o bin/memoryweb_${{ matrix.goos }}_${{ matrix.goarch }}/memoryweb${{ matrix.ext }} .
+
+      - name: Sign Windows binary
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $certPath = Join-Path $env:TEMP "signing_cert.pfx"
+          $certPassword = $env:WINDOWS_CERTIFICATE_PASSWORD
+
+          if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
+            # No stored cert — generate a self-signed code-signing certificate
+            Write-Host "WINDOWS_CERTIFICATE secret not set; generating a self-signed certificate."
+            $certPassword = "memoryweb-selfsigned"
+            $cert = New-SelfSignedCertificate `
+              -Type Custom `
+              -Subject "CN=memoryweb" `
+              -KeyUsage DigitalSignature `
+              -FriendlyName "memoryweb self-signed" `
+              -CertStoreLocation "Cert:\CurrentUser\My" `
+              -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+            $securePassword = ConvertTo-SecureString -String $certPassword -Force -AsPlainText
+            Export-PfxCertificate -Cert "Cert:\CurrentUser\My\$($cert.Thumbprint)" `
+              -FilePath $certPath -Password $securePassword | Out-Null
+            Write-Host "Self-signed cert generated (thumbprint: $($cert.Thumbprint))"
+          } else {
+            # Use the stored PFX secret (base64-encoded)
+            $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+            [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+            Write-Host "Using stored certificate from WINDOWS_CERTIFICATE secret."
+          }
+
+          try {
+            $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
+              -Recurse -Filter "signtool.exe" |
+              Where-Object { $_.FullName -match "x64" } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1 -ExpandProperty FullName
+            if (-not $signtool) { throw "signtool.exe not found" }
+            Write-Host "Using signtool: $signtool"
+            & $signtool sign `
+              /fd SHA256 `
+              /td SHA256 `
+              /tr http://timestamp.digicert.com `
+              /f $certPath `
+              /p $certPassword `
+              "bin\memoryweb_windows_amd64\memoryweb.exe"
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed with exit code $LASTEXITCODE" }
+            Write-Host "Binary signed successfully."
+          } finally {
+            Remove-Item $certPath -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -150,9 +209,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ inputs.tag }}"
+          OS_FILTER="${{ inputs.os_filter }}"
           gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r asset; do
-            echo "Deleting existing asset: $asset"
-            gh release delete-asset "$TAG" "$asset" --yes || true
+            if [ -z "$OS_FILTER" ]; then
+              echo "Deleting existing asset: $asset"
+              gh release delete-asset "$TAG" "$asset" --yes || true
+            else
+              IFS=',' read -ra OSES <<< "$OS_FILTER"
+              for os in "${OSES[@]}"; do
+                os=$(echo "$os" | tr -d ' ')
+                if echo "$asset" | grep -q "_${os}_"; then
+                  echo "Deleting existing asset: $asset"
+                  gh release delete-asset "$TAG" "$asset" --yes || true
+                  break
+                fi
+              done
+            fi
           done
 
       - name: Create GitHub Release
