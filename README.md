@@ -113,7 +113,7 @@ memoryweb backfill --db /path/to/your.db     # explicit DB path
 memoryweb backfill -q                        # quiet mode — no progress output
 ```
 
-The `setup` subcommand installs hooks into `~/.claude/settings.local.json`, detects desktop MCP clients (Claude Desktop and ChatGPT Desktop) and offers to configure each one automatically, and configures Ollama for semantic search (checks for `snowflake-arctic-embed` and pulls it if missing).
+The `setup` subcommand installs hooks into `~/.claude/settings.local.json`, detects desktop MCP clients (Claude Desktop and ChatGPT Desktop) and offers to configure each one automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for `snowflake-arctic-embed` and pulls it if missing.
 
 ```bash
 memoryweb setup                                      # interactive setup

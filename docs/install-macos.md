@@ -129,7 +129,8 @@ memoryweb setup
 ```
 
 The setup program will:
-- Detect that Ollama is installed and start the server if it is not already running.
+- If `ollama` is not in PATH: offer to install it automatically. **Note:** the automatic install path uses a Linux shell script (`https://ollama.com/install.sh`) that may not work correctly on macOS — complete Step 5 first, or follow the manual prompt if installation fails.
+- If `ollama` is installed but the server is not running: start it in the background.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
 - Detect **Claude Desktop** and **ChatGPT Desktop** (if installed) and ask whether to configure each one:
@@ -139,8 +140,6 @@ The setup program will:
   ```
   Answering `y` writes the MCP server entry to the appropriate config file. You can also configure these manually (see Step 7).
 - Print a summary of what was configured.
-
-> **Note:** If you skipped Step 5 and Ollama is not yet installed, `setup` will offer to install it automatically. On macOS the automatic install path uses a Linux shell script that may not work correctly — complete Step 5 first if prompted.
 
 To preview what `setup` would do without writing any files:
 
