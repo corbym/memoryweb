@@ -110,9 +110,9 @@ After setup, run `memoryweb doctor` to verify every component is wired correctly
 memoryweb doctor
 ```
 
-Each line will show `[✓]` (pass), `[✗]` (fail), `[!]` (warning), or `[i]` (info). Fix any `[✗]` items before proceeding.
+> **Advisory:** `setup` stores the database path inside your MCP client configs. If you passed `--db C:\custom\path.db`, also set `MEMORYWEB_DB` as a user environment variable (follow the same steps as in Step 2) so that CLI commands (`memoryweb doctor`, etc.) use the same database. If you used the default path (`%USERPROFILE%\.memoryweb.db`), no action is needed — the binary falls back to that path automatically.
 
----
+Each line will show `[✓]` (pass), `[✗]` (fail), `[!]` (warning), or `[i]` (info). Fix any `[✗]` items before proceeding.
 
 ## Step 5 — Configure your AI client
 
