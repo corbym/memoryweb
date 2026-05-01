@@ -15,7 +15,7 @@ brew install memoryweb
 
 Homebrew automatically selects the correct binary for your chip, installs it to your PATH, and places the hook scripts in `$(brew --prefix)/share/memoryweb/hooks/` (e.g. `/opt/homebrew/share/memoryweb/hooks/` on Apple Silicon, `/usr/local/share/memoryweb/hooks/` on Intel). Gatekeeper quarantine is handled automatically — Step 4 below is not required.
 
-Once the install finishes, skip to [Step 5 — Install Ollama](#step-5--install-ollama-for-semantic-search).
+Once the install finishes, skip to [Step 5 — Run setup](#step-5--run-setup).
 
 ---
 
@@ -96,40 +96,16 @@ xattr -d com.apple.quarantine /usr/local/bin/memoryweb
 
 ---
 
-## Step 5 — Install Ollama (for semantic search)
+## Step 5 — Run setup
 
-Semantic search requires [Ollama](https://ollama.com) running locally with the `snowflake-arctic-embed` model. This step is optional — memoryweb falls back to keyword search if Ollama is unavailable — but highly recommended.
-
-1. Download Ollama from [https://ollama.com/download](https://ollama.com/download) and run the installer.
-2. After installation, Ollama runs automatically in the background (you will see its icon in the menu bar).
-3. Pull the embedding model:
-
-   ```bash
-   ollama pull snowflake-arctic-embed
-   ```
-
-   This downloads about 130 MB. Wait for it to complete.
-
-4. Verify Ollama is running:
-
-   ```bash
-   ollama list
-   ```
-
-   You should see `snowflake-arctic-embed` in the output.
-
----
-
-## Step 6 — Run setup
-
-The `setup` subcommand installs the Claude Code hooks, detects desktop MCP clients (Claude Desktop and ChatGPT Desktop), and, once Ollama is in your PATH, starts the server and pulls the model automatically.
+The `setup` subcommand installs the Claude Code hooks, detects desktop MCP clients (Claude Desktop and ChatGPT Desktop), and handles Ollama for semantic search automatically — including installing it if needed, starting the server, and pulling the model.
 
 ```bash
 memoryweb setup
 ```
 
 The setup program will:
-- If `ollama` is not in PATH: offer to install it automatically. **Note:** the automatic install path uses a Linux shell script (`https://ollama.com/install.sh`) that may not work correctly on macOS — complete Step 5 first, or follow the manual prompt if installation fails.
+- If `ollama` is not in PATH: offer to install it automatically via `https://ollama.com/install.sh`. **Note:** this script is primarily designed for Linux — if the automatic install fails on macOS, follow the [manual Ollama install](#manual-ollama-install-if-setup-cannot-install-it) steps below, then re-run `memoryweb setup`.
 - If `ollama` is installed but the server is not running: start it in the background.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
@@ -138,7 +114,7 @@ The setup program will:
   Detected Claude Desktop. Configure it? [y/N]
   Detected ChatGPT Desktop. Configure it? [y/N]
   ```
-  Answering `y` writes the MCP server entry to the appropriate config file. You can also configure these manually (see Step 7).
+  Answering `y` writes the MCP server entry to the appropriate config file. You can also configure these manually (see Step 6).
 - Print a summary of what was configured.
 
 To preview what `setup` would do without writing any files:
@@ -161,11 +137,35 @@ memoryweb doctor
 
 Each line will show `[✓]` (pass), `[✗]` (fail), `[!]` (warning), or `[i]` (info). Fix any `[✗]` items before proceeding.
 
+### Manual Ollama install (if setup cannot install it)
+
+Semantic search requires [Ollama](https://ollama.com) running locally with the `snowflake-arctic-embed` model. This is optional — memoryweb falls back to keyword search if Ollama is unavailable — but highly recommended. If `memoryweb setup` could not install Ollama automatically, install it manually:
+
+1. Download Ollama from [https://ollama.com/download](https://ollama.com/download) and run the installer.
+2. After installation, Ollama runs automatically in the background (you will see its icon in the menu bar).
+3. Pull the embedding model:
+
+   ```bash
+   ollama pull snowflake-arctic-embed
+   ```
+
+   This downloads about 130 MB. Wait for it to complete.
+
+4. Verify Ollama is running:
+
+   ```bash
+   ollama list
+   ```
+
+   You should see `snowflake-arctic-embed` in the output.
+
+Then run `memoryweb setup` again.
+
 ---
 
-## Step 7 — Configure your AI client
+## Step 6 — Configure your AI client
 
-`memoryweb setup` (Step 6) configures Claude Desktop and ChatGPT Desktop automatically when it detects them. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
+`memoryweb setup` (Step 5) configures Claude Desktop and ChatGPT Desktop automatically when it detects them. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
 
 ### Claude Desktop
 
@@ -284,7 +284,7 @@ Also add memoryweb to your MCP config. Claude Code reads from `~/.claude.json` o
 
 ---
 
-## Step 8 — Verify everything works
+## Step 7 — Verify everything works
 
 Start a new conversation in Claude Desktop, ChatGPT Desktop, or Claude Code and ask the agent:
 
