@@ -41,7 +41,7 @@ jobs:
             MATRIX="$FULL"
           else
             MATRIX=$(echo "$FULL" | jq -c --arg f "$FILTER" \
-              '[.[] | select(($f | split(",") | map(ltrimstr(" ") | rtrimstr(" "))) | contains([.goos]))]')
+              '[.[] | . as $e | select(($f | split(",") | map(ltrimstr(" ") | rtrimstr(" "))) | contains([$e.goos]))]')
           fi
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
