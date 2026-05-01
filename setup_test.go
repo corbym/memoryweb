@@ -82,6 +82,65 @@ func hooksDir(t *testing.T) string {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
+// TestSetupHomebrewLayout: without --hooks-dir, setup falls back to the
+// <prefix>/share/memoryweb/hooks path used by Homebrew when the primary
+// <prefix>/bin/hooks directory does not exist.
+func TestSetupHomebrewLayout(t *testing.T) {
+	// Build a fake Homebrew prefix layout:
+	//   <prefix>/bin/memoryweb   (copy of the test binary)
+	//   <prefix>/share/memoryweb/hooks/memoryweb_save_hook.sh
+	//   <prefix>/share/memoryweb/hooks/memoryweb_precompact_hook.sh
+	prefix := t.TempDir()
+	binDir := filepath.Join(prefix, "bin")
+	shareHooksDir := filepath.Join(prefix, "share", "memoryweb", "hooks")
+	os.MkdirAll(binDir, 0755)
+	os.MkdirAll(shareHooksDir, 0755)
+
+	// Copy the compiled binary into <prefix>/bin/.
+	binCopy := filepath.Join(binDir, "memoryweb")
+	srcData, err := os.ReadFile(setupBin)
+	if err != nil {
+		t.Fatalf("read test binary: %v", err)
+	}
+	if err := os.WriteFile(binCopy, srcData, 0755); err != nil {
+		t.Fatalf("write binary copy: %v", err)
+	}
+
+	// Copy hook scripts from the repo's hooks directory.
+	for _, name := range []string{"memoryweb_save_hook.sh", "memoryweb_precompact_hook.sh"} {
+		src, err := os.ReadFile(filepath.Join(hooksDir(t), name))
+		if err != nil {
+			t.Fatalf("read hook %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(shareHooksDir, name), src, 0755); err != nil {
+			t.Fatalf("write hook %s: %v", name, err)
+		}
+	}
+
+	tmpHome := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
+
+	// Run the binary from the fake prefix without --hooks-dir; it should
+	// auto-discover <prefix>/share/memoryweb/hooks.
+	cmd := exec.Command(binCopy, "setup", "--dry-run")
+	cmd.Env = append(os.Environ(), "HOME="+tmpHome)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			t.Fatalf("exec setup: %v", err)
+		}
+	}
+	if code != 0 {
+		t.Fatalf("setup --dry-run (Homebrew layout) exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(string(out), "memoryweb_save_hook.sh") {
+		t.Errorf("output should mention save hook; got:\n%s", out)
+	}
+}
+
 // TestSetupInstallsHooks: dry-run prints the resulting config including hook paths.
 func TestSetupInstallsHooks(t *testing.T) {
 	tmpHome := t.TempDir()
