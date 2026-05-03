@@ -76,7 +76,7 @@ Semantic search requires [Ollama](https://ollama.com) running locally with the `
 
 ## Step 4 — Run setup
 
-The `setup` subcommand installs the Claude Code hooks, detects desktop MCP clients (Claude Desktop and ChatGPT Desktop), and, if Ollama is already installed and in PATH (Step 3), pulls the model and starts the server automatically.
+The `setup` subcommand installs the Claude Code hooks, detects Claude Desktop, and, if Ollama is already installed and in PATH (Step 3), pulls the model and starts the server automatically.
 
 > **Important:** `memoryweb setup` **cannot install Ollama itself on Windows**. Its automatic install path uses `sh -c "curl ... | sh"`, which requires a Unix shell that is not available by default on Windows. You must install Ollama first (Step 3). Once the `ollama` binary is in your PATH, `setup` will handle the model pull and server start.
 
@@ -90,12 +90,11 @@ The setup program will:
 - Detect that Ollama is already installed and start the server if it is not running.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `%USERPROFILE%\.claude\settings.local.json`.
-- Detect **Claude Desktop** and **ChatGPT Desktop** (if installed) and ask whether to configure each one:
+- Detect **Claude Desktop** (if installed) and ask whether to configure it:
   ```
   Detected Claude Desktop. Configure it? [y/N]
-  Detected ChatGPT Desktop. Configure it? [y/N]
   ```
-  Answering `y` writes the MCP server entry to the appropriate config file. You can also configure these manually (see Step 5).
+  Answering `y` writes the MCP server entry to the appropriate config file. You can also configure this manually (see Step 5).
 - Print a summary of what was configured.
 
 To preview what `setup` would do without writing any files:
@@ -116,7 +115,7 @@ Each line will show `[✓]` (pass), `[✗]` (fail), `[!]` (warning), or `[i]` (i
 
 ## Step 5 — Configure your AI client
 
-`memoryweb setup` (Step 4) configures Claude Desktop and ChatGPT Desktop automatically when it detects them. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
+`memoryweb setup` (Step 4) configures Claude Desktop automatically when it detects it. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
 
 ### Claude Desktop
 
@@ -149,37 +148,6 @@ Save the file and **quit and relaunch Claude Desktop** from the Start menu or sy
 
 > **Note:** Claude Desktop does not support hooks. To prompt the agent to file knowledge, add filing instructions to your system prompt manually.
 
-### ChatGPT Desktop
-
-ChatGPT Desktop on Windows reads its MCP config from:
-
-```
-%APPDATA%\ChatGPT\mcp.json
-```
-
-To open this folder quickly, press `Win + R`, type `%APPDATA%\ChatGPT`, and press Enter. If the folder does not exist, create it.
-
-Create or edit `mcp.json` with a text editor:
-
-```json
-{
-  "mcpServers": {
-    "memoryweb": {
-      "command": "C:\\memoryweb\\memoryweb_windows_amd64\\memoryweb.exe",
-      "env": {
-        "MEMORYWEB_DB": "C:\\Users\\YOUR_USERNAME\\.memoryweb.db"
-      }
-    }
-  }
-}
-```
-
-Replace `YOUR_USERNAME` with your Windows username.
-
-Save the file and **quit and relaunch ChatGPT Desktop**. memoryweb will appear as an available tool in new conversations.
-
-> **Note:** ChatGPT Desktop does not support hooks. Add filing instructions to your Custom Instructions (Settings → Personalization → Custom Instructions) to prompt the model to use memoryweb automatically.
-
 ### Claude Code
 
 > **Note:** Claude Code on Windows requires WSL (Windows Subsystem for Linux) or Git Bash for the shell hook scripts, which are Bash scripts. If you are running Claude Code in WSL, follow the Linux install guide instead.
@@ -211,7 +179,7 @@ Then add filing instructions to your system prompt to prompt the agent to file k
 
 ## Step 6 — Verify everything works
 
-Start a new conversation in Claude Desktop, ChatGPT Desktop, or Claude Code and ask the agent:
+Start a new conversation in Claude Desktop or Claude Code and ask the agent:
 
 > "Call `list_domains` and tell me what domains exist."
 
@@ -240,7 +208,7 @@ To update:
      C:\memoryweb\memoryweb_windows_amd64\memoryweb.exe -Force
    ```
 
-4. Restart your MCP client (Claude Desktop, ChatGPT Desktop, or Claude Code) so it picks up the new binary.
+4. Restart your MCP client (Claude Desktop or Claude Code) so it picks up the new binary.
 
 Your database is forward-compatible — the binary runs any pending schema migrations automatically on startup.
 
@@ -257,15 +225,12 @@ Ollama installs to `%LOCALAPPDATA%\Programs\Ollama` on Windows. Verify it is in 
 **Ollama is installed but `ollama list` fails**
 The Ollama service may not be running. Look for the Ollama icon in the system tray and click it to start, or run `ollama serve` in a terminal.
 
-**Claude Desktop or ChatGPT Desktop shows no memoryweb tools**
+**Claude Desktop shows no memoryweb tools**
 Verify the config file is valid JSON — Windows Notepad can silently add a BOM that breaks JSON parsers. Use VS Code or Notepad++ to edit the file, or validate it with:
 
 ```powershell
 # Claude Desktop
 Get-Content "$env:APPDATA\Claude\claude_desktop_config.json" | ConvertFrom-Json
-
-# ChatGPT Desktop
-Get-Content "$env:APPDATA\ChatGPT\mcp.json" | ConvertFrom-Json
 ```
 
 If PowerShell reports an error, fix the JSON and restart the application.

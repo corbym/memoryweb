@@ -113,7 +113,7 @@ memoryweb backfill --db /path/to/your.db     # explicit DB path
 memoryweb backfill -q                        # quiet mode — no progress output
 ```
 
-The `setup` subcommand installs hooks into `~/.claude/settings.local.json`, detects desktop MCP clients (Claude Desktop and ChatGPT Desktop) and offers to configure each one automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for `snowflake-arctic-embed` and pulls it if missing.
+The `setup` subcommand installs hooks into `~/.claude/settings.local.json`, detects Claude Desktop and offers to configure it automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for `snowflake-arctic-embed` and pulls it if missing.
 
 ```bash
 memoryweb setup                                      # interactive setup
@@ -122,11 +122,10 @@ memoryweb setup --hooks-dir /path/to/hooks           # explicit hooks directory
 memoryweb setup --db /path/to/your.db                # explicit DB path
 ```
 
-When a supported desktop client is detected, setup prints a prompt per client:
+When Claude Desktop is detected, setup prints:
 
 ```
 Detected Claude Desktop. Configure it? [y/N]
-Detected ChatGPT Desktop. Configure it? [y/N]
 ```
 
 The `stats` feature records tool usage for every MCP session. See [docs/stats.md](docs/stats.md) for setup and how to read the output.
@@ -169,7 +168,7 @@ Pre-built binaries are also available on the [releases page](https://github.com/
 - [Linux (x86-64 & ARM64)](docs/install-linux.md)
 - [Windows (x86-64)](docs/install-windows.md)
 
-Once installed, see the **[User guide](docs/user-guide.md)** for how to orient the agent, what phrases to use, and how to get the most out of memoryweb in Claude Code, GitHub Copilot, Claude Desktop, and ChatGPT Desktop.
+Once installed, see the **[User guide](docs/user-guide.md)** for how to orient the agent, what phrases to use, and how to get the most out of memoryweb in Claude Code, GitHub Copilot, and Claude Desktop.
 
 ## Updating
 
@@ -193,7 +192,7 @@ brew update && brew upgrade memoryweb
 
 1. Download the latest binary for your platform from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
 2. Replace the existing binary (build tip: rename to `memoryweb.tmp` first, then `mv memoryweb.tmp memoryweb` so the replacement is atomic).
-3. Restart your MCP client (Claude Code, Claude Desktop, ChatGPT Desktop, etc.) so it picks up the new binary.
+3. Restart your MCP client (Claude Code, Claude Desktop, etc.) so it picks up the new binary.
 
 Your database is forward-compatible — the binary runs any pending migrations automatically on startup.
 
@@ -232,9 +231,9 @@ Add to your MCP host's config (example for Claude Desktop on macOS — `~/Librar
 }
 ```
 
-For **ChatGPT Desktop** on macOS, the file is `~/Library/Application Support/ChatGPT/mcp.json` (same JSON structure). On Windows it is `%APPDATA%\ChatGPT\mcp.json`.
+`memoryweb setup` writes this file automatically when the Claude application directory is detected.
 
-`memoryweb setup` writes these files automatically when the corresponding application directory is detected.
+> **Note:** ChatGPT Desktop does not support stdio-based MCP servers and is not compatible with memoryweb.
 
 ## Conventions
 
@@ -364,6 +363,6 @@ VS Code loads the hooks automatically — no restart needed. If you have already
 
 ### Other tools
 
-**Claude Desktop and ChatGPT Desktop do not support hooks.** Add session-start and filing instructions to your system prompt manually. `memoryweb setup` configures their MCP server entry automatically when it detects the application's data directory.
+**Claude Desktop and GitHub Copilot cloud agent do not support hooks.** Add session-start and filing instructions to your system prompt manually. `memoryweb setup` configures Claude Desktop's MCP server entry automatically when it detects the application's data directory.
 
 **GitHub Copilot cloud agent** (the coding agent that runs on GitHub.com) uses a different hook format and event model that does not include `Stop` or `PreCompact`. Add filing instructions to your system prompt for that surface instead.
