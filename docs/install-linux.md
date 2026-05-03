@@ -103,7 +103,7 @@ echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 
 ## Step 4 — Run setup
 
-The `setup` subcommand installs the Claude Code hooks and handles Ollama for semantic search automatically — including installing it if needed, starting the server, and pulling the model. On Linux, `memoryweb setup` can auto-configure **Claude Desktop** (ChatGPT Desktop is not available on Linux).
+The `setup` subcommand installs the Claude Code hooks and handles Ollama for semantic search automatically — including installing it if needed, starting the server, and pulling the model. On Linux, `memoryweb setup` can auto-configure **Claude Desktop**.
 
 ```bash
 memoryweb setup
@@ -181,7 +181,7 @@ Then run `memoryweb setup` again.
 
 `memoryweb setup` (Step 4) configures Claude Desktop automatically when it detects the `~/.config/Claude/` directory. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
 
-> **Note:** ChatGPT Desktop is not available on Linux. If you are using a different desktop MCP client, consult that client's documentation for its config file location and use the same `mcpServers` JSON format shown below.
+> **Note:** If you are using a different desktop MCP client, consult that client's documentation for its config file location and use the same `mcpServers` JSON format shown below.
 
 ### Claude Desktop
 

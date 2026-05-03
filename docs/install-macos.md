@@ -98,7 +98,7 @@ xattr -d com.apple.quarantine /usr/local/bin/memoryweb
 
 ## Step 5 — Run setup
 
-The `setup` subcommand installs the Claude Code hooks, detects desktop MCP clients (Claude Desktop and ChatGPT Desktop), and handles Ollama for semantic search automatically — including installing it if needed, starting the server, and pulling the model.
+The `setup` subcommand installs the Claude Code hooks, detects Claude Desktop, and handles Ollama for semantic search automatically — including installing it if needed, starting the server, and pulling the model.
 
 ```bash
 memoryweb setup
@@ -109,12 +109,11 @@ The setup program will:
 - If `ollama` is installed but the server is not running: start it in the background.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
 - Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
-- Detect **Claude Desktop** and **ChatGPT Desktop** (if installed) and ask whether to configure each one:
+- Detect **Claude Desktop** (if installed) and ask whether to configure it:
   ```
   Detected Claude Desktop. Configure it? [y/N]
-  Detected ChatGPT Desktop. Configure it? [y/N]
   ```
-  Answering `y` writes the MCP server entry to the appropriate config file. You can also configure these manually (see Step 6).
+  Answering `y` writes the MCP server entry to the appropriate config file. You can also configure this manually (see Step 6).
 - Print a summary of what was configured.
 
 To preview what `setup` would do without writing any files:
@@ -174,7 +173,7 @@ Then run `memoryweb setup` again.
 
 ## Step 6 — Configure your AI client
 
-`memoryweb setup` (Step 5) configures Claude Desktop and ChatGPT Desktop automatically when it detects them. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
+`memoryweb setup` (Step 5) configures Claude Desktop automatically when it detects it. The manual steps below are for cases where setup was not run, or you want to verify or edit the config files yourself.
 
 ### Claude Desktop
 
@@ -204,35 +203,6 @@ Replace `YOUR_USERNAME` with your macOS username (run `whoami` in Terminal if yo
 Save the file, then **quit and relaunch Claude Desktop**. memoryweb will appear as an available tool in new conversations.
 
 > **Note:** Claude Desktop does not support hooks. To prompt the agent to file knowledge, add filing instructions to your system prompt manually.
-
-### ChatGPT Desktop
-
-Open (or create) the ChatGPT Desktop MCP config file:
-
-```
-~/Library/Application Support/ChatGPT/mcp.json
-```
-
-Add the following content (create the file if it does not exist):
-
-```json
-{
-  "mcpServers": {
-    "memoryweb": {
-      "command": "/usr/local/bin/memoryweb",
-      "env": {
-        "MEMORYWEB_DB": "/Users/YOUR_USERNAME/.memoryweb.db"
-      }
-    }
-  }
-}
-```
-
-Replace `YOUR_USERNAME` with your macOS username.
-
-Save the file, then **quit and relaunch ChatGPT Desktop**. memoryweb will appear as an available tool in new conversations.
-
-> **Note:** ChatGPT Desktop does not support hooks. Add filing instructions to your Custom Instructions (Settings → Personalization → Custom Instructions) to prompt the model to use memoryweb automatically.
 
 ### Claude Code
 
@@ -295,7 +265,7 @@ Also add memoryweb to your MCP config. Claude Code reads from `~/.claude.json` o
 
 ## Step 7 — Verify everything works
 
-Start a new conversation in Claude Desktop, ChatGPT Desktop, or Claude Code and ask the agent:
+Start a new conversation in Claude Desktop or Claude Code and ask the agent:
 
 > "Call `list_domains` and tell me what domains exist."
 
@@ -340,7 +310,7 @@ Homebrew selects the correct binary for your chip and handles Gatekeeper quarant
    xattr -d com.apple.quarantine /usr/local/bin/memoryweb
    ```
 
-4. Restart your MCP client (Claude Desktop, ChatGPT Desktop, or Claude Code) so it picks up the new binary.
+4. Restart your MCP client (Claude Desktop or Claude Code) so it picks up the new binary.
 
 Your database is forward-compatible — the binary runs any pending schema migrations automatically on startup.
 
@@ -363,7 +333,7 @@ xattr -d com.apple.quarantine /usr/local/bin/memoryweb
 **Ollama model not found**
 Make sure Ollama is running (`ollama list` should return results). If it is not running, launch it from Applications or run `ollama serve` in Terminal.
 
-**Claude Desktop or ChatGPT Desktop shows no memoryweb tools**
+**Claude Desktop shows no memoryweb tools**
 Double-check the config path — note the spaces in "Application Support" and the app name. Make sure the JSON is valid (no trailing commas). Quit and relaunch the application fully.
 
 **`memoryweb doctor` shows `[✗] Ollama binary: not found in PATH`**

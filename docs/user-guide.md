@@ -2,7 +2,7 @@
 
 A practical guide to getting the most out of memoryweb across the surfaces that support it. This is aimed at beginners — you don't need to understand the internals, just the patterns that make the tool work well.
 
-Covered surfaces: **Claude Code**, **GitHub Copilot (VS Code)**, **Claude Desktop**, **ChatGPT Desktop**.
+Covered surfaces: **Claude Code**, **GitHub Copilot (VS Code)**, **Claude Desktop**.
 
 ---
 
@@ -176,53 +176,6 @@ After saving, you can verify what was stored:
 > "Show me what was just saved to memory and summarise it."
 
 > "Is the reasoning captured correctly for that last decision? Show me what you saved."
-
----
-
-## ChatGPT Desktop
-
-ChatGPT Desktop does not support hooks. Like Claude Desktop, all saving is manual — you need to prompt the agent explicitly at the start and end of each session.
-
-### Setup
-
-Run `memoryweb setup` — it detects ChatGPT Desktop automatically (on macOS and Windows) and writes the MCP server entry to `~/Library/Application Support/ChatGPT/mcp.json` (macOS) or `%APPDATA%\ChatGPT\mcp.json` (Windows) when you answer `y`. Restart ChatGPT Desktop after setup to activate the tool.
-
-### Custom Instructions (recommended)
-
-ChatGPT Desktop has no system prompt field per conversation, but it does have **Custom Instructions** (Settings → Personalization → Custom Instructions). Add something like:
-
-```
-You have access to a persistent memory tool called memoryweb.
-At the start of every conversation, check what you know about <your-project> from memory
-and use it to inform your answers before relying on general knowledge.
-When we make decisions, discover bugs, or resolve open questions, save them to memory —
-always capture the reasoning behind each decision, not just a summary of what was decided.
-```
-
-Replace `<your-project>` with your project name. With this in place, ChatGPT Desktop will consult memoryweb automatically at the start of every conversation.
-
-### Orienting the agent at the start of a session
-
-If you have not set up Custom Instructions, add one of these as your **first message**:
-
-**If you know the project name:**
-> "You have access to memoryweb. Before we start, check what you know about `<project>` from memory and tell me where things stand."
-
-**If you're not sure what's in memory:**
-> "You have access to memoryweb. Check what projects you have in memory, then summarise the most relevant one."
-
-### Searching, saving, and linking
-
-The same phrases work as in Claude Desktop — see the sections above. The key habits are:
-- Always include "check memory" when you want a project-specific answer.
-- End every session with a manual save prompt.
-- Push the agent to capture *why*, not just *what*.
-
-### Long sessions and context loss
-
-ChatGPT Desktop has no PreCompact hook analogue. In long sessions, knowledge is at risk of being lost when the context window fills. Save more frequently in long sessions:
-
-> "Before we go further — save what we've covered so far to memory."
 
 ---
 
