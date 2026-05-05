@@ -16,6 +16,7 @@ session_id=$(printf '%s' "${json}" \
   | head -1 \
   | grep -o '"[^"]*"$' \
   | tr -d '"')
+session_id=$(printf '%s' "${session_id}" | tr -cd 'a-zA-Z0-9_-')
 
 # Log every invocation.
 printf '%s precompact_hook session=%s\n' \

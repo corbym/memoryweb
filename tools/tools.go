@@ -601,6 +601,9 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 	if a.Limit <= 0 {
 		a.Limit = 10
 	}
+	if a.Limit > 500 {
+		a.Limit = 500
+	}
 	nodes, err := h.store.SearchNodes(a.Query, a.Domain, a.Limit)
 	if err != nil {
 		return nil, err
@@ -659,6 +662,9 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	if a.Limit <= 0 {
 		a.Limit = 10
 	}
+	if a.Limit > 500 {
+		a.Limit = 500
+	}
 	nodes, err := h.store.RecentChanges(a.Domain, a.Limit)
 	if err != nil {
 		return nil, err
@@ -696,6 +702,9 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 	}
 	if a.Limit <= 0 {
 		a.Limit = 20
+	}
+	if a.Limit > 500 {
+		a.Limit = 500
 	}
 	parseDate := func(s string) (*time.Time, error) {
 		if s == "" {
@@ -839,6 +848,9 @@ func (h *Handler) drift(args json.RawMessage) (*ToolResult, error) {
 	}
 	if a.Limit <= 0 {
 		a.Limit = 10
+	}
+	if a.Limit > 500 {
+		a.Limit = 500
 	}
 	candidates, err := h.store.FindDrift(a.Domain, a.Limit)
 	if err != nil {
@@ -1078,6 +1090,9 @@ func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 	}
 	if a.Limit <= 0 {
 		a.Limit = 5
+	}
+	if a.Limit > 500 {
+		a.Limit = 500
 	}
 	suggestions, err := h.store.SuggestEdges(a.ID, a.Limit)
 	if err != nil {

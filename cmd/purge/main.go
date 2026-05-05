@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -49,7 +50,7 @@ func main() {
 		beforeTime = &t
 	}
 
-	conn, err := sql.Open("sqlite3", *dbFlag+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", "file:"+url.PathEscape(*dbFlag)+"?_journal_mode=WAL&_foreign_keys=on")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
 		os.Exit(1)

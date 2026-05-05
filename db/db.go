@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -91,7 +92,8 @@ type DomainAlias struct {
 }
 
 func New(path string) (*Store, error) {
-	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL")
+	dsn := "file:" + url.PathEscape(path) + "?_journal_mode=WAL&_foreign_keys=on"
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +101,7 @@ func New(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
+	os.Chmod(path, 0600) //nolint:errcheck
 	s.checkVecAvailable()
 	return s, nil
 }

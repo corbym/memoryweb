@@ -123,7 +123,7 @@ func (r *Recorder) recoverCurrent() {
 	if r.humanPath != "" {
 		cur := r.humanPath + ".current"
 		if data, err := os.ReadFile(cur); err == nil && len(data) > 0 {
-			if f, err := os.OpenFile(r.humanPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			if f, err := os.OpenFile(r.humanPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
 				f.Write(data) //nolint:errcheck
 				f.Close()
 			}
@@ -133,7 +133,7 @@ func (r *Recorder) recoverCurrent() {
 	if r.jsonPath != "" {
 		cur := r.jsonPath + ".current"
 		if data, err := os.ReadFile(cur); err == nil && len(data) > 0 {
-			if f, err := os.OpenFile(r.jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			if f, err := os.OpenFile(r.jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
 				f.Write(data) //nolint:errcheck
 				f.Close()
 			}
@@ -154,11 +154,11 @@ func (r *Recorder) writeCurrent() {
 
 	if r.humanPath != "" {
 		summary := r.formatSummary(sess, prior)
-		os.WriteFile(r.humanPath+".current", []byte(summary+"\n"), 0644) //nolint:errcheck
+		os.WriteFile(r.humanPath+".current", []byte(summary+"\n"), 0600) //nolint:errcheck
 	}
 	if r.jsonPath != "" {
 		dataJSON, _ := json.Marshal(sess.data)
-		os.WriteFile(r.jsonPath+".current", append(dataJSON, '\n'), 0644) //nolint:errcheck
+		os.WriteFile(r.jsonPath+".current", append(dataJSON, '\n'), 0600) //nolint:errcheck
 	}
 }
 
@@ -211,7 +211,7 @@ func (r *Recorder) flush() (string, error) {
 
 	// Write human-readable log.
 	if r.humanPath != "" {
-		f, err := os.OpenFile(r.humanPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(r.humanPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			firstErr = err
 		} else {
@@ -226,7 +226,7 @@ func (r *Recorder) flush() (string, error) {
 	// Write JSON object to JSONL file.
 	if r.jsonPath != "" {
 		dataJSON, _ := json.Marshal(sess.data)
-		f, err := os.OpenFile(r.jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(r.jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err

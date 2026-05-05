@@ -377,10 +377,10 @@ func setupWriteMCPServerConfig(configPath, exePath, dbPath string) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	return os.WriteFile(configPath, output, 0644)
+	return os.WriteFile(configPath, output, 0600)
 }
 
 // setupCmd implements the "memoryweb setup" subcommand.
@@ -478,17 +478,8 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string)
 		}
 	}
 
-	stop := setupToSlice(hooks["Stop"])
-	if !setupContainsCommand(stop, saveHook) {
-		stop = append(stop, makeEntry(saveHook))
-	}
-	hooks["Stop"] = stop
-
-	precompact := setupToSlice(hooks["PreCompact"])
-	if !setupContainsCommand(precompact, precompactHook) {
-		precompact = append(precompact, makeEntry(precompactHook))
-	}
-	hooks["PreCompact"] = precompact
+	hooks["Stop"] = setupUpsertCommand(setupToSlice(hooks["Stop"]), saveHook, makeEntry(saveHook))
+	hooks["PreCompact"] = setupUpsertCommand(setupToSlice(hooks["PreCompact"]), precompactHook, makeEntry(precompactHook))
 
 	settings["hooks"] = hooks
 
@@ -501,13 +492,13 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string)
 		fmt.Fprintln(out, string(claudeOutput))
 	} else {
 		stateDir := filepath.Join(home, ".memoryweb", "hook_state")
-		if err := os.MkdirAll(stateDir, 0755); err != nil {
+		if err := os.MkdirAll(stateDir, 0700); err != nil {
 			return fmt.Errorf("create state dir: %w", err)
 		}
-		if err := os.MkdirAll(filepath.Join(home, ".claude"), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(home, ".claude"), 0700); err != nil {
 			return fmt.Errorf("create .claude dir: %w", err)
 		}
-		if err := os.WriteFile(settingsPath, claudeOutput, 0644); err != nil {
+		if err := os.WriteFile(settingsPath, claudeOutput, 0600); err != nil {
 			return fmt.Errorf("write settings: %w", err)
 		}
 		fmt.Fprintln(out, "memoryweb hooks installed. Restart Claude Code to activate.")
@@ -659,6 +650,37 @@ func setupToSlice(v interface{}) []interface{} {
 	}
 	s, _ := v.([]interface{})
 	return s
+}
+
+// setupUpsertCommand ensures exactly one entry for cmd exists in entries. If
+// an entry whose nested command matches by basename already exists, it is
+// replaced (handles install-path changes across releases). Otherwise appended.
+func setupUpsertCommand(entries []interface{}, cmd string, newEntry interface{}) []interface{} {
+	base := filepath.Base(cmd)
+	for i, e := range entries {
+		entry, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hs, _ := entry["hooks"].([]interface{})
+		for _, h := range hs {
+			hm, ok := h.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			existing, _ := hm["command"].(string)
+			if filepath.Base(existing) == base {
+				if existing == cmd {
+					return entries
+				}
+				out := make([]interface{}, len(entries))
+				copy(out, entries)
+				out[i] = newEntry
+				return out
+			}
+		}
+	}
+	return append(entries, newEntry)
 }
 
 // setupContainsCommand reports whether any entry in the slice contains the
