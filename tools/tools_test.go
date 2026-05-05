@@ -2589,6 +2589,110 @@ func TestVisualiseLabelSanitisation(t *testing.T) {
 	}
 }
 
+// ── visualise neighbourhood tests ─────────────────────────────────────────────
+
+func TestVisualiseNeighbourhood_MultipleConnections(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-vis-nb-1"
+
+	idA := addNode(t, h, "Hub node", domain, nil)
+	idB := addNode(t, h, "Spoke B", domain, nil)
+	idC := addNode(t, h, "Spoke C", domain, nil)
+
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_node": idA, "to_node": idB, "relationship": "led_to", "narrative": "a led to b",
+	}))
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_node": idA, "to_node": idC, "relationship": "depends_on", "narrative": "a depends on c",
+	}))
+
+	tr := call(t, h, "visualise", map[string]any{"node_id": idA})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Mermaid   string `json:"mermaid"`
+		NodeCount int    `json:"node_count"`
+		EdgeCount int    `json:"edge_count"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.NodeCount != 3 {
+		t.Errorf("expected 3 nodes (hub + 2 spokes), got %d", resp.NodeCount)
+	}
+	if resp.EdgeCount != 2 {
+		t.Errorf("expected 2 edges, got %d", resp.EdgeCount)
+	}
+	if !strings.Contains(resp.Mermaid, "flowchart TD") {
+		t.Error("mermaid should contain flowchart TD header")
+	}
+	if !strings.Contains(resp.Mermaid, "Hub node") {
+		t.Error("mermaid should contain Hub node label")
+	}
+	if !strings.Contains(resp.Mermaid, "led_to") {
+		t.Error("mermaid should contain led_to relationship")
+	}
+}
+
+func TestVisualiseNeighbourhood_NoConnections(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-vis-nb-2"
+	idA := addNode(t, h, "Lone node", domain, nil)
+
+	tr := call(t, h, "visualise", map[string]any{"node_id": idA})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Mermaid   string `json:"mermaid"`
+		NodeCount int    `json:"node_count"`
+		EdgeCount int    `json:"edge_count"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.NodeCount != 1 {
+		t.Errorf("expected 1 node (the lone node itself), got %d", resp.NodeCount)
+	}
+	if resp.EdgeCount != 0 {
+		t.Errorf("expected 0 edges, got %d", resp.EdgeCount)
+	}
+	if !strings.Contains(resp.Mermaid, "Lone node") {
+		t.Error("mermaid should contain the lone node label")
+	}
+}
+
+func TestVisualiseNeighbourhood_UnknownNodeID(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "visualise", map[string]any{"node_id": "no-such-node-id"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "not found") {
+		t.Errorf("error message should mention 'not found'; got: %s", text(t, tr))
+	}
+}
+
+func TestVisualiseNeighbourhood_NodeIDTakesPrecedenceOverDomain(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-vis-nb-3"
+
+	idA := addNode(t, h, "Alpha", domain, nil)
+	addNode(t, h, "Beta", domain, nil)
+	addNode(t, h, "Gamma", domain, nil)
+
+	// domain has 3 nodes; node_id points to an isolated node — result should be 1 node, not 3.
+	tr := call(t, h, "visualise", map[string]any{"node_id": idA, "domain": domain})
+	mustNotError(t, tr)
+
+	var resp struct {
+		NodeCount int `json:"node_count"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.NodeCount != 1 {
+		t.Errorf("node_id should take precedence: expected 1 node, got %d", resp.NodeCount)
+	}
+}
+
 // ── check_for_updates tests ───────────────────────────────────────────────────
 
 func newHandlerWithVersion(t *testing.T, version string, checker func() (string, error)) *tools.Handler {

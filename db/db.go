@@ -2390,3 +2390,114 @@ func (s *Store) FindDisconnected(domain string) ([]Node, error) {
 	}
 	return nodes, rows.Err()
 }
+
+// GetNodeNeighbourhood returns the target node, all live nodes directly
+// connected to it (depth 1), and all edges between those nodes.
+// Returns an error if the node does not exist or is archived.
+func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge, err error) {
+	var target Node
+	var oa, aa sql.NullTime
+	err = s.db.QueryRow(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		 FROM nodes WHERE id = ? AND archived_at IS NULL`, nodeID,
+	).Scan(&target.ID, &target.Label, &target.Description, &target.WhyMatters, &target.Domain,
+		&target.CreatedAt, &target.UpdatedAt, &oa, &aa, &target.Tags, &target.Transient)
+	if err == sql.ErrNoRows {
+		return nil, nil, fmt.Errorf("node not found: %s", nodeID)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if oa.Valid {
+		target.OccurredAt = &oa.Time
+	}
+	if aa.Valid {
+		target.ArchivedAt = &aa.Time
+	}
+
+	// Collect IDs of all direct neighbours via edges.
+	eRows, err := s.db.Query(
+		`SELECT CASE WHEN from_node = ? THEN to_node ELSE from_node END AS neighbour_id
+		 FROM edges WHERE from_node = ? OR to_node = ?`, nodeID, nodeID, nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	neighbourIDs := map[string]bool{}
+	for eRows.Next() {
+		var id string
+		if scanErr := eRows.Scan(&id); scanErr != nil {
+			eRows.Close()
+			return nil, nil, scanErr
+		}
+		neighbourIDs[id] = true
+	}
+	eRows.Close()
+	if err = eRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// Build the full neighbourhood ID list (target + neighbours).
+	allIDs := make([]string, 0, len(neighbourIDs)+1)
+	allIDs = append(allIDs, nodeID)
+	for id := range neighbourIDs {
+		allIDs = append(allIDs, id)
+	}
+
+	// Fetch all live nodes in the neighbourhood.
+	ph := strings.Repeat("?,", len(allIDs))
+	ph = ph[:len(ph)-1]
+	nArgs := make([]interface{}, len(allIDs))
+	for i, id := range allIDs {
+		nArgs[i] = id
+	}
+	nRows, err := s.db.Query(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		 FROM nodes WHERE archived_at IS NULL AND id IN (`+ph+`)`, nArgs...)
+	if err != nil {
+		return nil, nil, err
+	}
+	for nRows.Next() {
+		var n Node
+		var oa2, aa2 sql.NullTime
+		if scanErr := nRows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa2, &aa2, &n.Tags, &n.Transient); scanErr != nil {
+			nRows.Close()
+			return nil, nil, scanErr
+		}
+		if oa2.Valid {
+			n.OccurredAt = &oa2.Time
+		}
+		if aa2.Valid {
+			n.ArchivedAt = &aa2.Time
+		}
+		nodes = append(nodes, n)
+	}
+	nRows.Close()
+	if err = nRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// Fetch all edges where both endpoints are in the live neighbourhood set.
+	eArgs := make([]interface{}, len(allIDs)*2)
+	for i, id := range allIDs {
+		eArgs[i] = id
+		eArgs[len(allIDs)+i] = id
+	}
+	edgeRows, err := s.db.Query(
+		`SELECT id, from_node, to_node, relationship, narrative, created_at
+		 FROM edges WHERE from_node IN (`+ph+`) AND to_node IN (`+ph+`)`, eArgs...)
+	if err != nil {
+		return nil, nil, err
+	}
+	for edgeRows.Next() {
+		var e Edge
+		if scanErr := edgeRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); scanErr != nil {
+			edgeRows.Close()
+			return nil, nil, scanErr
+		}
+		edges = append(edges, e)
+	}
+	edgeRows.Close()
+	err = edgeRows.Err()
+	return
+}

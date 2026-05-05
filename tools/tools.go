@@ -376,20 +376,19 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name: "visualise",
-			Description: "Generate a Mermaid.js flowchart of the knowledge graph for a domain. " +
-				"Nodes are sorted by connectivity (most-connected first) and capped at `limit` (default 40, max 100). " +
+			Description: "Generate a Mermaid.js flowchart for a domain or for the neighbourhood of a single node. " +
+				"Pass domain for the full domain graph (nodes sorted by connectivity, capped at limit, default 40 max 100); pass node_id to visualise a node and its direct connections. " +
 				"Returns a JSON object with `mermaid` (the diagram source), `node_count`, `edge_count`, and `truncated` (true when the domain has more nodes than the limit). " +
 				"When responding to the user, output the `mermaid` string inside a ```mermaid code block. " +
 				"If `truncated` is true, note that only the most-connected nodes are shown. " +
-				"Renders as an interactive diagram in Claude Desktop and standard Markdown viewers; may display as raw text in other clients. " +
-				"Best used on focused domains with fewer than 60 nodes.",
+				"Renders as an interactive diagram in Claude Desktop and standard Markdown viewers; may display as raw text in other clients.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain": {Type: "string", Description: "The domain to visualise"},
-					"limit":  {Type: "integer", Description: "Max nodes to include (default 40, max 100). Most-connected nodes are prioritised when truncating."},
+					"domain":  {Type: "string", Description: "Visualise the full graph for this domain."},
+					"node_id": {Type: "string", Description: "Visualise the neighbourhood of a single node (the node plus all directly connected nodes and edges). Takes precedence over domain if both are supplied."},
+					"limit":   {Type: "integer", Description: "Max nodes to include in domain mode (default 40, max 100). Most-connected nodes are prioritised when truncating."},
 				},
-				Required: []string{"domain"},
 			},
 		},
 		{
@@ -1184,24 +1183,38 @@ func sanitiseMermaidLabel(s string) string {
 func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain string `json:"domain"`
+		NodeID string `json:"node_id"`
 		Limit  int    `json:"limit"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
 	}
-	if a.Domain == "" {
-		return nil, fmt.Errorf("domain is required")
-	}
-	if a.Limit <= 0 {
-		a.Limit = 40
-	}
 
-	nodes, edges, truncated, err := h.store.GetDomainGraph(a.Domain, a.Limit)
-	if err != nil {
-		return nil, err
-	}
-	if len(nodes) == 0 {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: `{"error":"no content found for domain"}`}}}, nil
+	var nodes []db.Node
+	var edges []db.Edge
+	var truncated bool
+
+	switch {
+	case a.NodeID != "":
+		var err error
+		nodes, edges, err = h.store.GetNodeNeighbourhood(a.NodeID)
+		if err != nil {
+			return &ToolResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: err.Error()}}}, nil
+		}
+	case a.Domain != "":
+		if a.Limit <= 0 {
+			a.Limit = 40
+		}
+		var err error
+		nodes, edges, truncated, err = h.store.GetDomainGraph(a.Domain, a.Limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(nodes) == 0 {
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: `{"error":"no content found for domain"}`}}}, nil
+		}
+	default:
+		return nil, fmt.Errorf("domain or node_id is required")
 	}
 
 	// Build positional alias map (n0, n1, …) so Mermaid source stays readable.
