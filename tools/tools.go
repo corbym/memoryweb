@@ -376,8 +376,9 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name: "visualise",
-			Description: "Generate a Mermaid.js flowchart for a domain or for the neighbourhood of a single node. " +
-				"Pass domain for the full domain graph (nodes sorted by connectivity, capped at limit, default 40 max 100); pass node_id to visualise a node and its direct connections. " +
+			Description: "Generate a Mermaid.js flowchart. " +
+				"Pass `node_id` to see a single node and all its direct connections. " +
+				"Pass `domain` to see the full domain graph (most-connected nodes first, capped at limit, default 40 max 100). " +
 				"Returns a JSON object with `mermaid` (the diagram source), `node_count`, `edge_count`, and `truncated` (true when the domain has more nodes than the limit). " +
 				"When responding to the user, output the `mermaid` string inside a ```mermaid code block. " +
 				"If `truncated` is true, note that only the most-connected nodes are shown. " +
@@ -385,8 +386,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain":  {Type: "string", Description: "Visualise the full graph for this domain."},
-					"node_id": {Type: "string", Description: "Visualise the neighbourhood of a single node (the node plus all directly connected nodes and edges). Takes precedence over domain if both are supplied."},
+					"domain":  {Type: "string", Description: "A domain name (e.g. 'memoryweb-meta'). Do not pass a node ID here — use node_id instead."},
+					"node_id": {Type: "string", Description: "A node ID. Returns the neighbourhood: the node plus all directly connected nodes and edges. Takes precedence over domain if both are supplied."},
 					"limit":   {Type: "integer", Description: "Max nodes to include in domain mode (default 40, max 100). Most-connected nodes are prioritised when truncating."},
 				},
 			},
