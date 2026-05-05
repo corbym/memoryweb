@@ -66,7 +66,7 @@ jobs:
 
           for arch, sha in replacements.items():
               content = re.sub(
-                  r'(url "https://github\.com/corbym/memoryweb/releases/download/[^"]+_' + arch + r'[^"]*"\n\s+sha256 ")[0-9a-f]+"',
+                  r'(url "https://github\.com/corbym/memoryweb/releases/download/[^"]+_' + arch + r'[^"]*"\n\s+sha256 ")[0-9a-f]*"',
                   r'\g<1>' + sha + '"',
                   content,
               )
