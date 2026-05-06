@@ -215,6 +215,8 @@ Run tests: `go test ./...`
 
 **Rule:** Always run `go test ./...` and confirm all tests pass before deploying the binary or committing any change. No exceptions.
 
+**Preferred deployment: Homebrew.** The canonical binary path is `/opt/homebrew/bin/memoryweb`. Use `brew upgrade memoryweb` to deploy a release. The manual `mv` pattern (`go build -o ~/.memoryweb/memoryweb.tmp . && mv ...`) is superseded — it was used before the Homebrew formula existed and should not be used going forward. Never deploy to `~/.memoryweb/memoryweb` or `~/repos/bin/memoryweb`.
+
 ---
 
 ## What's implemented

@@ -252,7 +252,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 	{
 		Name:        "orient",
-		Description: "Return all known memories for a domain structured for synthesis. Synthesise the result into concise prose covering current state, blockers, recent decisions, and open questions. Each entry includes its id so you can pass it directly to update or connect without a second lookup.",
+			Description: "Return all known memories for a domain structured for synthesis. Synthesise the result into concise prose covering current state, blockers, recent decisions, and open questions. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -379,8 +379,10 @@ func (h *Handler) ListTools() (interface{}, error) {
 			Description: "Generate a Mermaid.js flowchart. " +
 				"Pass `node_id` to see a single node and all its direct connections. " +
 				"Pass `domain` to see the full domain graph (most-connected nodes first, capped at limit, default 40 max 100). " +
-				"Returns a JSON object with `mermaid` (the diagram source), `node_count`, `edge_count`, and `truncated` (true when the domain has more nodes than the limit). " +
+				"Returns a JSON object with `mermaid` (the diagram source), `node_count`, `edge_count`, `truncated` (true when the domain has more nodes than the limit), " +
+				"`nodes` ([{id, label}]) and `edges` ([{from, to, relationship}]) for structured rendering. " +
 				"When responding to the user, output the `mermaid` string inside a ```mermaid code block. " +
+				"If the client supports HTML widgets, prefer passing the nodes and edges to an interactive renderer rather than outputting raw mermaid. " +
 				"If `truncated` is true, note that only the most-connected nodes are shown. " +
 				"Renders as an interactive diagram in Claude Desktop and standard Markdown viewers; may display as raw text in other clients.",
 			InputSchema: InputSchema{
@@ -1239,16 +1241,45 @@ func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 		fmt.Fprintf(&sb, "  %s -- \"%s\" --> %s\n", from, e.Relationship, to)
 	}
 
+	// Structured node/edge data for rich renderers — full labels, real IDs.
+	type nodeEntry struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+	}
+	type edgeEntry struct {
+		From         string `json:"from"`
+		To           string `json:"to"`
+		Relationship string `json:"relationship"`
+	}
+	nodeList := make([]nodeEntry, len(nodes))
+	for i, n := range nodes {
+		nodeList[i] = nodeEntry{ID: n.ID, Label: n.Label}
+	}
+	edgeList := make([]edgeEntry, 0, len(edges))
+	for _, e := range edges {
+		if _, ok1 := idMap[e.FromNode]; !ok1 {
+			continue
+		}
+		if _, ok2 := idMap[e.ToNode]; !ok2 {
+			continue
+		}
+		edgeList = append(edgeList, edgeEntry{From: e.FromNode, To: e.ToNode, Relationship: e.Relationship})
+	}
+
 	result := struct {
-		Mermaid   string `json:"mermaid"`
-		NodeCount int    `json:"node_count"`
-		EdgeCount int    `json:"edge_count"`
-		Truncated bool   `json:"truncated,omitempty"`
+		Mermaid   string      `json:"mermaid"`
+		NodeCount int         `json:"node_count"`
+		EdgeCount int         `json:"edge_count"`
+		Truncated bool        `json:"truncated,omitempty"`
+		Nodes     []nodeEntry `json:"nodes"`
+		Edges     []edgeEntry `json:"edges"`
 	}{
 		Mermaid:   sb.String(),
 		NodeCount: len(nodes),
 		EdgeCount: len(edges),
 		Truncated: truncated,
+		Nodes:     nodeList,
+		Edges:     edgeList,
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil

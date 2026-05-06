@@ -2498,6 +2498,15 @@ func TestVisualiseMermaidSyntax(t *testing.T) {
 		NodeCount int    `json:"node_count"`
 		EdgeCount int    `json:"edge_count"`
 		Truncated bool   `json:"truncated"`
+		Nodes     []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"nodes"`
+		Edges []struct {
+			From         string `json:"from"`
+			To           string `json:"to"`
+			Relationship string `json:"relationship"`
+		} `json:"edges"`
 	}
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
 		t.Fatalf("visualise response should be valid JSON: %v\ngot:\n%s", err, body)
@@ -2522,6 +2531,44 @@ func TestVisualiseMermaidSyntax(t *testing.T) {
 	}
 	if resp.Truncated {
 		t.Error("truncated should be false for a 3-node graph")
+	}
+	// Structured nodes: full labels, real IDs (not n0/n1/n2).
+	if len(resp.Nodes) != 3 {
+		t.Errorf("nodes array should have 3 entries, got %d", len(resp.Nodes))
+	}
+	for _, n := range resp.Nodes {
+		if n.ID == "" {
+			t.Error("node entry should have non-empty id")
+		}
+		if strings.HasPrefix(n.ID, "n") && len(n.ID) == 2 {
+			t.Errorf("node id looks like a Mermaid alias, not a real ID: %q", n.ID)
+		}
+	}
+	// Labels in nodes array should be full, not truncated.
+	nodeLabels := make(map[string]bool)
+	for _, n := range resp.Nodes {
+		nodeLabels[n.Label] = true
+	}
+	for _, expected := range []string{"Alpha node", "Beta node", "Gamma node"} {
+		if !nodeLabels[expected] {
+			t.Errorf("nodes array should contain full label %q", expected)
+		}
+	}
+	// Structured edges: from/to are real node IDs.
+	if len(resp.Edges) != 2 {
+		t.Errorf("edges array should have 2 entries, got %d", len(resp.Edges))
+	}
+	for _, e := range resp.Edges {
+		if e.From == "" || e.To == "" {
+			t.Error("edge entry should have non-empty from and to")
+		}
+		if e.Relationship == "" {
+			t.Error("edge entry should have non-empty relationship")
+		}
+		// from/to must be real node IDs matching what we created
+		if e.From == idA && e.Relationship == "led_to" && e.To != idB {
+			t.Errorf("edge from %s led_to should point to %s, got %s", idA, idB, e.To)
+		}
 	}
 }
 
@@ -2569,7 +2616,12 @@ func TestVisualiseLabelSanitisation(t *testing.T) {
 	tr := call(t, h, "visualise", map[string]any{"domain": domain})
 	mustNotError(t, tr)
 
-	var resp struct{ Mermaid string `json:"mermaid"` }
+	var resp struct {
+		Mermaid string `json:"mermaid"`
+		Nodes   []struct {
+			Label string `json:"label"`
+		} `json:"nodes"`
+	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
@@ -2586,6 +2638,13 @@ func TestVisualiseLabelSanitisation(t *testing.T) {
 	}
 	if strings.Contains(resp.Mermaid, long) {
 		t.Error("full label should have been truncated in Mermaid output")
+	}
+	// nodes array must carry the full, un-truncated label.
+	if len(resp.Nodes) != 1 {
+		t.Fatalf("nodes array should have 1 entry, got %d", len(resp.Nodes))
+	}
+	if resp.Nodes[0].Label != long {
+		t.Errorf("nodes[0].label should be the full un-truncated label;\ngot:  %q\nwant: %q", resp.Nodes[0].Label, long)
 	}
 }
 
@@ -2613,6 +2672,15 @@ func TestVisualiseNeighbourhood_MultipleConnections(t *testing.T) {
 		Mermaid   string `json:"mermaid"`
 		NodeCount int    `json:"node_count"`
 		EdgeCount int    `json:"edge_count"`
+		Nodes     []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"nodes"`
+		Edges []struct {
+			From         string `json:"from"`
+			To           string `json:"to"`
+			Relationship string `json:"relationship"`
+		} `json:"edges"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
@@ -2631,6 +2699,31 @@ func TestVisualiseNeighbourhood_MultipleConnections(t *testing.T) {
 	}
 	if !strings.Contains(resp.Mermaid, "led_to") {
 		t.Error("mermaid should contain led_to relationship")
+	}
+	// Structured nodes: real IDs, full labels.
+	if len(resp.Nodes) != 3 {
+		t.Errorf("nodes array should have 3 entries, got %d", len(resp.Nodes))
+	}
+	foundHub := false
+	for _, n := range resp.Nodes {
+		if n.Label == "Hub node" {
+			foundHub = true
+		}
+		if n.ID == "" {
+			t.Error("node entry id should be non-empty")
+		}
+	}
+	if !foundHub {
+		t.Error("nodes array should contain 'Hub node' with full label")
+	}
+	// Structured edges: from/to are real IDs.
+	if len(resp.Edges) != 2 {
+		t.Errorf("edges array should have 2 entries, got %d", len(resp.Edges))
+	}
+	for _, e := range resp.Edges {
+		if e.From == "" || e.To == "" || e.Relationship == "" {
+			t.Errorf("edge entry missing fields: %+v", e)
+		}
 	}
 }
 

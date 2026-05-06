@@ -153,6 +153,25 @@ When returning knowledge from any tool:
 
 ---
 
+## Deploying memoryweb
+
+**Preferred method: Homebrew**
+
+```sh
+brew upgrade memoryweb
+# or, for a fresh install:
+brew install memoryweb
+```
+
+The binary lives at `/opt/homebrew/bin/memoryweb`. This is the canonical
+deployment path as of May 2026.
+
+**Superseded:** the manual `mv` pattern (`go build -o ~/.memoryweb/memoryweb.tmp . && mv ...`)
+is no longer the preferred method. It was used before the Homebrew formula was
+available. Do not deploy to `~/.memoryweb/memoryweb` or `~/repos/bin/memoryweb`.
+
+---
+
 ## What's available now
 
 | Tool | Status |
