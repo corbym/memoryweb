@@ -381,8 +381,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 				"Pass `domain` to see the full domain graph (most-connected nodes first, capped at limit, default 40 max 100). " +
 				"Returns a JSON object with `mermaid` (the diagram source), `node_count`, `edge_count`, `truncated` (true when the domain has more nodes than the limit), " +
 				"`nodes` ([{id, label}]) and `edges` ([{from, to, relationship}]) for structured rendering. " +
-				"When responding to the user, output the `mermaid` string inside a ```mermaid code block. " +
 				"If the client supports HTML widgets, prefer passing the nodes and edges to an interactive renderer rather than outputting raw mermaid. " +
+				"If the client does not support HTML widgets, output the `mermaid` string inside a ```mermaid code block. " +
 				"If `truncated` is true, note that only the most-connected nodes are shown. " +
 				"Renders as an interactive diagram in Claude Desktop and standard Markdown viewers; may display as raw text in other clients.",
 			InputSchema: InputSchema{
