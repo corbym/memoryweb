@@ -2188,6 +2188,86 @@ func TestSearchNodes_MultiWordFallback_NoSpuriousResults(t *testing.T) {
 	}
 }
 
+// ── semantic search tests (require Ollama + snowflake-arctic-embed) ───────────
+//
+// These tests skip automatically when Ollama is not running. They verify that
+// the vector-distance path works correctly end-to-end with the real model.
+// The CI integration workflow runs: go test ./... -run TestSearchSemantic_ -v
+
+// TestSearchSemantic_FindsRelatedContent: a query with related but non-identical
+// words retrieves the semantically similar node.
+func TestSearchSemantic_FindsRelatedContent(t *testing.T) {
+	if !ollamaRunning(t) {
+		t.Skip("Ollama with snowflake-arctic-embed not available")
+	}
+	_, h := newEnv(t)
+
+	id := addNode(t, h, "database migration strategy", "semantic-test", map[string]any{
+		"description": "how to evolve a relational schema safely across releases",
+		"why_matters": "prevents data corruption and downtime during upgrades",
+	})
+
+	tr := call(t, h, "search", map[string]any{
+		"query":  "schema evolution approach",
+		"domain": "semantic-test",
+	})
+	mustNotError(t, tr)
+	if !contains(searchIDs(t, tr), id) {
+		t.Error("semantic search should find semantically related node within threshold")
+	}
+}
+
+// TestSearchSemantic_ExcludesIrrelevantNode: a node on a completely unrelated
+// topic must not be returned for a domain-specific technical query.
+func TestSearchSemantic_ExcludesIrrelevantNode(t *testing.T) {
+	if !ollamaRunning(t) {
+		t.Skip("Ollama with snowflake-arctic-embed not available")
+	}
+	_, h := newEnv(t)
+
+	addNode(t, h, "banana bread recipe", "semantic-test", map[string]any{
+		"description": "how to bake moist banana bread at home with ripe bananas",
+		"why_matters": "dessert baking technique",
+	})
+
+	tr := call(t, h, "search", map[string]any{
+		"query":  "database schema migration upgrade strategy",
+		"domain": "semantic-test",
+	})
+	mustNotError(t, tr)
+	ids := searchIDs(t, tr)
+	if len(ids) != 0 {
+		t.Errorf("semantic search should not return banana bread for database query; got %d result(s): %v", len(ids), ids)
+	}
+}
+
+// TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings: when a domain has nodes
+// but none have embeddings (Ollama was unavailable at insert time), the search
+// falls back to LIKE and still surfaces LIKE matches.
+func TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings(t *testing.T) {
+	if !ollamaRunning(t) {
+		t.Skip("Ollama with snowflake-arctic-embed not available")
+	}
+	// Add node with Ollama disabled so no embedding is stored.
+	_, h := newEnv(t)
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
+	id := addNode(t, h, "schema migration approach", "fallback-test", map[string]any{
+		"description": "evolving the database schema",
+	})
+	// Re-enable Ollama for the search.
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "")
+
+	// Semantic search finds no embeddings → falls back to LIKE.
+	tr := call(t, h, "search", map[string]any{
+		"query":  "schema migration",
+		"domain": "fallback-test",
+	})
+	mustNotError(t, tr)
+	if !contains(searchIDs(t, tr), id) {
+		t.Error("should find node via LIKE fallback when no embeddings are stored")
+	}
+}
+
 // TestSummariseDomain_IncludesNodeIDs: each entry in nodes and recent must
 // carry an "id" field so the agent can pass it directly to update_node or
 // add_edge without a second lookup.
