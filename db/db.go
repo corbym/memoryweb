@@ -1185,33 +1185,43 @@ func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 	return nodes, nil
 }
 
-// Timeline returns nodes ordered by occurred_at ASC where occurred_at is not null,
-// optionally filtered by domain and date range.
-func (s *Store) Timeline(domain string, from, to *time.Time, limit int) ([]Node, error) {
+// Timeline returns nodes ordered by COALESCE(occurred_at, created_at) ASC.
+// When importantOnly is true, only nodes with occurred_at explicitly set are returned.
+// tags filters to nodes matching at least one tag (whole-word match).
+// from/to filter by effective date (COALESCE(occurred_at, created_at)).
+func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from, to *time.Time, limit int) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 	if limit <= 0 {
 		limit = 20
 	}
 
-	conds := []string{"occurred_at IS NOT NULL", "archived_at IS NULL"}
+	conds := []string{"archived_at IS NULL"}
 	args := []interface{}{}
 
 	if domain != "" {
 		conds = append(conds, "domain = ?")
 		args = append(args, domain)
 	}
+	if importantOnly {
+		conds = append(conds, "occurred_at IS NOT NULL")
+	}
 	if from != nil {
-		conds = append(conds, "occurred_at >= ?")
+		conds = append(conds, "COALESCE(occurred_at, created_at) >= ?")
 		args = append(args, from)
 	}
 	if to != nil {
-		conds = append(conds, "occurred_at <= ?")
+		conds = append(conds, "COALESCE(occurred_at, created_at) <= ?")
 		args = append(args, to)
+	}
+	for _, tag := range tags {
+		conds = append(conds,
+			"(tags = ? OR tags LIKE ? || ' %' OR tags LIKE '% ' || ? OR tags LIKE '% ' || ? || ' %')")
+		args = append(args, tag, tag, tag, tag)
 	}
 	args = append(args, limit)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes WHERE " +
-		strings.Join(conds, " AND ") + " ORDER BY occurred_at ASC LIMIT ?"
+		strings.Join(conds, " AND ") + " ORDER BY COALESCE(occurred_at, created_at) ASC LIMIT ?"
 
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -1820,7 +1830,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 // Writes an audit_log entry recording which fields changed and their old values.
 // Returns the full updated node. Returns an error if the node does not exist or
 // has been archived.
-func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string) (*Node, error) {
+func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time) (*Node, error) {
 	// Fetch current values for comparison and audit trail.
 	var cur Node
 	var curOA, curAA sql.NullTime
@@ -1833,6 +1843,9 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 			return nil, fmt.Errorf("node not found: %s", id)
 		}
 		return nil, err
+	}
+	if curOA.Valid {
+		cur.OccurredAt = &curOA.Time
 	}
 
 	now := time.Now().UTC()
@@ -1869,6 +1882,15 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 		if *tags != cur.Tags {
 			changes = append(changes, fmt.Sprintf("tags (was %q)", cur.Tags))
 		}
+	}
+	if occurredAt != nil {
+		sets = append(sets, "occurred_at = ?")
+		args = append(args, *occurredAt)
+		oldVal := "(none)"
+		if cur.OccurredAt != nil {
+			oldVal = cur.OccurredAt.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		changes = append(changes, fmt.Sprintf("occurred_at (was %s)", oldVal))
 	}
 	args = append(args, id)
 
@@ -1916,6 +1938,7 @@ type NodeUpdateInput struct {
 	Description *string
 	WhyMatters  *string
 	Tags        *string
+	OccurredAt  *time.Time
 }
 
 // UpdateNodesBatch updates multiple nodes in a single transaction.
@@ -1944,6 +1967,9 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 				return nil, fmt.Errorf("node not found: %s", inp.ID)
 			}
 			return nil, err
+		}
+		if curOA.Valid {
+			cur.OccurredAt = &curOA.Time
 		}
 
 		sets := []string{"updated_at = ?"}
@@ -1977,6 +2003,15 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			if *inp.Tags != cur.Tags {
 				changes = append(changes, fmt.Sprintf("tags (was %q)", cur.Tags))
 			}
+		}
+		if inp.OccurredAt != nil {
+			sets = append(sets, "occurred_at = ?")
+			args = append(args, *inp.OccurredAt)
+			oldVal := "(none)"
+			if cur.OccurredAt != nil {
+				oldVal = cur.OccurredAt.UTC().Format("2006-01-02T15:04:05Z")
+			}
+			changes = append(changes, fmt.Sprintf("occurred_at (was %s)", oldVal))
 		}
 		args = append(args, inp.ID)
 

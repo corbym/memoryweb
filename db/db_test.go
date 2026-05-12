@@ -264,7 +264,7 @@ func TestTimeline_AscendingOrder(t *testing.T) {
 	n1, _ := s.AddNode("Early", "d", "w", "proj", ptr(early), "", false)
 	n2, _ := s.AddNode("Late", "d", "w", "proj", ptr(late), "", false)
 
-	nodes, err := s.Timeline("proj", nil, nil, 10)
+	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -276,19 +276,48 @@ func TestTimeline_AscendingOrder(t *testing.T) {
 	}
 }
 
-func TestTimeline_ExcludesNullOccurredAt(t *testing.T) {
+func TestTimeline_DefaultModeIncludesNullOccurredAt(t *testing.T) {
+	// Default mode (importantOnly=false) includes nodes with no occurred_at.
 	s := newStore(t)
 	noDate := mustAddNode(t, s, "no date", "proj")
 	ts := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", false)
 
-	nodes, err := s.Timeline("proj", nil, nil, 10)
+	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("Timeline: %v", err)
+	}
+	var foundNoDate, foundDated bool
+	for _, n := range nodes {
+		if n.ID == noDate.ID {
+			foundNoDate = true
+		}
+		if n.ID == dated.ID {
+			foundDated = true
+		}
+	}
+	if !foundNoDate {
+		t.Error("default mode: node without occurred_at should appear in timeline")
+	}
+	if !foundDated {
+		t.Error("default mode: node with occurred_at should appear in timeline")
+	}
+}
+
+func TestTimeline_ImportantOnlyExcludesNullOccurredAt(t *testing.T) {
+	// importantOnly=true excludes nodes without occurred_at.
+	s := newStore(t)
+	noDate := mustAddNode(t, s, "no date", "proj")
+	ts := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", false)
+
+	nodes, err := s.Timeline("proj", true, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
 	for _, n := range nodes {
 		if n.ID == noDate.ID {
-			t.Error("node without occurred_at should not appear in timeline")
+			t.Error("important_only mode: node without occurred_at should not appear")
 		}
 	}
 	found := false
@@ -298,7 +327,7 @@ func TestTimeline_ExcludesNullOccurredAt(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("dated node should appear in timeline")
+		t.Error("important_only mode: node with occurred_at should appear")
 	}
 }
 
@@ -308,7 +337,7 @@ func TestTimeline_ExcludesArchived(t *testing.T) {
 	n, _ := s.AddNode("archived event", "d", "w", "proj", ptr(ts), "", false)
 	s.ArchiveNode(n.ID, "reason")
 
-	nodes, err := s.Timeline("proj", nil, nil, 10)
+	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -331,12 +360,70 @@ func TestTimeline_DateRangeFilter(t *testing.T) {
 	from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
 
-	nodes, err := s.Timeline("proj", &from, &to, 10)
+	nodes, err := s.Timeline("proj", false, nil, &from, &to, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
 	if len(nodes) != 1 || nodes[0].ID != nMar.ID {
 		t.Errorf("date range filter: got %+v", nodes)
+	}
+}
+
+func TestTimeline_FromToFiltersByCoalesceDate(t *testing.T) {
+	// from/to now uses COALESCE(occurred_at, created_at).
+	// A node with no occurred_at should be included if its created_at is in range.
+	s := newStore(t)
+	// Add a node with no occurred_at (relies on created_at for ordering / filtering).
+	undated, _ := s.AddNode("undated recent", "d", "w", "proj", nil, "", false)
+
+	// Use a wide open range to ensure created_at falls inside it.
+	from := time.Now().UTC().Add(-time.Hour)
+	to := time.Now().UTC().Add(time.Hour)
+
+	nodes, err := s.Timeline("proj", false, nil, &from, &to, 10)
+	if err != nil {
+		t.Fatalf("Timeline: %v", err)
+	}
+	found := false
+	for _, n := range nodes {
+		if n.ID == undated.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("undated node should appear when its created_at falls within from/to range")
+	}
+}
+
+func TestTimeline_TagFilter_WholeWordMatch(t *testing.T) {
+	s := newStore(t)
+	ts := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	taggedA, _ := s.AddNode("node A", "d", "w", "proj", ptr(ts), "decision architecture", false)
+	taggedB, _ := s.AddNode("node B", "d", "w", "proj", ptr(ts), "architecture release", false)
+	_, _ = s.AddNode("node C", "d", "w", "proj", ptr(ts), "release", false)
+	_, _ = s.AddNode("node D", "d", "w", "proj", ptr(ts), "", false)
+
+	nodes, err := s.Timeline("proj", false, []string{"architecture"}, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("Timeline: %v", err)
+	}
+	ids := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		ids[n.ID] = true
+	}
+	if !ids[taggedA.ID] {
+		t.Error("node A with 'decision architecture' should match tag 'architecture'")
+	}
+	if !ids[taggedB.ID] {
+		t.Error("node B with 'architecture release' should match tag 'architecture'")
+	}
+	if ids[taggedA.ID] && ids[taggedB.ID] && len(nodes) > 2 {
+		// node C has "release" not "architecture"; node D has no tags — neither should appear
+		for _, n := range nodes {
+			if n.ID != taggedA.ID && n.ID != taggedB.ID {
+				t.Errorf("unexpected node in tag-filtered results: %s (tags: %q)", n.ID, n.Tags)
+			}
+		}
 	}
 }
 
@@ -632,7 +719,7 @@ func TestUpdateNode_UpdatesDescription(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "update target", "proj")
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -649,7 +736,7 @@ func TestUpdateNode_UpdatesLabel(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "old label", "proj")
 
-	updated, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -662,7 +749,7 @@ func TestUpdateNode_UpdatesTags(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "tagged node", "proj")
 
-	updated, err := s.UpdateNode(n.ID, nil, nil, nil, ptrStr("kotlin gradle testing"))
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, ptrStr("kotlin gradle testing"), nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -675,7 +762,7 @@ func TestUpdateNode_OnlyUpdatesProvidedFields(t *testing.T) {
 	s := newStore(t)
 	n, _ := s.AddNode("stable label", "original desc", "original why", "proj", nil, "original tags", false)
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -701,7 +788,7 @@ func TestUpdateNode_BumpsUpdatedAt(t *testing.T) {
 	// Sleep briefly to ensure time advances.
 	time.Sleep(2 * time.Millisecond)
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("changed"), nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("changed"), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -713,7 +800,7 @@ func TestUpdateNode_BumpsUpdatedAt(t *testing.T) {
 func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
 	s := newStore(t)
 
-	_, err := s.UpdateNode("nonexistent-id-xxxx", ptrStr("x"), nil, nil, nil)
+	_, err := s.UpdateNode("nonexistent-id-xxxx", ptrStr("x"), nil, nil, nil, nil)
 	if err == nil {
 		t.Error("expected error for missing node, got nil")
 	}
@@ -724,7 +811,7 @@ func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
 	n := mustAddNode(t, s, "soon archived", "proj")
 	s.ArchiveNode(n.ID, "test")
 
-	_, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil)
+	_, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil)
 	if err == nil {
 		t.Error("expected error updating archived node, got nil")
 	}
@@ -766,7 +853,7 @@ func TestUpdateNode_WritesAuditLog(t *testing.T) {
 
 	n := mustAddNode(t, s, "audit target", "proj")
 
-	_, err = s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil)
+	_, err = s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}

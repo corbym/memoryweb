@@ -76,7 +76,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"description": {Type: "string", Description: "What this node is about"},
 					"why_matters": {Type: "string", Description: "Why this is significant - the 'so what'"},
 					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general')"},
-					"occurred_at": {Type: "string", Description: "Optional ISO8601 date or datetime when this event or decision actually happened (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Distinct from when it was filed."},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime for when this event occurred (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Only supply when the user has explicitly told you when this event occurred, or when this is a significant decision or event that belongs on the timeline. Do not guess. Do not infer from context. Future dates are valid for planned events or reminders."},
 					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
 				"related_to": {
 					Type:        "array",
@@ -152,18 +152,20 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 	{
-		Name:        "history",
-		Description: "Return memories ordered by when they occurred, optionally scoped to a domain and date range. Only live entries are returned; use forgotten or whats_stale if something seems missing.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"domain": {Type: "string", Description: "Optional domain to scope"},
-					"from":   {Type: "string", Description: "Optional ISO8601 start date (inclusive), e.g. '2026-01-01'"},
-					"to":     {Type: "string", Description: "Optional ISO8601 end date (inclusive), e.g. '2026-04-30'"},
-					"limit":  {Type: "integer", Description: "Max results (default 20)"},
-				},
+		Name: "history",
+		Description: "Returns nodes in a domain in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL nodes — the complete chronological view of everything filed in the domain. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only nodes where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nUse from/to to scope by effective date. Use tags to further filter results in either mode (comma-separated).\n\nThe two modes are complementary:\n  - Default: 'what happened in this domain, and in what order?'\n  - important_only=true: 'what were the important decisions and events?'",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"domain":         {Type: "string", Description: "Optional domain to scope"},
+				"important_only": {Type: "boolean", Description: "When true, return only nodes with occurred_at explicitly set (significant decisions and events). When false or absent, return all nodes ordered by effective date."},
+				"tags":           {Type: "string", Description: "Optional comma-separated list of tags to filter by. Only nodes matching at least one tag are returned. Applies in both modes."},
+				"from":           {Type: "string", Description: "ISO8601 date or datetime. Filter to nodes whose effective date (COALESCE(occurred_at, created_at)) is on or after this value."},
+				"to":             {Type: "string", Description: "ISO8601 date or datetime. Filter to nodes whose effective date (COALESCE(occurred_at, created_at)) is on or before this value."},
+				"limit":          {Type: "integer", Description: "Max results (default 20)"},
 			},
 		},
+	},
 	{
 		Name:        "alias_domain",
 		Description: "Register an alternative name for a domain so both names return the same results.",
@@ -269,7 +271,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 				Properties: map[string]Property{
 					"nodes": {
 						Type:        "array",
-						Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601).",
+						Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — only supply for significant events; do not guess).",
 						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["label","domain"]}`),
 					},
 				},
@@ -278,7 +280,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 	{
 		Name:        "revise",
-		Description: "Update the label, description, why_matters, or tags of an existing live memory. Only the fields you provide are changed — omitted fields keep their current values. Use this to enrich or correct a memory without archiving and recreating it. Returns the full updated memory.",
+		Description: "Update the label, description, why_matters, tags, or occurred_at of an existing live memory. Only the fields you provide are changed — omitted fields keep their current values. Use this to enrich or correct a memory without archiving and recreating it. Returns the full updated memory.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -287,6 +289,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"description": {Type: "string", Description: "New description (optional)"},
 					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
 					"tags":        {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime to correct when this event occurred (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Only supply when the user has explicitly told you when this event occurred. Do not guess. Do not infer from context."},
 				},
 				Required: []string{"id"},
 			},
@@ -326,8 +329,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 			Properties: map[string]Property{
 				"updates": {
 					Type:        "array",
-					Description: "Array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags.",
-					Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"}},"required":["id"]}`),
+					Description: "Array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at.",
+					Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"}},"required":["id"]}`),
 				},
 			},
 			Required: []string{"updates"},
@@ -694,10 +697,12 @@ func (h *Handler) findConnections(args json.RawMessage) (*ToolResult, error) {
 
 func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
-		Domain string `json:"domain"`
-		From   string `json:"from"`
-		To     string `json:"to"`
-		Limit  int    `json:"limit"`
+		Domain        string `json:"domain"`
+		ImportantOnly bool   `json:"important_only"`
+		Tags          string `json:"tags"`
+		From          string `json:"from"`
+		To            string `json:"to"`
+		Limit         int    `json:"limit"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -729,7 +734,14 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	nodes, err := h.store.Timeline(a.Domain, from, to, a.Limit)
+	var tags []string
+	for _, tag := range strings.Split(a.Tags, ",") {
+		tag = strings.TrimSpace(tag)
+		if tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	nodes, err := h.store.Timeline(a.Domain, a.ImportantOnly, tags, from, to, a.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1027,6 +1039,7 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 		Description *string `json:"description"`
 		WhyMatters  *string `json:"why_matters"`
 		Tags        *string `json:"tags"`
+		OccurredAt  *string `json:"occurred_at"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -1034,7 +1047,18 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 	if a.ID == "" {
 		return nil, fmt.Errorf("id is required")
 	}
-	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags)
+	var occurredAt *time.Time
+	if a.OccurredAt != nil {
+		t, err := time.Parse(time.RFC3339, *a.OccurredAt)
+		if err != nil {
+			t, err = time.Parse("2006-01-02", *a.OccurredAt)
+			if err != nil {
+				return nil, fmt.Errorf("invalid occurred_at format, expected ISO8601 date or datetime: %s", *a.OccurredAt)
+			}
+		}
+		occurredAt = &t
+	}
+	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1050,6 +1074,7 @@ func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
 			Description *string `json:"description"`
 			WhyMatters  *string `json:"why_matters"`
 			Tags        *string `json:"tags"`
+			OccurredAt  *string `json:"occurred_at"`
 		} `json:"updates"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
@@ -1060,12 +1085,24 @@ func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
 		if u.ID == "" {
 			return nil, fmt.Errorf("update %d: id is required", i)
 		}
+		var occurredAt *time.Time
+		if u.OccurredAt != nil {
+			t, err := time.Parse(time.RFC3339, *u.OccurredAt)
+			if err != nil {
+				t, err = time.Parse("2006-01-02", *u.OccurredAt)
+				if err != nil {
+					return nil, fmt.Errorf("update %d: invalid occurred_at format: %s", i, *u.OccurredAt)
+				}
+			}
+			occurredAt = &t
+		}
 		inputs[i] = db.NodeUpdateInput{
 			ID:          u.ID,
 			Label:       u.Label,
 			Description: u.Description,
 			WhyMatters:  u.WhyMatters,
 			Tags:        u.Tags,
+			OccurredAt:  occurredAt,
 		}
 	}
 	nodes, err := h.store.UpdateNodesBatch(inputs)

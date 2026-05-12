@@ -2837,3 +2837,155 @@ func TestCheckForUpdates_NetworkError(t *testing.T) {
 		t.Errorf("expected advisory message on error; got: %s", text(t, tr))
 	}
 }
+
+// ── revise: occurred_at ───────────────────────────────────────────────────────
+
+func TestRevise_SetsOccurredAt(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "event A", "proj", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":          id,
+		"occurred_at": "2026-05-12",
+	})
+	mustNotError(t, tr)
+
+	// Verify occurred_at is set via history tool.
+	hr := call(t, h, "history", map[string]any{"domain": "proj", "important_only": true})
+	mustNotError(t, hr)
+	if !strings.Contains(text(t, hr), "2026-05-12") {
+		t.Errorf("expected 2026-05-12 in history output after revise; got: %s", text(t, hr))
+	}
+}
+
+func TestRevise_InvalidOccurredAt(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "event B", "proj", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":          id,
+		"occurred_at": "not-a-date",
+	})
+	mustError(t, tr)
+}
+
+func TestRevise_OmittingOccurredAt_LeavesItUnchanged(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "event C", "proj", map[string]any{"occurred_at": "2026-03-01"})
+
+	// Revise label only; occurred_at should remain.
+	tr := call(t, h, "revise", map[string]any{
+		"id":    id,
+		"label": "event C revised",
+	})
+	mustNotError(t, tr)
+
+	// Verify still in important_only history.
+	hr := call(t, h, "history", map[string]any{"domain": "proj", "important_only": true})
+	mustNotError(t, hr)
+	if !strings.Contains(text(t, hr), "2026-03-01") {
+		t.Errorf("occurred_at should be unchanged after label-only revise; got: %s", text(t, hr))
+	}
+}
+
+func TestReviseAll_SetsOccurredAt(t *testing.T) {
+	_, h := newEnv(t)
+	id1 := addNode(t, h, "batch A", "proj", nil)
+	id2 := addNode(t, h, "batch B", "proj", nil)
+
+	tr := call(t, h, "revise_all", map[string]any{
+		"updates": []map[string]any{
+			{"id": id1, "occurred_at": "2026-04-01"},
+			{"id": id2, "occurred_at": "2026-05-01"},
+		},
+	})
+	mustNotError(t, tr)
+
+	hr := call(t, h, "history", map[string]any{"domain": "proj", "important_only": true})
+	mustNotError(t, hr)
+	out := text(t, hr)
+	if !strings.Contains(out, "2026-04-01") {
+		t.Errorf("expected 2026-04-01 in history; got: %s", out)
+	}
+	if !strings.Contains(out, "2026-05-01") {
+		t.Errorf("expected 2026-05-01 in history; got: %s", out)
+	}
+}
+
+// ── history tool ──────────────────────────────────────────────────────────────
+
+func historyIDs(t *testing.T, tr *tools.ToolResult) []string {
+	t.Helper()
+	var nodes []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &nodes); err != nil {
+		t.Fatalf("parse history response: %v", err)
+	}
+	ids := make([]string, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	return ids
+}
+
+func TestHistory_DefaultMode_IncludesAllNodes(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	// Node with occurred_at.
+	idDated := addNode(t, h, "dated", "hist", map[string]any{"occurred_at": "2026-03-01"})
+	// Node without occurred_at.
+	idUndated := addNode(t, h, "undated", "hist", nil)
+
+	tr := call(t, h, "history", map[string]any{"domain": "hist"})
+	mustNotError(t, tr)
+	ids := historyIDs(t, tr)
+	if !contains(ids, idDated) {
+		t.Error("default mode: dated node should be included")
+	}
+	if !contains(ids, idUndated) {
+		t.Error("default mode: undated node should be included")
+	}
+}
+
+func TestHistory_ImportantOnly_ExcludesUndatedNodes(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	idDated := addNode(t, h, "dated event", "hist2", map[string]any{"occurred_at": "2026-04-01"})
+	idUndated := addNode(t, h, "undated node", "hist2", nil)
+
+	tr := call(t, h, "history", map[string]any{"domain": "hist2", "important_only": true})
+	mustNotError(t, tr)
+	ids := historyIDs(t, tr)
+	if !contains(ids, idDated) {
+		t.Error("important_only: dated node should appear")
+	}
+	if contains(ids, idUndated) {
+		t.Error("important_only: undated node should not appear")
+	}
+}
+
+func TestHistory_TagFilter_WholeWordMatch(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	idA := addNode(t, h, "tagged A", "hist3", map[string]any{"tags": "decision architecture"})
+	idB := addNode(t, h, "tagged B", "hist3", map[string]any{"tags": "architecture release"})
+	idC := addNode(t, h, "no match C", "hist3", map[string]any{"tags": "release"})
+	idD := addNode(t, h, "no tags D", "hist3", nil)
+
+	tr := call(t, h, "history", map[string]any{"domain": "hist3", "tags": "architecture"})
+	mustNotError(t, tr)
+	ids := historyIDs(t, tr)
+	if !contains(ids, idA) {
+		t.Error("node with 'decision architecture' should match tag 'architecture'")
+	}
+	if !contains(ids, idB) {
+		t.Error("node with 'architecture release' should match tag 'architecture'")
+	}
+	if contains(ids, idC) {
+		t.Error("node with only 'release' should not match tag 'architecture'")
+	}
+	if contains(ids, idD) {
+		t.Error("node with no tags should not match tag 'architecture'")
+	}
+}
