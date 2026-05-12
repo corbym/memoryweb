@@ -575,8 +575,8 @@ func TestSearchNodes_ArchivedNodeExcluded(t *testing.T) {
 	tr := call(t, h, "search", map[string]any{"query": "Deprecated"})
 	mustNotError(t, tr)
 	if contains(searchIDs(t, tr), id) {
-	t.Error("archived node should not appear in search results")
-}
+		t.Error("archived node should not appear in search results")
+	}
 }
 
 func TestSearchNodes_ArchivedRestored_ReappearsInSearch(t *testing.T) {
@@ -1826,8 +1826,12 @@ func TestAddNode_ResponseShape(t *testing.T) {
 	mustNotError(t, tr)
 
 	var resp struct {
-		Node                 *struct{ ID string `json:"id"` }    `json:"node"`
-		SuggestedConnections *[]struct{ ID string `json:"id"` } `json:"suggested_connections"`
+		Node *struct {
+			ID string `json:"id"`
+		} `json:"node"`
+		SuggestedConnections *[]struct {
+			ID string `json:"id"`
+		} `json:"suggested_connections"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse remember response: %v", err)
@@ -2190,49 +2194,49 @@ func TestSearchNodes_MultiWordFallback_NoSpuriousResults(t *testing.T) {
 func TestSummariseDomain_IncludesNodeIDs(t *testing.T) {
 	_, h := newEnv(t)
 	id1 := addNode(t, h, "ID check node alpha", "id-test-domain", map[string]any{
-	"description": "first node",
+		"description": "first node",
 		"why_matters": "verify id round-trips",
-})
-id2 := addNode(t, h, "ID check node beta", "id-test-domain", map[string]any{
-"description": "second node",
-})
+	})
+	id2 := addNode(t, h, "ID check node beta", "id-test-domain", map[string]any{
+		"description": "second node",
+	})
 
-tr := call(t, h, "orient", map[string]any{"domain": "id-test-domain"})
-mustNotError(t, tr)
-body := text(t, tr)
+	tr := call(t, h, "orient", map[string]any{"domain": "id-test-domain"})
+	mustNotError(t, tr)
+	body := text(t, tr)
 
-// Parse the structured response.
-var resp struct {
-	Nodes []struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
-	} `json:"nodes"`
-	Recent []struct {
-		ID string `json:"id"`
-	} `json:"recent"`
-}
-if err := json.Unmarshal([]byte(body), &resp); err != nil {
-	t.Fatalf("parse summarise_domain response: %v\nbody: %s", err, body)
-}
-
-// Every node entry must have a non-empty ID.
-for _, n := range resp.Nodes {
-	if n.ID == "" {
-		t.Errorf("node %q has empty id in summarise_domain response", n.Label)
+	// Parse the structured response.
+	var resp struct {
+		Nodes []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"nodes"`
+		Recent []struct {
+			ID string `json:"id"`
+		} `json:"recent"`
 	}
-}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("parse summarise_domain response: %v\nbody: %s", err, body)
+	}
 
-// Specifically, both filed IDs must appear.
-var gotIDs []string
-for _, n := range resp.Nodes {
-	gotIDs = append(gotIDs, n.ID)
-}
-if !contains(gotIDs, id1) {
-	t.Errorf("id1 (%s) not found in summarise_domain nodes; got %v", id1, gotIDs)
-}
-if !contains(gotIDs, id2) {
-	t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
-}
+	// Every node entry must have a non-empty ID.
+	for _, n := range resp.Nodes {
+		if n.ID == "" {
+			t.Errorf("node %q has empty id in summarise_domain response", n.Label)
+		}
+	}
+
+	// Specifically, both filed IDs must appear.
+	var gotIDs []string
+	for _, n := range resp.Nodes {
+		gotIDs = append(gotIDs, n.ID)
+	}
+	if !contains(gotIDs, id1) {
+		t.Errorf("id1 (%s) not found in summarise_domain nodes; got %v", id1, gotIDs)
+	}
+	if !contains(gotIDs, id2) {
+		t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
+	}
 }
 
 // ── add_node transient + drift of transient ───────────────────────────────────

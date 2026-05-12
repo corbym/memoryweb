@@ -1022,6 +1022,7 @@ func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) 
 	}
 	return &PathResult{Path: nodes, Edges: edges}, nil
 }
+
 // searchByWords executes a fallback query that matches nodes containing ANY of
 // the provided words in ANY of the searchable fields (label, description,
 // why_matters, tags). Results are ordered by updated_at DESC.
