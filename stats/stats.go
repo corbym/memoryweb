@@ -83,7 +83,7 @@ type sessionData struct {
 	Client          string    `json:"client,omitempty"`
 	StaleChecks     int       `json:"stale_checks,omitempty"`
 	StaleCandidates int       `json:"stale_candidates,omitempty"`
-	DupEdge0        int       `json:"dup_edge_0,omitempty"`  // duplicate candidates with 0 edges
+	DupEdge0        int       `json:"dup_edge_0,omitempty"`   // duplicate candidates with 0 edges
 	DupEdge12       int       `json:"dup_edge_1_2,omitempty"` // 1-2 edges
 	DupEdge35       int       `json:"dup_edge_3_5,omitempty"` // 3-5 edges
 	DupEdge6p       int       `json:"dup_edge_6p,omitempty"`  // 6+ edges
@@ -92,13 +92,13 @@ type sessionData struct {
 // Recorder observes tool calls and writes session summaries.
 // All exported methods are safe for concurrent use.
 type Recorder struct {
-	mu          sync.Mutex
-	humanPath   string // human-readable log; may be empty
-	jsonPath    string // JSONL machine-readable log; may be empty
-	client      string // value of MEMORYWEB_CLIENT env var; may be empty
-	start       time.Time
-	calls       []callRec
-	flushed     bool // true once Flush() has been called
+	mu        sync.Mutex
+	humanPath string // human-readable log; may be empty
+	jsonPath  string // JSONL machine-readable log; may be empty
+	client    string // value of MEMORYWEB_CLIENT env var; may be empty
+	start     time.Time
+	calls     []callRec
+	flushed   bool // true once Flush() has been called
 }
 
 // New returns a Recorder. humanPath receives the human-readable summary;
@@ -343,9 +343,9 @@ func (r *Recorder) computeSession() computedSession {
 			StartTS: r.start, WKD: wkd, Type: sessType,
 			NodesFiled: nodesFiled, EdgesFiled: edgesFiled,
 			Orphans: orphans, Transient: transientFiled,
-			Ratio: math.Round(ratio*100) / 100,
-			Burst:  nodesFiled > 15,
-			Client: r.client,
+			Ratio:           math.Round(ratio*100) / 100,
+			Burst:           nodesFiled > 15,
+			Client:          r.client,
 			StaleChecks:     staleChecks,
 			StaleCandidates: staleCandidates,
 			DupEdge0:        dupEdges[0],
@@ -719,6 +719,3 @@ func imin(a, b int) int {
 	}
 	return b
 }
-
-
-

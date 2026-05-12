@@ -48,6 +48,17 @@ jobs:
       - name: Install gcc and libc-dev (required for CGO/sqlite-vec)
         run: sudo apt-get install -y gcc libc-dev
 
+      - name: Verify semantic tests exist
+        # go test exits 0 even when no tests match the -run pattern.
+        # This step catches accidental deletion before spending 2+ minutes on Ollama setup.
+        run: |
+          count=$(CGO_ENABLED=1 go test -list 'TestSearchSemantic_' ./tools/... | grep -c '^TestSearchSemantic_' || true)
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: no TestSearchSemantic_ tests found — they may have been deleted"
+            exit 1
+          fi
+          echo "OK: found $count TestSearchSemantic_ test(s)"
+
       - name: Run semantic integration tests
         run: CGO_ENABLED=1 go test ./... -run TestSearchSemantic_ -v -timeout 120s
 

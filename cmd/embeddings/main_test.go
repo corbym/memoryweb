@@ -180,4 +180,3 @@ func TestBackfillQuietSuppressesAllOutput(t *testing.T) {
 		t.Errorf("expected no stdout with -q; got:\n%q", got)
 	}
 }
-

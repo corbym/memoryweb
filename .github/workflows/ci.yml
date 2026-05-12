@@ -28,8 +28,32 @@ jobs:
       - name: Install gcc (required for CGO/go-sqlite3)
         run: sudo apt-get install -y gcc
 
+      - name: Check formatting
+        # Prevents "formatting" commits that accidentally delete or corrupt code.
+        # Run 'gofmt -w .' locally to fix, or use the pre-commit hook in hooks/pre-commit.
+        run: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$files"
+            echo "Run: gofmt -w ."
+            exit 1
+          fi
+
       - name: Test
         run: go test ./...
+
+      - name: Verify semantic tests exist
+        # go test -list exits non-zero and prints nothing when no tests match the
+        # pattern. This catches accidental deletion by a formatter before the
+        # integration job (which needs Ollama) would notice.
+        run: |
+          count=$(go test -list 'TestSearchSemantic_' ./tools/... | grep -c '^TestSearchSemantic_' || true)
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: no TestSearchSemantic_ tests found — they may have been deleted by a formatter"
+            exit 1
+          fi
+          echo "OK: found $count TestSearchSemantic_ test(s)"
 
       - name: Build check
         run: go build ./...

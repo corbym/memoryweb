@@ -290,7 +290,6 @@ func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 	return nil
 }
 
-
 // ── setup subcommand ──────────────────────────────────────────────────────────
 
 // detectedAgent represents a desktop MCP client found on the system.
@@ -714,8 +713,8 @@ type DoctorCheck struct {
 // DoctorReport is the full structured output of the doctor command when
 // the --json flag is used.
 type DoctorReport struct {
-	Passed bool           `json:"passed"`
-	Checks []DoctorCheck  `json:"checks"`
+	Passed bool          `json:"passed"`
+	Checks []DoctorCheck `json:"checks"`
 }
 
 // doctorCmd implements the "memoryweb doctor" subcommand.

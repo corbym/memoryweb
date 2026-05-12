@@ -246,4 +246,3 @@ func TestRecord_WhatsStale_ParsesCandidates(t *testing.T) {
 		t.Errorf("dup_edge_3_5 should be 1, got %v", sd["dup_edge_3_5"])
 	}
 }
-

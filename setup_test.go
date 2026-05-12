@@ -461,4 +461,3 @@ func TestSetupMCPServerConfigIdempotent(t *testing.T) {
 		t.Errorf("memoryweb entry should appear exactly once; found %d; config:\n%s", count, data)
 	}
 }
-

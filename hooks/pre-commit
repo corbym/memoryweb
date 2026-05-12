@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pre-commit — git pre-commit hook for memoryweb contributors.
+#
+# Install once:
+#   cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# What it checks:
+#   1. gofmt — fails if any Go file is not formatted, preventing large
+#      "formatting" commits that can accidentally delete code.
+#   2. TestSearchSemantic_ presence — these tests only run in CI with Ollama,
+#      so deletion goes undetected locally without this guard.
+
+set -euo pipefail
+
+# ── 1. gofmt ─────────────────────────────────────────────────────────────────
+
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+  echo "pre-commit: gofmt found unformatted files (run: gofmt -w .):"
+  echo "$unformatted"
+  exit 1
+fi
+
+# ── 2. TestSearchSemantic_ guard ─────────────────────────────────────────────
+
+count=$(go test -list 'TestSearchSemantic_' ./tools/... 2>/dev/null \
+  | grep -c '^TestSearchSemantic_' || true)
+if [ "$count" -eq 0 ]; then
+  echo "pre-commit: TestSearchSemantic_ tests are missing from tools/tools_test.go"
+  echo "  These only run in CI with Ollama — check they haven't been accidentally deleted."
+  exit 1
+fi
+
+echo "pre-commit: OK (gofmt clean, $count TestSearchSemantic_ test(s) present)"
