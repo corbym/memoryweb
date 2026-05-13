@@ -197,6 +197,73 @@ After saving, you can verify what was stored:
 
 ---
 
+## The timeline — significant decisions worth remembering
+
+### What the timeline is for
+
+memoryweb keeps a curated timeline of decisions and events that shaped a project. Placing something on the timeline is a deliberate act — it means "this mattered enough to remember when it happened." It is not a log of everything that gets saved.
+
+A good rule of thumb:
+
+- **Worth adding to the timeline:** architecture decisions, technology choices, key constraints identified, significant bugs and their resolutions, turning points in the project.
+- **Not worth it:** routine findings, build notes, work-in-progress thoughts, short-lived state, anything you would be fine not seeing in a historical summary six months from now.
+
+The goal is a record you can look back on and understand *what shaped the project* — not a transcript of everything that was done.
+
+### How it works — the agent asks, you confirm
+
+The agent should never add something to the timeline without asking you first. When the agent spots something that looks significant — a real choice between options, a constraint that will shape future work — it will propose placing it on the timeline and ask you to confirm.
+
+You confirm, and optionally give or approve a date. If you agree but don't specify a date, the agent uses today's date.
+
+If an agent adds something to the timeline without asking, that's a mistake — not intended behaviour. See "Correcting mistakes" below.
+
+To explicitly put something on the timeline yourself:
+
+> "File that as a significant decision on the timeline. It happened on `<date>`."
+
+> "That's important enough for the timeline — check today's date and save it."
+
+> "Save that, and mark it as significant."
+
+### Reasoning is required
+
+You cannot mark something as significant without explaining why it mattered. If the agent tries to place something on the timeline without a reason, it will be rejected. This is by design — a date with no explanation is not useful history.
+
+If the agent gets stuck or asks for more context, tell it why the decision mattered:
+
+> "Save that — it matters because it rules out the alternative approach we'd been considering."
+
+### Viewing the timeline
+
+To see what's on the timeline:
+
+> "Show me the timeline for `<project>`."
+
+To see only the curated significant decisions, not everything:
+
+> "Show me only the significant decisions for `<project>`."
+
+You can also filter by date range or topic:
+
+> "Show me what happened in `<project>` between January and March."
+
+> "Show me the timeline for `<project>`, filtered to architecture decisions."
+
+### Correcting mistakes
+
+If something was added to the timeline with the wrong date:
+
+> "Correct the date on that decision — it actually happened on `<correct date>`."
+
+> "The date on `<memory label>` is wrong — it should be `<date>`. Fix it."
+
+If something was added to the timeline that shouldn't have been at all, the best option is to archive it and re-save it without placing it on the timeline:
+
+> "Archive `<memory label>` — it shouldn't be on the timeline. I'll tell you what to save instead."
+
+---
+
 ## Common beginner mistakes
 
 **Letting the agent answer from training instead of memory**  
