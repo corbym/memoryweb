@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+# Ensure Go tools are on PATH (VS Code and other GUI apps may not inherit shell PATH)
+export PATH="$PATH:/usr/local/go/bin:/opt/homebrew/bin"
+
 # ── 1. gofmt ─────────────────────────────────────────────────────────────────
 
 unformatted=$(gofmt -l .)
