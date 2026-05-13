@@ -202,6 +202,8 @@ func runPrecompactHook(t *testing.T, stateDir, sessionID string) (string, int) {
 	cmd.Stdin = strings.NewReader(string(payload))
 	cmd.Env = append(os.Environ(),
 		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
+		// Inhibit dream so basic tests don't depend on a real DB or binary.
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
 	)
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -486,6 +488,83 @@ func TestSaveHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 
 	// Point MEMORYWEB_BIN at a non-existent path.
 	out, code := runHookExtra(t, saveHook, sessionID, stateDir, projectsDir,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-dream",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d without dream binary; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"continue":false`) {
+		t.Errorf("expected continue:false even without dream binary; got:\n%s", out)
+	}
+	line := strings.TrimSpace(out)
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+		t.Errorf("hook output is not valid JSON without dream binary: %v\ngot:\n%s", err, out)
+	}
+	stopReason, _ := envelope["stopReason"].(string)
+	if !strings.Contains(stopReason, "remember_all") {
+		t.Errorf("stopReason should still contain filing instructions; got:\n%s", stopReason)
+	}
+}
+
+// ── precompact hook + dream integration tests ─────────────────────────────────
+
+// TestPrecompactHookEmbedsDreamDigest verifies that when the precompact hook
+// fires, it runs the dream binary and embeds its output in the stopReason.
+func TestPrecompactHookEmbedsDreamDigest(t *testing.T) {
+	precompactHook := filepath.Join(hooksDir(t), "memoryweb_precompact_hook.sh")
+	stateDir := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "test.db")
+	sessionID := "test-precompact-dream"
+
+	seedRealisticDB(t, dbPath)
+
+	out, code := runHookExtra(t, precompactHook, sessionID, stateDir, t.TempDir(),
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+
+	if !strings.Contains(out, `"continue":false`) {
+		t.Errorf("expected continue:false; got:\n%s", out)
+	}
+
+	line := strings.TrimSpace(out)
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+		t.Errorf("hook output is not valid JSON: %v\ngot:\n%s", err, out)
+	}
+
+	stopReason, _ := envelope["stopReason"].(string)
+	if stopReason == "" {
+		t.Fatalf("stopReason is empty or missing in:\n%s", out)
+	}
+
+	if !strings.Contains(stopReason, "memoryweb dream") {
+		t.Errorf("stopReason should contain the dream header; got:\n%s", stopReason)
+	}
+	if !strings.Contains(stopReason, "WebGL Renderer Architecture Decision") {
+		t.Errorf("stopReason should contain a recent node label; got:\n%s", stopReason)
+	}
+	if !strings.Contains(stopReason, "Old Canvas-Based Renderer") {
+		t.Errorf("stopReason should surface drift candidate; got:\n%s", stopReason)
+	}
+	if !strings.Contains(stopReason, "remember_all") {
+		t.Errorf("stopReason should contain 'remember_all' filing instruction; got:\n%s", stopReason)
+	}
+}
+
+// TestPrecompactHookBlocksGracefullyWithoutDreamBin verifies that the precompact
+// hook still fires correctly when the dream binary is absent.
+func TestPrecompactHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
+	precompactHook := filepath.Join(hooksDir(t), "memoryweb_precompact_hook.sh")
+	stateDir := t.TempDir()
+	sessionID := "test-precompact-no-dream"
+
+	out, code := runHookExtra(t, precompactHook, sessionID, stateDir, t.TempDir(),
 		"MEMORYWEB_BIN=/nonexistent/memoryweb-dream",
 	)
 	if code != 0 {

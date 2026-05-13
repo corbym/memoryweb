@@ -3,6 +3,9 @@
 # Periodically prompts the model to file session findings to memoryweb.
 set -euo pipefail
 
+# shellcheck source=memoryweb_lib.sh
+source "$(dirname "$0")/memoryweb_lib.sh"
+
 SAVE_INTERVAL="${MEMORYWEB_SAVE_INTERVAL:-15}"
 STATE_DIR="${MEMORYWEB_HOOK_STATE_DIR:-${HOME}/.memoryweb/hook_state}"
 PROJECTS_DIR="${MEMORYWEB_PROJECTS_DIR:-${HOME}/.claude/projects}"
@@ -74,15 +77,7 @@ if command -v "${MEMORYWEB_BIN}" >/dev/null 2>&1; then
   dream_digest=$("${MEMORYWEB_BIN}" dream --db "${MEMORYWEB_DB}" 2>/dev/null || true)
 fi
 
-# JSON-escape the digest: \  →  \\   then  "  →  \"   then control chars
-_dq='"'
-_esc="${dream_digest//$'\\'/\\\\}"
-_esc="${_esc//$_dq/\\\"}"
-_esc="${_esc//$'\n'/\\n}"
-_esc="${_esc//$'\t'/\\t}"
-_esc="${_esc//$'\r'/\\r}"
-_esc="${_esc//$'\b'/\\b}"
-_esc="${_esc//$'\f'/\\f}"
+memoryweb_json_escape "${dream_digest}"
 
 if [ -n "${_esc}" ]; then
   printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now.\\n\\n%s\\n\\nCall remember_all with any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n' "${_esc}"
