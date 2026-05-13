@@ -98,7 +98,7 @@ memoryweb purge --domain sedex         # scope to a domain
 memoryweb purge --before 2026-01-01    # only nodes archived before a date
 ```
 
-The `dream` subcommand prints a digest of recent nodes and drift candidates — useful for session orientation and embedded automatically by the save hook at filing time.
+The `dream` subcommand prints a digest of recent nodes and drift candidates — useful for session orientation and embedded automatically by the save and precompact hooks at filing time.
 
 ```bash
 memoryweb dream                              # reads ~/.memoryweb.db
