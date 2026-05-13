@@ -508,6 +508,9 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		}
 		occurredAt = &t
 	}
+	if occurredAt != nil && a.WhyMatters == "" {
+		return nil, fmt.Errorf("occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.")
+	}
 	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags, a.Transient)
 	if err != nil {
 		return nil, err
@@ -972,6 +975,9 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 			}
 			occurredAt = &t
 		}
+		if occurredAt != nil && n.WhyMatters == "" {
+			return nil, fmt.Errorf("node %d: occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.", i)
+		}
 		inputs[i] = db.NodeInput{
 			Label:       n.Label,
 			Description: n.Description,
@@ -1058,6 +1064,18 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 		}
 		occurredAt = &t
 	}
+	if occurredAt != nil {
+		callHasWhyMatters := a.WhyMatters != nil && *a.WhyMatters != ""
+		if !callHasWhyMatters {
+			existing, err := h.store.GetNode(a.ID)
+			if err != nil {
+				return nil, err
+			}
+			if existing.Node.WhyMatters == "" {
+				return nil, fmt.Errorf("occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.")
+			}
+		}
+	}
 	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt)
 	if err != nil {
 		return nil, err
@@ -1095,6 +1113,18 @@ func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
 				}
 			}
 			occurredAt = &t
+		}
+		if occurredAt != nil {
+			callHasWhyMatters := u.WhyMatters != nil && *u.WhyMatters != ""
+			if !callHasWhyMatters {
+				existing, err := h.store.GetNode(u.ID)
+				if err != nil {
+					return nil, fmt.Errorf("update %d: %w", i, err)
+				}
+				if existing.Node.WhyMatters == "" {
+					return nil, fmt.Errorf("update %d: occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.", i)
+				}
+			}
 		}
 		inputs[i] = db.NodeUpdateInput{
 			ID:          u.ID,
