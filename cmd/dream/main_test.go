@@ -188,3 +188,51 @@ func TestDreamReportShowsNodeCount(t *testing.T) {
 		t.Errorf("output should contain 'Recent nodes (3):'; got:\n%s", out)
 	}
 }
+
+// TestDreamReportShowsDisconnectedSection: the output includes a disconnected
+// nodes section; orphan nodes are listed, connected nodes are not.
+func TestDreamReportShowsDisconnectedSection(t *testing.T) {
+	dbPath, store := newTestDB(t)
+	mustAddNode(t, store, "Orphan Node", "test")
+	connectedID := mustAddNode(t, store, "Connected Node", "test")
+	otherID := mustAddNode(t, store, "Other Node", "test")
+	store.AddEdge(connectedID, otherID, "connects_to", "") //nolint:errcheck
+	store.Close()
+
+	out, code := runDream(t, "--db", dbPath)
+	if code != 0 {
+		t.Fatalf("dream exited %d; output:\n%s", code, out)
+	}
+
+	// Extract the disconnected section only.
+	idx := strings.Index(out, "Disconnected nodes (")
+	if idx < 0 {
+		t.Fatalf("output should contain 'Disconnected nodes ('; got:\n%s", out)
+	}
+	disconnectedSection := out[idx:]
+
+	if !strings.Contains(disconnectedSection, "Orphan Node") {
+		t.Errorf("orphan node label should appear in disconnected section; got:\n%s", disconnectedSection)
+	}
+	if strings.Contains(disconnectedSection, "Connected Node") {
+		t.Errorf("connected node should not appear in disconnected section; got:\n%s", disconnectedSection)
+	}
+}
+
+// TestDreamReportDisconnectedNone: empty disconnected section when all nodes
+// are connected.
+func TestDreamReportDisconnectedNone(t *testing.T) {
+	dbPath, store := newTestDB(t)
+	aID := mustAddNode(t, store, "Alpha", "test")
+	bID := mustAddNode(t, store, "Beta", "test")
+	store.AddEdge(aID, bID, "connects_to", "") //nolint:errcheck
+	store.Close()
+
+	out, code := runDream(t, "--db", dbPath)
+	if code != 0 {
+		t.Fatalf("dream exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, "Disconnected nodes (0):") {
+		t.Errorf("output should contain 'Disconnected nodes (0):'; got:\n%s", out)
+	}
+}

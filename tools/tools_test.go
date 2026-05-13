@@ -3458,3 +3458,49 @@ func TestHistory_TagFilter_WholeWordMatch(t *testing.T) {
 		t.Error("node with no tags should not match tag 'architecture'")
 	}
 }
+
+func TestRemember_OrphanWarning_PresentWhenNoConnections(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"label":  "lonely node",
+		"domain": "test",
+	})
+	mustNotError(t, tr)
+	if !strings.Contains(tr.Content[0].Text, "orphan_warning") {
+		t.Error("expected orphan_warning field in response")
+	}
+	if !strings.Contains(tr.Content[0].Text, "No connections were made") {
+		t.Error("expected orphan_warning message in response")
+	}
+}
+
+func TestRemember_OrphanWarning_AbsentWhenRelatedToProvided(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "anchor", "test", nil)
+	tr := call(t, h, "remember", map[string]any{
+		"label":      "linked node",
+		"domain":     "test",
+		"related_to": []string{idA},
+	})
+	mustNotError(t, tr)
+	if strings.Contains(tr.Content[0].Text, `"orphan_warning"`) {
+		t.Error("orphan_warning should be absent when related_to was provided")
+	}
+}
+
+func TestRememberAll_OrphanWarning_PresentWhenNoEdges(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember_all", map[string]any{
+		"nodes": []map[string]any{
+			{"label": "node one", "domain": "test"},
+			{"label": "node two", "domain": "test"},
+		},
+	})
+	mustNotError(t, tr)
+	if !strings.Contains(tr.Content[0].Text, "orphan_warning") {
+		t.Error("expected orphan_warning field in remember_all response")
+	}
+	if !strings.Contains(tr.Content[0].Text, "No connections were made") {
+		t.Error("expected orphan_warning message in remember_all response")
+	}
+}

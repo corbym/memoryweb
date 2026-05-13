@@ -68,7 +68,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",
-			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer remember_all for batches — and always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists. If so, suggest linking to it with connect rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates. Use transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete. The response includes a suggested_connections field — review these and call connect for any that are relevant.",
+			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer remember_all for batches — and always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists. If so, suggest linking to it with connect rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates. Use transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete. The response includes a suggested_connections field — always call connect or connect_all for any that are relevant before ending your session.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -265,7 +265,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "remember_all",
-			Description: "File multiple memories in a single transaction. Prefer this over multiple remember calls when filing several findings at once.",
+			Description: "File multiple memories in a single transaction. Prefer this over multiple remember calls when filing several findings at once. After filing, always call connect_all to link the nodes you've just filed — nodes without connections lose context immediately.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -551,14 +551,21 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		duplicates = []db.Node{}
 	}
 
+	orphanWarning := ""
+	if len(a.RelatedTo) == 0 {
+		orphanWarning = "No connections were made. Call connect or connect_all now — an isolated memory loses context immediately."
+	}
+
 	resp := struct {
 		Node                 *db.Node            `json:"node"`
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
 		PossibleDuplicates   []db.Node           `json:"possible_duplicates"`
+		OrphanWarning        string              `json:"orphan_warning,omitempty"`
 	}{
 		Node:                 node,
 		SuggestedConnections: suggestions,
 		PossibleDuplicates:   duplicates,
+		OrphanWarning:        orphanWarning,
 	}
 	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -1005,7 +1012,17 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 		}
 		result[i] = entry{Node: n, SuggestedConnections: suggestions}
 	}
-	b, _ := json.MarshalIndent(result, "", "  ")
+	orphanWarning := ""
+	if len(nodes) > 0 {
+		orphanWarning = "No connections were made. Call connect_all now to link these nodes — isolated memories lose context immediately."
+	}
+
+	type response struct {
+		Nodes         []entry `json:"nodes"`
+		OrphanWarning string  `json:"orphan_warning,omitempty"`
+	}
+	out := response{Nodes: result, OrphanWarning: orphanWarning}
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
