@@ -2116,6 +2116,228 @@ func TestAuditLog_RecordsUpdateNode(t *testing.T) {
 	}
 }
 
+// ── occurred_at propose+confirm descriptions ──────────────────────────────────
+
+// TestOccurredAt_ToolDescriptions_ContainProposeConfirmGuidance verifies that
+// every tool which accepts occurred_at carries the propose+confirm wording in
+// its schema description, so agents receive the correct guidance at runtime.
+func TestOccurredAt_ToolDescriptions_ContainProposeConfirmGuidance(t *testing.T) {
+	_, h := newEnv(t)
+
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+
+	var resp struct {
+		Tools []struct {
+			Name        string          `json:"name"`
+			InputSchema json.RawMessage `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+
+	toolIndex := map[string]json.RawMessage{}
+	for _, td := range resp.Tools {
+		toolIndex[td.Name] = td.InputSchema
+	}
+
+	// Tools whose top-level properties include an occurred_at field with a
+	// description we control. remember_all and revise_all use an items-level
+	// description, so we check the items description via the containing field.
+	topLevelTools := []string{"remember", "revise"}
+	for _, name := range topLevelTools {
+		t.Run(name, func(t *testing.T) {
+			schema, ok := toolIndex[name]
+			if !ok {
+				t.Fatalf("tool %q not found in ListTools", name)
+			}
+			var s struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			}
+			if err := json.Unmarshal(schema, &s); err != nil {
+				t.Fatalf("unmarshal schema: %v", err)
+			}
+			oat, ok := s.Properties["occurred_at"]
+			if !ok {
+				t.Fatalf("tool %q has no occurred_at property", name)
+			}
+			for _, phrase := range []string{"propose", "confirm", "Never set silently", "Never guess"} {
+				if !strings.Contains(oat.Description, phrase) {
+					t.Errorf("tool %q occurred_at description missing phrase %q;\ngot: %s", name, phrase, oat.Description)
+				}
+			}
+		})
+	}
+
+	// For remember_all and revise_all the occurred_at guidance is embedded in
+	// the array items description (the top-level description for the nodes /
+	// updates field).
+	arrayTools := map[string]string{
+		"remember_all": "nodes",
+		"revise_all":   "updates",
+	}
+	for name, fieldName := range arrayTools {
+		name, fieldName := name, fieldName
+		t.Run(name, func(t *testing.T) {
+			schema, ok := toolIndex[name]
+			if !ok {
+				t.Fatalf("tool %q not found in ListTools", name)
+			}
+			var s struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			}
+			if err := json.Unmarshal(schema, &s); err != nil {
+				t.Fatalf("unmarshal schema: %v", err)
+			}
+			field, ok := s.Properties[fieldName]
+			if !ok {
+				t.Fatalf("tool %q has no %q property", name, fieldName)
+			}
+			for _, phrase := range []string{"propose+confirm", "Never guess"} {
+				if !strings.Contains(field.Description, phrase) {
+					t.Errorf("tool %q.%q description missing phrase %q;\ngot: %s", name, fieldName, phrase, field.Description)
+				}
+			}
+		})
+	}
+}
+
+// ── audit_log provenance for occurred_at ─────────────────────────────────────
+
+// TestAuditLog_OccurredAt_Remember: when remember sets occurred_at, the
+// audit_log must record an entry with action="occurred_at_set" and
+// provenance="agent-assigned".
+func TestAuditLog_OccurredAt_Remember(t *testing.T) {
+	dbPath, _, h := newEnvWithPath(t)
+
+	id := addNode(t, h, "significant decision", "proj", map[string]any{
+		"occurred_at": "2024-06-01",
+	})
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+
+	rows, err := rawDB.Query(
+		`SELECT action, provenance FROM audit_log WHERE node_id = ? ORDER BY actioned_at ASC`, id,
+	)
+	if err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	defer rows.Close()
+
+	type entry struct {
+		action     string
+		provenance sql.NullString
+	}
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.action, &e.provenance); err != nil {
+			t.Fatalf("scan audit_log row: %v", err)
+		}
+		entries = append(entries, e)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 audit_log entry, got %d", len(entries))
+	}
+	if entries[0].action != "occurred_at_set" {
+		t.Errorf("action: got %q, want %q", entries[0].action, "occurred_at_set")
+	}
+	if !entries[0].provenance.Valid || entries[0].provenance.String != "agent-assigned" {
+		t.Errorf("provenance: got %q, want %q", entries[0].provenance.String, "agent-assigned")
+	}
+}
+
+// TestAuditLog_OccurredAt_Revise: when revise sets occurred_at, the audit_log
+// update entry must have provenance="agent-assigned".
+func TestAuditLog_OccurredAt_Revise(t *testing.T) {
+	dbPath, _, h := newEnvWithPath(t)
+	id := addNode(t, h, "some decision", "proj", nil)
+
+	mustNotError(t, call(t, h, "revise", map[string]any{
+		"id":          id,
+		"occurred_at": "2024-06-15",
+	}))
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+
+	rows, err := rawDB.Query(
+		`SELECT action, provenance FROM audit_log WHERE node_id = ? ORDER BY actioned_at ASC`, id,
+	)
+	if err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	defer rows.Close()
+
+	type entry struct {
+		action     string
+		provenance sql.NullString
+	}
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.action, &e.provenance); err != nil {
+			t.Fatalf("scan audit_log row: %v", err)
+		}
+		entries = append(entries, e)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 audit_log entry, got %d", len(entries))
+	}
+	if entries[0].action != "update" {
+		t.Errorf("action: got %q, want %q", entries[0].action, "update")
+	}
+	if !entries[0].provenance.Valid || entries[0].provenance.String != "agent-assigned" {
+		t.Errorf("provenance: got %q, want %q", entries[0].provenance.String, "agent-assigned")
+	}
+}
+
+// TestAuditLog_NoOccurredAt_ProvenanceIsNull: when revise does NOT set
+// occurred_at, the audit_log entry must have a NULL provenance.
+func TestAuditLog_NoOccurredAt_ProvenanceIsNull(t *testing.T) {
+	dbPath, _, h := newEnvWithPath(t)
+	id := addNode(t, h, "plain node", "proj", nil)
+
+	mustNotError(t, call(t, h, "revise", map[string]any{
+		"id":          id,
+		"description": "updated description only",
+	}))
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+
+	var provenance sql.NullString
+	err = rawDB.QueryRow(
+		`SELECT provenance FROM audit_log WHERE node_id = ? AND action = 'update'`, id,
+	).Scan(&provenance)
+	if err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if provenance.Valid {
+		t.Errorf("provenance should be NULL when occurred_at is not set, got %q", provenance.String)
+	}
+}
+
 // ── search_nodes multi-word fallback ─────────────────────────────────────────
 
 // TestSearchNodes_MultiWordFallback: multi-word query where no field contains

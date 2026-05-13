@@ -76,7 +76,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"description": {Type: "string", Description: "What this node is about"},
 					"why_matters": {Type: "string", Description: "Why this is significant - the 'so what'"},
 					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general')"},
-					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime for when this event occurred (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Only supply when the user has explicitly told you when this event occurred, or when this is a significant decision or event that belongs on the timeline. Do not guess. Do not infer from context. Future dates are valid for planned events or reminders."},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime for when this event occurred. Set only via the propose+confirm model: (1) recognise that something looks like a significant decision — a choice between options, a constraint that shapes future work, or a principle that will be referenced again — (2) propose filing it on the timeline and ask the user to confirm, (3) set occurred_at only after the user agrees. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders."},
 					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
 					"related_to": {
 						Type:        "array",
@@ -271,7 +271,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 				Properties: map[string]Property{
 					"nodes": {
 						Type:        "array",
-						Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — only supply for significant events; do not guess).",
+						Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — only set via propose+confirm: recognise significance, propose to user, get confirmation, then set. Never guess or infer a date. If the user confirms without a date, use today's system date).",
 						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["label","domain"]}`),
 					},
 				},
@@ -289,7 +289,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"description": {Type: "string", Description: "New description (optional)"},
 					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
 					"tags":        {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
-					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime to correct when this event occurred (e.g. '2026-04-01' or '2026-04-01T14:30:00Z'). Only supply when the user has explicitly told you when this event occurred. Do not guess. Do not infer from context."},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. Set only via the propose+confirm model: propose significance to the user, get confirmation, then set. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date."},
 				},
 				Required: []string{"id"},
 			},
@@ -329,7 +329,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 				Properties: map[string]Property{
 					"updates": {
 						Type:        "array",
-						Description: "Array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at.",
+						Description: "Array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — only set via propose+confirm: propose to user, get confirmation, then set. Never guess or infer a date).",
 						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"}},"required":["id"]}`),
 					},
 				},

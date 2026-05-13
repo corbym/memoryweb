@@ -429,6 +429,14 @@ var migrations = []migration{
 			return nil
 		},
 	},
+	{
+		version: 10,
+		desc:    "audit_log: add provenance column",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`ALTER TABLE audit_log ADD COLUMN provenance TEXT`)
+			return err
+		},
+	},
 }
 
 // migrate creates the schema_migrations tracking table (if needed) then applies
@@ -575,6 +583,16 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 	// Generate and store an embedding for semantic search (best-effort).
 	if embedding, err := embed(label + " " + description + " " + whyMatters); err == nil {
 		s.storeEmbedding(id, embedding)
+	}
+
+	// Audit occurred_at provenance when set by a tool.
+	if occurredAt != nil {
+		now2 := time.Now().UTC()
+		provenance := "agent-assigned"
+		_, _ = s.db.Exec(
+			`INSERT INTO audit_log (id, action, node_id, node_label, provenance, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			"auditlog-"+shortID(), "occurred_at_set", id, label, provenance, now2,
+		)
 	}
 
 	return &Node{
@@ -1381,6 +1399,18 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 		return nil, err
 	}
 
+	// Audit occurred_at provenance for any nodes where it was set (best-effort, after commit).
+	for _, n := range nodes {
+		if n.OccurredAt != nil {
+			now2 := time.Now().UTC()
+			provenance := "agent-assigned"
+			_, _ = s.db.Exec(
+				`INSERT INTO audit_log (id, action, node_id, node_label, provenance, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
+				"auditlog-"+shortID(), "occurred_at_set", n.ID, n.Label, provenance, now2,
+			)
+		}
+	}
+
 	// Generate and store embeddings for each node (best-effort, after commit).
 	for _, n := range nodes {
 		text := n.Label + " " + n.Description + " " + n.WhyMatters
@@ -1907,9 +1937,14 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	if len(changes) > 0 {
 		reason = "changed: " + strings.Join(changes, "; ")
 	}
+	var provenance *string
+	if occurredAt != nil {
+		p := "agent-assigned"
+		provenance = &p
+	}
 	if _, err := s.db.Exec(
-		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		"auditlog-"+shortID(), "update", id, cur.Label, reason, now,
+		`INSERT INTO audit_log (id, action, node_id, node_label, reason, provenance, actioned_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"auditlog-"+shortID(), "update", id, cur.Label, reason, provenance, now,
 	); err != nil {
 		return nil, err
 	}
@@ -2028,9 +2063,14 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 		if len(changes) > 0 {
 			reason = "changed: " + strings.Join(changes, "; ")
 		}
+		var batchProvenance *string
+		if inp.OccurredAt != nil {
+			p := "agent-assigned"
+			batchProvenance = &p
+		}
 		if _, err := tx.Exec(
-			`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			"auditlog-"+shortID(), "update", inp.ID, cur.Label, reason, now,
+			`INSERT INTO audit_log (id, action, node_id, node_label, reason, provenance, actioned_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			"auditlog-"+shortID(), "update", inp.ID, cur.Label, reason, batchProvenance, now,
 		); err != nil {
 			tx.Rollback()
 			return nil, err
