@@ -29,6 +29,68 @@ This makes it a **decision log**, not an event log. An event log records what ha
 
 The `why_matters` field is not optional. A node without it is an event, not a decision.
 
+## Table of contents
+
+- [Installation](#installation)
+- [MCP config](#mcp-config)
+- [Storage](#storage)
+- [Tools](#tools)
+  - [Filing memories](#filing-memories)
+  - [Connecting memories](#connecting-memories)
+  - [Retrieving memories](#retrieving-memories)
+  - [Archive / forget](#archive--forget)
+  - [Domain aliases](#domain-aliases)
+  - [Relationship types](#relationship-types)
+- [Conventions](#conventions)
+- [CLI](#cli)
+- [Hooks](#hooks)
+- [Updating](#updating)
+- [Build](#build)
+
+## Installation
+
+**Homebrew (macOS and Linux — recommended):**
+
+```bash
+brew tap corbym/memoryweb
+brew install memoryweb
+```
+
+Pre-built binaries are also available on the [releases page](https://github.com/corbym/memoryweb/releases/latest) for each platform. Step-by-step setup guides covering installation, Ollama, and MCP client configuration:
+
+- [macOS (Apple Silicon & Intel)](docs/install-macos.md)
+- [Linux (x86-64 & ARM64)](docs/install-linux.md)
+- [Windows (x86-64)](docs/install-windows.md)
+
+Once installed, see the **[User guide](docs/user-guide.md)** for how to orient the agent, what phrases to use, and how to get the most out of memoryweb in Claude Code, GitHub Copilot, and Claude Desktop.
+
+## MCP config
+
+Add to your MCP host's config (example for Claude Desktop on macOS — `~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "memoryweb": {
+      "command": "/path/to/memoryweb",
+      "env": {
+        "MEMORYWEB_DB": "/Users/yourname/.memoryweb.db"
+      }
+    }
+  }
+}
+```
+
+`memoryweb setup` writes this file automatically when the Claude application directory is detected.
+
+> **Note:** ChatGPT Desktop does not support stdio-based MCP servers and is not compatible with memoryweb.
+
+## Storage
+
+Default DB path: `~/.memoryweb.db`
+
+Override with `MEMORYWEB_DB=/path/to/your.db`
+
 ## Tools
 
 ### Filing memories
@@ -86,6 +148,18 @@ Nodes are never hard-deleted via the tools. Archive = soft delete; the node disa
 
 ### Relationship types
 `caused_by` `led_to` `blocked_by` `unblocks` `connects_to` `contradicts` `depends_on` `is_example_of`
+
+## Conventions
+
+- Use `domain` to separate concerns: `deep-game`, `sedex`, `general`
+- Call `list_domains` at session start if you don't know what domains exist
+- The `why_matters` field is the most important one for retrieval — don't skip it
+- The `narrative` on a connection is the *because* — the reasoning that makes it meaningful, not just the fact that a connection exists
+- Add connections immediately after filing related nodes, or use `related_to` on `remember` to auto-connect at creation time
+- Call `recent` or `orient` at the start of a session to orient without needing to know what to search for
+- Use `why_connected` when asking about the relationship between two specific things
+- Use `transient: true` for ticket state, sprint notes, or anything expected to go stale within days — `whats_stale` will surface these for cleanup
+- `remember` returns `suggested_connections` and `possible_duplicates` — review both before filing more nodes
 
 ## CLI
 
@@ -152,100 +226,6 @@ Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[
 [i] Last activity:   2026-04-29 update (node "open question on backfill")
 [i] Update:          running dev build — skipping update check
 ```
-
-## Installation
-
-**Homebrew (macOS and Linux — recommended):**
-
-```bash
-brew tap corbym/memoryweb
-brew install memoryweb
-```
-
-Pre-built binaries are also available on the [releases page](https://github.com/corbym/memoryweb/releases/latest) for each platform. Step-by-step setup guides covering installation, Ollama, and MCP client configuration:
-
-- [macOS (Apple Silicon & Intel)](docs/install-macos.md)
-- [Linux (x86-64 & ARM64)](docs/install-linux.md)
-- [Windows (x86-64)](docs/install-windows.md)
-
-Once installed, see the **[User guide](docs/user-guide.md)** for how to orient the agent, what phrases to use, and how to get the most out of memoryweb in Claude Code, GitHub Copilot, and Claude Desktop.
-
-## Updating
-
-To check whether a newer version is available, run:
-
-```bash
-memoryweb doctor
-```
-
-The `Update:` line in the output will tell you if a newer release is available and where to download it. You can also ask the agent directly — the `check_for_updates` tool checks GitHub for the latest release and tells you the current and latest versions.
-
-To update:
-
-**Homebrew:**
-
-```bash
-brew update && brew upgrade memoryweb
-```
-
-**Manual:**
-
-1. Download the latest binary for your platform from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
-2. Replace the existing binary (build tip: rename to `memoryweb.tmp` first, then `mv memoryweb.tmp memoryweb` so the replacement is atomic).
-3. Restart your MCP client (Claude Code, Claude Desktop, etc.) so it picks up the new binary.
-
-Your database is forward-compatible — the binary runs any pending migrations automatically on startup.
-
-## Build
-
-```bash
-go build -o memoryweb .
-```
-
-Requires Go 1.22+. Uses `github.com/mattn/go-sqlite3` and [sqlite-vec](https://github.com/asg017/sqlite-vec) for semantic search — CGO must be available. To deploy safely when the binary is already running:
-
-```bash
-go build -o memoryweb.tmp . && mv memoryweb.tmp memoryweb
-```
-
-## Storage
-
-Default DB path: `~/.memoryweb.db`
-
-Override with `MEMORYWEB_DB=/path/to/your.db`
-
-## MCP config
-
-Add to your MCP host's config (example for Claude Desktop on macOS — `~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "memoryweb": {
-      "command": "/path/to/memoryweb",
-      "env": {
-        "MEMORYWEB_DB": "/Users/yourname/.memoryweb.db"
-      }
-    }
-  }
-}
-```
-
-`memoryweb setup` writes this file automatically when the Claude application directory is detected.
-
-> **Note:** ChatGPT Desktop does not support stdio-based MCP servers and is not compatible with memoryweb.
-
-## Conventions
-
-- Use `domain` to separate concerns: `deep-game`, `sedex`, `general`
-- Call `list_domains` at session start if you don't know what domains exist
-- The `why_matters` field is the most important one for retrieval — don't skip it
-- The `narrative` on a connection is the *because* — the reasoning that makes it meaningful, not just the fact that a connection exists
-- Add connections immediately after filing related nodes, or use `related_to` on `remember` to auto-connect at creation time
-- Call `recent` or `orient` at the start of a session to orient without needing to know what to search for
-- Use `why_connected` when asking about the relationship between two specific things
-- Use `transient: true` for ticket state, sprint notes, or anything expected to go stale within days — `whats_stale` will surface these for cleanup
-- `remember` returns `suggested_connections` and `possible_duplicates` — review both before filing more nodes
 
 ## Hooks
 
@@ -366,3 +346,41 @@ VS Code loads the hooks automatically — no restart needed. If you have already
 **Claude Desktop and GitHub Copilot cloud agent do not support hooks.** Add session-start and filing instructions to your system prompt manually. `memoryweb setup` configures Claude Desktop's MCP server entry automatically when it detects the application's data directory.
 
 **GitHub Copilot cloud agent** (the coding agent that runs on GitHub.com) uses a different hook format and event model that does not include `Stop` or `PreCompact`. Add filing instructions to your system prompt for that surface instead.
+
+## Updating
+
+To check whether a newer version is available, run:
+
+```bash
+memoryweb doctor
+```
+
+The `Update:` line in the output will tell you if a newer release is available and where to download it. You can also ask the agent directly — the `check_for_updates` tool checks GitHub for the latest release and tells you the current and latest versions.
+
+To update:
+
+**Homebrew:**
+
+```bash
+brew update && brew upgrade memoryweb
+```
+
+**Manual:**
+
+1. Download the latest binary for your platform from the [releases page](https://github.com/corbym/memoryweb/releases/latest).
+2. Replace the existing binary (build tip: rename to `memoryweb.tmp` first, then `mv memoryweb.tmp memoryweb` so the replacement is atomic).
+3. Restart your MCP client (Claude Code, Claude Desktop, etc.) so it picks up the new binary.
+
+Your database is forward-compatible — the binary runs any pending migrations automatically on startup.
+
+## Build
+
+```bash
+go build -o memoryweb .
+```
+
+Requires Go 1.22+. Uses `github.com/mattn/go-sqlite3` and [sqlite-vec](https://github.com/asg017/sqlite-vec) for semantic search — CGO must be available. To deploy safely when the binary is already running:
+
+```bash
+go build -o memoryweb.tmp . && mv memoryweb.tmp memoryweb
+```
