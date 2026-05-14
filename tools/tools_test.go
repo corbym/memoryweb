@@ -216,6 +216,7 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		"remember_all", "connect_all",
 		"suggest_connections",
 		"list_domains", "disconnect", "disconnected", "trace",
+		"rename_domain",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {
@@ -3502,5 +3503,78 @@ func TestRememberAll_OrphanWarning_PresentWhenNoEdges(t *testing.T) {
 	}
 	if !strings.Contains(tr.Content[0].Text, "No connections were made") {
 		t.Error("expected orphan_warning message in remember_all response")
+	}
+}
+
+// ── rename_domain ─────────────────────────────────────────────────────────────
+
+func TestRenameDomain_RenamesNodesAndCreatesAlias(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Alpha", "old-dom", nil)
+	addNode(t, h, "Beta", "old-dom", nil)
+
+	tr := call(t, h, "rename_domain", map[string]any{
+		"old_domain": "old-dom",
+		"new_domain": "new-dom",
+	})
+	mustNotError(t, tr)
+	if !strings.Contains(tr.Content[0].Text, `"nodes_renamed": 2`) {
+		t.Errorf("unexpected response: %s", tr.Content[0].Text)
+	}
+	if !strings.Contains(tr.Content[0].Text, "old-dom → new-dom") {
+		t.Errorf("alias_created missing: %s", tr.Content[0].Text)
+	}
+
+	// Old domain should resolve to new domain via alias.
+	resolve := call(t, h, "resolve_domain", map[string]any{"name": "old-dom"})
+	mustNotError(t, resolve)
+	if !strings.Contains(resolve.Content[0].Text, "new-dom") {
+		t.Errorf("alias did not resolve: %s", resolve.Content[0].Text)
+	}
+
+	// Nodes should now be searchable under new domain.
+	search := call(t, h, "search", map[string]any{"query": "Alpha", "domain": "new-dom"})
+	mustNotError(t, search)
+	if !strings.Contains(search.Content[0].Text, "Alpha") {
+		t.Errorf("node not found in new domain: %s", search.Content[0].Text)
+	}
+}
+
+func TestRenameDomain_OldDomainNotFound_ReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "rename_domain", map[string]any{
+		"old_domain": "nonexistent",
+		"new_domain": "anything",
+	})
+	mustError(t, tr)
+	if !strings.Contains(tr.Content[0].Text, "no live nodes") {
+		t.Errorf("unexpected error text: %s", tr.Content[0].Text)
+	}
+}
+
+func TestRenameDomain_NewDomainAlreadyExists_DirectsToMerge(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Alpha", "domain-a", nil)
+	addNode(t, h, "Beta", "domain-b", nil)
+
+	tr := call(t, h, "rename_domain", map[string]any{
+		"old_domain": "domain-a",
+		"new_domain": "domain-b",
+	})
+	mustError(t, tr)
+	if !strings.Contains(tr.Content[0].Text, "merge_domains") {
+		t.Errorf("error should mention merge_domains: %s", tr.Content[0].Text)
+	}
+}
+
+func TestRenameDomain_InListTools(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	if !strings.Contains(string(b), `"rename_domain"`) {
+		t.Error("rename_domain not present in ListTools output")
 	}
 }

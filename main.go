@@ -72,6 +72,9 @@ func main() {
 		case "doctor":
 			doctorCmd()
 			return
+		case "merge-domains":
+			mergeDomainsCmd()
+			return
 		}
 	}
 
@@ -1028,6 +1031,64 @@ func checkLatestRelease() (string, error) {
 		return "", fmt.Errorf("empty tag_name in response")
 	}
 	return body.TagName, nil
+}
+
+// mergeDomainsCmd implements the "memoryweb merge-domains" subcommand.
+func mergeDomainsCmd() {
+	flags := flag.NewFlagSet("merge-domains", flag.ExitOnError)
+	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
+	source := flags.String("source", "", "source domain to merge from (required)")
+	target := flags.String("target", "", "target domain to merge into (required)")
+	dryRun := flags.Bool("dry-run", false, "print what would happen without making changes")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	if *source == "" || *target == "" {
+		fmt.Fprintln(os.Stderr, "error: --source and --target are required")
+		flags.Usage()
+		os.Exit(1)
+	}
+
+	store, err := db.New(*dbFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	if err := runMergeDomains(store, os.Stdout, *source, *target, *dryRun); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runMergeDomains performs or previews the domain merge. Separated from
+// mergeDomainsCmd so tests can inject a writer.
+func runMergeDomains(store *db.Store, out io.Writer, source, target string, dryRun bool) error {
+	result, err := store.MergeDomains(source, target, dryRun)
+	if err != nil {
+		return err
+	}
+
+	if dryRun {
+		fmt.Fprintf(out, "Would move %d node(s) from %q to %q.", result.NodesMoved, source, target)
+		if len(result.LabelCollisions) == 0 {
+			fmt.Fprintln(out, " No label collisions detected.")
+		} else {
+			fmt.Fprintf(out, " %d label collision(s) detected: %s\n",
+				len(result.LabelCollisions), strings.Join(result.LabelCollisions, ", "))
+		}
+		return nil
+	}
+
+	fmt.Fprintf(out, "Moved %d node(s) from %q to %q. Alias %q → %q created.",
+		result.NodesMoved, source, target, source, target)
+	if len(result.LabelCollisions) == 0 {
+		fmt.Fprintln(out, "")
+	} else {
+		fmt.Fprintf(out, " %d label collision(s): %s\n",
+			len(result.LabelCollisions), strings.Join(result.LabelCollisions, ", "))
+	}
+	return nil
 }
 
 func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, *RPCError) {

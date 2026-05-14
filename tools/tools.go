@@ -398,6 +398,18 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
+			Name:        "rename_domain",
+			Description: "Rename a domain. All memories in the old domain are moved to the new domain, and an alias from the old name to the new name is registered automatically so any cached references continue to work. Returns the number of memories renamed and the alias created. Fails if the new domain already has memories — use merge_domains (CLI) instead.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"old_domain": {Type: "string", Description: "The current domain name to rename"},
+					"new_domain": {Type: "string", Description: "The new domain name. Must not already have live memories."},
+				},
+				Required: []string{"old_domain", "new_domain"},
+			},
+		},
+		{
 			Name:        "check_for_updates",
 			Description: "Check whether a newer version of memoryweb is available. Returns the current version, the latest available version, and instructions for updating. Call this when the user asks if memoryweb is up to date.",
 			InputSchema: InputSchema{
@@ -471,6 +483,8 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		result, err = h.tracePath(req.Arguments)
 	case "visualise":
 		result, err = h.visualise(req.Arguments)
+	case "rename_domain":
+		result, err = h.renameDomain(req.Arguments)
 	case "check_for_updates":
 		result, err = h.checkForUpdates(req.Arguments)
 	default:
@@ -1394,4 +1408,27 @@ func (h *Handler) checkForUpdates(_ json.RawMessage) (*ToolResult, error) {
 			"the existing binary, then restart your MCP client.",
 		latest, h.version,
 	)), nil
+}
+
+func (h *Handler) renameDomain(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		OldDomain string `json:"old_domain"`
+		NewDomain string `json:"new_domain"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.OldDomain == "" || a.NewDomain == "" {
+		return errorResult("old_domain and new_domain are required"), nil
+	}
+	result, err := h.store.RenameDomain(a.OldDomain, a.NewDomain)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	out := map[string]interface{}{
+		"nodes_renamed": result.NodesRenamed,
+		"alias_created": result.OldDomain + " → " + result.NewDomain,
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
