@@ -91,6 +91,11 @@ func main() {
 		case "merge-domains":
 			mergeDomainsCmd()
 			return
+		default:
+			fmt.Fprintf(os.Stderr, "memoryweb: unknown subcommand %q\n\n", os.Args[1])
+			fmt.Fprintln(os.Stderr, "Subcommands: setup, doctor, dream, backfill, merge-domains, version")
+			fmt.Fprintln(os.Stderr, "Run 'memoryweb --help' for usage.")
+			os.Exit(1)
 		}
 	}
 
