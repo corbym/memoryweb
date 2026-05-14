@@ -57,6 +57,22 @@ type Notification struct {
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "--help", "-h", "help":
+			fmt.Fprintf(os.Stdout, "memoryweb %s\n\n", Version)
+			fmt.Fprintln(os.Stdout, "Usage: memoryweb [subcommand] [flags]")
+			fmt.Fprintln(os.Stdout, "")
+			fmt.Fprintln(os.Stdout, "When run without a subcommand, memoryweb starts as an MCP server (stdin/stdout).")
+			fmt.Fprintln(os.Stdout, "")
+			fmt.Fprintln(os.Stdout, "Subcommands:")
+			fmt.Fprintln(os.Stdout, "  setup          Install Claude Code hooks and configure desktop MCP clients")
+			fmt.Fprintln(os.Stdout, "  doctor         Run diagnostic checks on the installation")
+			fmt.Fprintln(os.Stdout, "  dream          Print a digest of recent nodes and drift candidates")
+			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one")
+			fmt.Fprintln(os.Stdout, "  merge-domains  Merge all nodes from one domain into another")
+			fmt.Fprintln(os.Stdout, "  version        Print the version and exit")
+			fmt.Fprintln(os.Stdout, "")
+			fmt.Fprintln(os.Stdout, "Run 'memoryweb <subcommand> --help' for subcommand-specific flags.")
+			return
 		case "--version", "-v", "version":
 			fmt.Println(Version)
 			return
