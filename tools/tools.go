@@ -391,7 +391,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain":    {Type: "string", Description: "A domain name (e.g. 'memoryweb-meta'). Do not pass a memory ID here — use memory_id instead."},
+					"domain":    {Type: "string", Description: "A domain name (e.g. 'memoryweb-meta'). To visualise a single memory by ID, use the memory_id parameter instead."},
 					"memory_id": {Type: "string", Description: "A memory ID. Returns the neighbourhood: the memory plus all directly connected memories and connections. Takes precedence over domain if both are supplied."},
 					"limit":     {Type: "integer", Description: "Max nodes to include in domain mode (default 40, max 100). Most-connected nodes are prioritised when truncating."},
 				},
