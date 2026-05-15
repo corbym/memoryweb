@@ -3120,7 +3120,7 @@ func TestVisualiseNeighbourhood_MultipleConnections(t *testing.T) {
 		"from_node": idA, "to_node": idC, "relationship": "depends_on", "narrative": "a depends on c",
 	}))
 
-	tr := call(t, h, "visualise", map[string]any{"node_id": idA})
+	tr := call(t, h, "visualise", map[string]any{"memory_id": idA})
 	mustNotError(t, tr)
 
 	var resp struct {
@@ -3187,7 +3187,7 @@ func TestVisualiseNeighbourhood_NoConnections(t *testing.T) {
 	domain := "test-vis-nb-2"
 	idA := addNode(t, h, "Lone node", domain, nil)
 
-	tr := call(t, h, "visualise", map[string]any{"node_id": idA})
+	tr := call(t, h, "visualise", map[string]any{"memory_id": idA})
 	mustNotError(t, tr)
 
 	var resp struct {
@@ -3211,7 +3211,7 @@ func TestVisualiseNeighbourhood_NoConnections(t *testing.T) {
 
 func TestVisualiseNeighbourhood_UnknownNodeID(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "visualise", map[string]any{"node_id": "no-such-node-id"})
+	tr := call(t, h, "visualise", map[string]any{"memory_id": "no-such-node-id"})
 	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "not found") {
 		t.Errorf("error message should mention 'not found'; got: %s", text(t, tr))
@@ -3226,8 +3226,8 @@ func TestVisualiseNeighbourhood_NodeIDTakesPrecedenceOverDomain(t *testing.T) {
 	addNode(t, h, "Beta", domain, nil)
 	addNode(t, h, "Gamma", domain, nil)
 
-	// domain has 3 nodes; node_id points to an isolated node — result should be 1 node, not 3.
-	tr := call(t, h, "visualise", map[string]any{"node_id": idA, "domain": domain})
+	// domain has 3 nodes; memory_id points to an isolated memory — result should be 1 node, not 3.
+	tr := call(t, h, "visualise", map[string]any{"memory_id": idA, "domain": domain})
 	mustNotError(t, tr)
 
 	var resp struct {
@@ -3237,7 +3237,7 @@ func TestVisualiseNeighbourhood_NodeIDTakesPrecedenceOverDomain(t *testing.T) {
 		t.Fatalf("parse response: %v", err)
 	}
 	if resp.NodeCount != 1 {
-		t.Errorf("node_id should take precedence: expected 1 node, got %d", resp.NodeCount)
+		t.Errorf("memory_id should take precedence: expected 1 node, got %d", resp.NodeCount)
 	}
 }
 

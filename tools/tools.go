@@ -80,7 +80,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
 					"related_to": {
 						Type:        "array",
-						Description: "Optional list of nodes to auto-connect at creation time. Each item is either a plain node ID string (creates a connects_to edge) or an object with id and relationship fields. Invalid or unknown IDs are silently skipped.",
+						Description: "Optional list of memories to auto-connect at creation time. Each item is either a plain memory ID string (creates a connects_to connection) or an object with id and relationship fields. Invalid or unknown IDs are silently skipped.",
 						Items:       json.RawMessage(`{"oneOf":[{"type":"string"},{"type":"object","properties":{"id":{"type":"string"},"relationship":{"type":"string"}},"required":["id"],"additionalProperties":false}]}`),
 					},
 					"transient": {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient nodes older than 7 days are surfaced by whats_stale as archiving candidates."},
@@ -90,7 +90,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "connect",
-			Description: "Connect two memories with a typed, narrative relationship. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of — and both node IDs must already exist before calling this.",
+			Description: "Connect two memories with a typed, narrative relationship. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of — and both memory IDs must already exist before calling this.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -108,7 +108,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id": {Type: "string", Description: "Node ID"},
+					"id": {Type: "string", Description: "Memory ID"},
 				},
 				Required: []string{"id"},
 			},
@@ -222,7 +222,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "restore",
-			Description: "Restore an archived memory so it surfaces in search again. This reverses forget; obtain the node_id from forgotten.",
+			Description: "Restore an archived memory so it surfaces in search again. This reverses forget; obtain the memory ID from forgotten.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -254,7 +254,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Return all known memories for a domain structured for synthesis. Synthesise the result into concise prose covering current state, blockers, recent decisions, and open questions. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool.",
+			Description: "Return all known memories for a domain structured for synthesis. Synthesise the result into concise prose covering current state, blockers, recent decisions, and open questions. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Other tools in this server: remember, remember_all, recall, revise, revise_all, connect, connect_all, search, recent, history, orient, visualise, trace, why_connected, suggest_connections, forget, restore, forgotten, whats_stale, disconnected, alias_domain, list_aliases, remove_alias, resolve_domain, list_domains, rename_domain, disconnect, check_for_updates.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -296,7 +296,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "suggest_connections",
-			Description: "Given a node ID, return up to 5 candidate connections from the same domain whose labels, descriptions, or tags overlap with the source node. Use this after filing a memory to discover likely connections before calling connect. This tool is read-only — it never creates connections.",
+			Description: "Given a memory ID, return up to 5 candidate connections from the same domain whose labels, descriptions, or tags overlap with the source memory. Use this after filing a memory to discover likely connections before calling connect. This tool is read-only — it never creates connections.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -367,7 +367,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "trace",
-			Description: "Find the shortest chain of relationships connecting two concepts (by node ID). Returns the ordered path in `path` and all edges connected to any node along that chain in `edges` — including branches not on the direct route. Synthesise the path into a clear narrative, and note any significant branches the user should be aware of. Returns 'No path found' if the two nodes are not connected within 6 hops.",
+			Description: "Find the shortest chain of relationships connecting two concepts (by memory ID). Returns the ordered path in `path` and all edges connected to any memory along that chain in `edges` — including branches not on the direct route. Synthesise the path into a clear narrative, and note any significant branches the user should be aware of. Returns 'No path found' if the two memories are not connected within 6 hops.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -380,7 +380,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		{
 			Name: "visualise",
 			Description: "Generate a Mermaid.js flowchart. " +
-				"Pass `node_id` to see a single node and all its direct connections. " +
+				"Pass `memory_id` to see a single memory and all its direct connections. " +
 				"Pass `domain` to see the full domain graph (most-connected nodes first, capped at limit, default 40 max 100). " +
 				"Returns a JSON object with `mermaid` (the diagram source), `node_count`, `edge_count`, `truncated` (true when the domain has more nodes than the limit), " +
 				"`nodes` ([{id, label}]) and `edges` ([{from, to, relationship}]) for structured rendering. " +
@@ -391,9 +391,9 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain":  {Type: "string", Description: "A domain name (e.g. 'memoryweb-meta'). Do not pass a node ID here — use node_id instead."},
-					"node_id": {Type: "string", Description: "A node ID. Returns the neighbourhood: the node plus all directly connected nodes and edges. Takes precedence over domain if both are supplied."},
-					"limit":   {Type: "integer", Description: "Max nodes to include in domain mode (default 40, max 100). Most-connected nodes are prioritised when truncating."},
+					"domain":    {Type: "string", Description: "A domain name (e.g. 'memoryweb-meta'). Do not pass a memory ID here — use memory_id instead."},
+					"memory_id": {Type: "string", Description: "A memory ID. Returns the neighbourhood: the memory plus all directly connected memories and connections. Takes precedence over domain if both are supplied."},
+					"limit":     {Type: "integer", Description: "Max nodes to include in domain mode (default 40, max 100). Most-connected nodes are prioritised when truncating."},
 				},
 			},
 		},
@@ -1283,9 +1283,9 @@ func sanitiseMermaidLabel(s string) string {
 
 func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
-		Domain string `json:"domain"`
-		NodeID string `json:"node_id"`
-		Limit  int    `json:"limit"`
+		Domain   string `json:"domain"`
+		MemoryID string `json:"memory_id"`
+		Limit    int    `json:"limit"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -1296,9 +1296,9 @@ func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 	var truncated bool
 
 	switch {
-	case a.NodeID != "":
+	case a.MemoryID != "":
 		var err error
-		nodes, edges, err = h.store.GetNodeNeighbourhood(a.NodeID)
+		nodes, edges, err = h.store.GetNodeNeighbourhood(a.MemoryID)
 		if err != nil {
 			return &ToolResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: err.Error()}}}, nil
 		}
@@ -1315,7 +1315,7 @@ func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: `{"error":"no content found for domain"}`}}}, nil
 		}
 	default:
-		return nil, fmt.Errorf("domain or node_id is required")
+		return nil, fmt.Errorf("domain or memory_id is required")
 	}
 
 	// Build positional alias map (n0, n1, …) so Mermaid source stays readable.
