@@ -571,28 +571,37 @@ func (s *Store) RemoveAlias(alias string) error {
 func (s *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time, tags string, transient bool) (*Node, error) {
 	id := slug(label) + "-" + shortID()
 	now := time.Now().UTC()
-	_, err := s.db.Exec(
-		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags, transient)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, label, description, whyMatters, domain, now, now, occurredAt, tags, transient,
-	)
+
+	// Atomically insert the node and (when occurred_at is set) its audit row.
+	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
-
-	// Generate and store an embedding for semantic search (best-effort).
-	if embedding, err := embed(label + " " + description + " " + whyMatters); err == nil {
-		s.storeEmbedding(id, embedding)
+	if _, err := tx.Exec(
+		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags, transient)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, label, description, whyMatters, domain, now, now, occurredAt, tags, transient,
+	); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if occurredAt != nil {
+		provenance := "agent-assigned"
+		if _, err := tx.Exec(
+			`INSERT INTO audit_log (id, action, node_id, node_label, provenance, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			"auditlog-"+shortID(), "occurred_at_set", id, label, provenance, now,
+		); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
-	// Audit occurred_at provenance when set by a tool.
-	if occurredAt != nil {
-		now2 := time.Now().UTC()
-		provenance := "agent-assigned"
-		_, _ = s.db.Exec(
-			`INSERT INTO audit_log (id, action, node_id, node_label, provenance, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			"auditlog-"+shortID(), "occurred_at_set", id, label, provenance, now2,
-		)
+	// Generate and store an embedding for semantic search (best-effort, after commit).
+	if embedding, err := embed(label + " " + description + " " + whyMatters); err == nil {
+		s.storeEmbedding(id, embedding)
 	}
 
 	return &Node{
@@ -1925,14 +1934,6 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	}
 	args = append(args, id)
 
-	if _, err := s.db.Exec(
-		`UPDATE nodes SET `+strings.Join(sets, ", ")+` WHERE id = ?`,
-		args...,
-	); err != nil {
-		return nil, err
-	}
-
-	// Write audit log entry.
 	reason := "no fields changed"
 	if len(changes) > 0 {
 		reason = "changed: " + strings.Join(changes, "; ")
@@ -1942,10 +1943,27 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 		p := "agent-assigned"
 		provenance = &p
 	}
-	if _, err := s.db.Exec(
+
+	// Atomically update the node and write the audit row in a single transaction.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(
+		`UPDATE nodes SET `+strings.Join(sets, ", ")+` WHERE id = ?`,
+		args...,
+	); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if _, err := tx.Exec(
 		`INSERT INTO audit_log (id, action, node_id, node_label, reason, provenance, actioned_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		"auditlog-"+shortID(), "update", id, cur.Label, reason, provenance, now,
 	); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
