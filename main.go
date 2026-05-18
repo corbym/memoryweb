@@ -69,6 +69,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "  dream          Print a digest of recent nodes and drift candidates")
 			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one")
 			fmt.Fprintln(os.Stdout, "  merge-domains  Merge all nodes from one domain into another")
+			fmt.Fprintln(os.Stdout, "  purge          Hard-delete archived nodes (requires --confirm or --dry-run)")
 			fmt.Fprintln(os.Stdout, "  version        Print the version and exit")
 			fmt.Fprintln(os.Stdout, "")
 			fmt.Fprintln(os.Stdout, "Run 'memoryweb <subcommand> --help' for subcommand-specific flags.")
@@ -91,9 +92,12 @@ func main() {
 		case "merge-domains":
 			mergeDomainsCmd()
 			return
+		case "purge":
+			purgeCmd()
+			return
 		default:
 			fmt.Fprintf(os.Stderr, "memoryweb: unknown subcommand %q\n\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "Subcommands: setup, doctor, dream, backfill, merge-domains, version")
+			fmt.Fprintln(os.Stderr, "Subcommands: setup, doctor, dream, backfill, merge-domains, purge, version")
 			fmt.Fprintln(os.Stderr, "Run 'memoryweb --help' for usage.")
 			os.Exit(1)
 		}
@@ -1110,6 +1114,59 @@ func runMergeDomains(store *db.Store, out io.Writer, source, target string, dryR
 			len(result.LabelCollisions), strings.Join(result.LabelCollisions, ", "))
 	}
 	return nil
+}
+
+func purgeCmd() {
+	flags := flag.NewFlagSet("purge", flag.ExitOnError)
+	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
+	domainFlag := flags.String("domain", "", "scope purge to this domain only")
+	beforeFlag := flags.String("before", "", "purge only nodes archived before this ISO8601 date (e.g. 2026-01-01)")
+	dryRun := flags.Bool("dry-run", false, "print what would be purged without deleting anything")
+	confirm := flags.Bool("confirm", false, "required to actually execute; without it nothing is deleted")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	if !*dryRun && !*confirm {
+		fmt.Fprintln(os.Stderr, "warning: no action taken. Use --confirm to purge archived nodes, or --dry-run to preview.")
+		os.Exit(1)
+	}
+
+	var beforeTime *time.Time
+	if *beforeFlag != "" {
+		t, err := time.Parse(time.RFC3339, *beforeFlag)
+		if err != nil {
+			t, err = time.Parse("2006-01-02", *beforeFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: invalid --before value (use ISO8601 date or datetime): %s\n", *beforeFlag)
+				os.Exit(1)
+			}
+		}
+		beforeTime = &t
+	}
+
+	store, err := db.New(*dbFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	result, err := store.Purge(*domainFlag, beforeTime, *dryRun)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *dryRun {
+		fmt.Printf("DRY RUN — no changes will be made.\n")
+		fmt.Printf("%d archived node(s) would be purged:\n", len(result.Nodes))
+		for _, n := range result.Nodes {
+			fmt.Printf("  - %s (id: %s, archived: %s)\n",
+				n.Label, n.ID, n.ArchivedAt.UTC().Format(time.RFC3339))
+		}
+		return
+	}
+
+	fmt.Printf("%d node(s) purged, %d edge(s) removed\n", len(result.Nodes), result.TotalEdges)
 }
 
 func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, *RPCError) {
