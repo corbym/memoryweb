@@ -68,38 +68,46 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",
-			Description: "File a concept, decision, or finding. Use this for a single entry only — prefer remember_all for batches — and always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists. If so, suggest linking to it with connect rather than creating a duplicate. Duplicate nodes with no edges are the most common cause of drift candidates. Use transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete. The response includes a suggested_connections field — always call connect or connect_all for any that are relevant before ending your session.",
+			Description: "File one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field — always call connect for any that are relevant before ending your session.\n\nBatch mode (provide items array): file multiple memories in a single transaction. After filing, always call connect to link the nodes you've just filed — nodes without connections lose context immediately. Batch mode does not support related_to; use connect after filing.\n\nFor occurred_at in either mode: set only via the propose+confirm model: (1) recognise that something looks like a significant decision — a choice between options, a constraint that shapes future work, or a principle that will be referenced again — (2) propose filing it on the timeline and ask the user to confirm, (3) set occurred_at only after the user agrees. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"label":       {Type: "string", Description: "Short name for this node (e.g. 'RST $10 boot crash')"},
+					"label":       {Type: "string", Description: "Short name for this node (e.g. 'RST $10 boot crash'). Required in single mode; omit when using items."},
 					"description": {Type: "string", Description: "What this node is about"},
 					"why_matters": {Type: "string", Description: "Why this is significant - the 'so what'"},
-					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general')"},
-					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime for when this event occurred. Set only via the propose+confirm model: (1) recognise that something looks like a significant decision — a choice between options, a constraint that shapes future work, or a principle that will be referenced again — (2) propose filing it on the timeline and ask the user to confirm, (3) set occurred_at only after the user agrees. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders."},
+					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general'). Required in single mode; omit when using items."},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. propose+confirm: recognise a significant decision, propose to user, confirm before setting. Never set silently. Never guess or infer a date. Single mode only."},
 					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
 					"related_to": {
 						Type:        "array",
-						Description: "Optional list of memories to auto-connect at creation time. Each item is either a plain memory ID string (creates a connects_to connection) or an object with id and relationship fields. Invalid or unknown IDs are silently skipped.",
+						Description: "Optional list of memories to auto-connect at creation time. Single mode only. Each item is either a plain memory ID string (creates a connects_to connection) or an object with id and relationship fields. Invalid or unknown IDs are silently skipped.",
 						Items:       json.RawMessage(`{"oneOf":[{"type":"string"},{"type":"object","properties":{"id":{"type":"string"},"relationship":{"type":"string"}},"required":["id"],"additionalProperties":false}]}`),
 					},
 					"transient": {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient nodes older than 7 days are surfaced by whats_stale as archiving candidates."},
+					"items": {
+						Type:        "array",
+						Description: "Batch mode: array of node objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — propose+confirm only, Never guess), transient (boolean).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["label","domain"]}`),
+					},
 				},
-				Required: []string{"label", "domain"},
 			},
 		},
 		{
 			Name:        "connect",
-			Description: "Connect two memories with a typed, narrative relationship. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of — and both memory IDs must already exist before calling this.",
+			Description: "Connect memories with typed, narrative relationships. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of — and all memory IDs must already exist before calling this.\n\nSingle mode (omit items): provide from_node, to_node, relationship directly.\n\nBatch mode (provide items array): create multiple connections in a single transaction.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"from_node":    {Type: "string", Description: "ID of the source node"},
-					"to_node":      {Type: "string", Description: "ID of the target node"},
-					"relationship": {Type: "string", Description: "Type of relationship", Enum: []string{"caused_by", "led_to", "blocked_by", "unblocks", "connects_to", "contradicts", "depends_on", "is_example_of"}},
+					"from_node":    {Type: "string", Description: "ID of the source node. Required in single mode; omit when using items."},
+					"to_node":      {Type: "string", Description: "ID of the target node. Required in single mode; omit when using items."},
+					"relationship": {Type: "string", Description: "Type of relationship. Required in single mode.", Enum: []string{"caused_by", "led_to", "blocked_by", "unblocks", "connects_to", "contradicts", "depends_on", "is_example_of"}},
 					"narrative":    {Type: "string", Description: "The story of this connection - why these two things are linked"},
+					"items": {
+						Type:        "array",
+						Description: "Batch mode: array of edge objects. Each must have from_node, to_node, relationship (string). Optional: narrative (string).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"from_node":{"type":"string"},"to_node":{"type":"string"},"relationship":{"type":"string"},"narrative":{"type":"string"}},"required":["from_node","to_node","relationship"]}`),
+					},
 				},
-				Required: []string{"from_node", "to_node", "relationship"},
 			},
 		},
 		{
@@ -254,7 +262,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Return all known memories for a domain structured for synthesis. Response includes: nodes (all live memories), recent (most recently changed), and declared_spine (key decisions in chronological order — nodes with occurred_at set). Synthesise into concise prose covering current state, blockers, recent decisions, and open questions; weigh the declared_spine heavily as it represents explicitly curated significance. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Other tools in this server: remember, remember_all, recall, revise, revise_all, connect, connect_all, search, recent, history, orient, visualise, trace, why_connected, suggest_connections, forget, restore, forgotten, whats_stale, disconnected, alias_domain, list_aliases, remove_alias, resolve_domain, list_domains, rename_domain, disconnect, check_for_updates.",
+			Description: "Return all known memories for a domain structured for synthesis. Response includes: nodes (all live memories), recent (most recently changed), and declared_spine (key decisions in chronological order — nodes with occurred_at set). Synthesise into concise prose covering current state, blockers, recent decisions, and open questions; weigh the declared_spine heavily as it represents explicitly curated significance. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Other tools in this server: remember, recall, revise, connect, search, recent, history, orient, visualise, trace, why_connected, suggest_connections, forget, restore, forgotten, whats_stale, disconnected, alias_domain, list_aliases, remove_alias, resolve_domain, list_domains, rename_domain, disconnect, check_for_updates.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -264,34 +272,23 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
-			Name:        "remember_all",
-			Description: "File multiple memories in a single transaction. Prefer this over multiple remember calls when filing several findings at once. After filing, always call connect_all to link the nodes you've just filed — nodes without connections lose context immediately.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"nodes": {
-						Type:        "array",
-						Description: "Array of node objects. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — only set via propose+confirm: recognise significance, propose to user, get confirmation, then set. Never guess or infer a date. If the user confirms without a date, use today's system date).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["label","domain"]}`),
-					},
-				},
-				Required: []string{"nodes"},
-			},
-		},
-		{
 			Name:        "revise",
-			Description: "Update the label, description, why_matters, tags, or occurred_at of an existing live memory. Only the fields you provide are changed — omitted fields keep their current values. Use this to enrich or correct a memory without archiving and recreating it. Returns the full updated memory.",
+			Description: "Update one or more existing live memories. Only the fields you provide are changed — omitted fields keep their current values. Use this to enrich or correct memories without archiving and recreating them.\n\nSingle mode (omit items): provide id and any fields to update. Returns the full updated memory.\n\nBatch mode (provide items array): update multiple memories in a single transaction. All updates succeed or all are rolled back. Returns an updated array.\n\nFor occurred_at in either mode: set only via the propose+confirm model: propose significance to the user, get confirmation, then set. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id":          {Type: "string", Description: "ID of the node to update"},
+					"id":          {Type: "string", Description: "ID of the node to update. Required in single mode; omit when using items."},
 					"label":       {Type: "string", Description: "New label (optional)"},
 					"description": {Type: "string", Description: "New description (optional)"},
 					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
 					"tags":        {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
-					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. Set only via the propose+confirm model: propose significance to the user, get confirmation, then set. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date."},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. propose+confirm: recognise a significant decision, propose to user, confirm before setting. Never set silently. Never guess or infer a date. Single mode only."},
+					"items": {
+						Type:        "array",
+						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — propose+confirm only, Never guess).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"}},"required":["id"]}`),
+					},
 				},
-				Required: []string{"id"},
 			},
 		},
 		{
@@ -304,36 +301,6 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"limit": {Type: "integer", Description: "Max candidates to return (default 5)"},
 				},
 				Required: []string{"id"},
-			},
-		},
-		{
-			Name:        "connect_all",
-			Description: "Create multiple connections in a single transaction.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"edges": {
-						Type:        "array",
-						Description: "Array of edge objects. Each must have from_node, to_node, relationship (string), and narrative (string, optional).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"from_node":{"type":"string"},"to_node":{"type":"string"},"relationship":{"type":"string"},"narrative":{"type":"string"}},"required":["from_node","to_node","relationship"]}`),
-					},
-				},
-				Required: []string{"edges"},
-			},
-		},
-		{
-			Name:        "revise_all",
-			Description: "Update multiple existing memories in a single transaction. All updates succeed or all are rolled back. Only the fields you provide are changed — omitted fields keep their current values.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"updates": {
-						Type:        "array",
-						Description: "Array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — only set via propose+confirm: propose to user, get confirmation, then set. Never guess or infer a date).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"}},"required":["id"]}`),
-					},
-				},
-				Required: []string{"updates"},
 			},
 		},
 		{
@@ -464,15 +431,15 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	case "orient":
 		result, err = h.summariseDomain(req.Arguments)
 	case "remember_all":
-		result, err = h.addNodes(req.Arguments)
-	case "suggest_connections":
-		result, err = h.suggestEdges(req.Arguments)
+		return errorResult("unknown tool: remember_all — use remember with an items array for batch filing"), nil
 	case "connect_all":
-		result, err = h.addEdges(req.Arguments)
+		return errorResult("unknown tool: connect_all — use connect with an items array for batch connections"), nil
 	case "revise":
 		result, err = h.updateNode(req.Arguments)
 	case "revise_all":
-		result, err = h.updateNodes(req.Arguments)
+		return errorResult("unknown tool: revise_all — use revise with an items array for batch updates"), nil
+	case "suggest_connections":
+		result, err = h.suggestEdges(req.Arguments)
 	case "list_domains":
 		result, err = h.listDomains(req.Arguments)
 	case "disconnect":
@@ -498,6 +465,17 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 }
 
 func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
+	// Peek for items field to decide mode.
+	var peek struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(args, &peek); err != nil {
+		return nil, err
+	}
+	if len(peek.Items) > 0 && string(peek.Items) != "null" {
+		return h.addNodesBatch(peek.Items)
+	}
+
 	var a struct {
 		Label       string            `json:"label"`
 		Description string            `json:"description"`
@@ -567,7 +545,7 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 
 	orphanWarning := ""
 	if len(a.RelatedTo) == 0 {
-		orphanWarning = "No connections were made. Call connect or connect_all now — an isolated memory loses context immediately."
+		orphanWarning = "No connections were made. Call connect now — an isolated memory loses context immediately."
 	}
 
 	resp := struct {
@@ -582,24 +560,6 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		OrphanWarning:        orphanWarning,
 	}
 	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
-}
-
-func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		FromNode     string `json:"from_node"`
-		ToNode       string `json:"to_node"`
-		Relationship string `json:"relationship"`
-		Narrative    string `json:"narrative"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return nil, err
-	}
-	edge, err := h.store.AddEdge(a.FromNode, a.ToNode, a.Relationship, a.Narrative)
-	if err != nil {
-		return nil, err
-	}
-	b, _ := json.MarshalIndent(edge, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
@@ -980,23 +940,22 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Nodes []struct {
-			Label       string `json:"label"`
-			Description string `json:"description"`
-			WhyMatters  string `json:"why_matters"`
-			Tags        string `json:"tags"`
-			Domain      string `json:"domain"`
-			OccurredAt  string `json:"occurred_at"`
-			Transient   bool   `json:"transient"`
-		} `json:"nodes"`
+// addNodesBatch handles the batch mode of remember: items is the raw JSON array of node objects.
+func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
+	var nodeList []struct {
+		Label       string `json:"label"`
+		Description string `json:"description"`
+		WhyMatters  string `json:"why_matters"`
+		Tags        string `json:"tags"`
+		Domain      string `json:"domain"`
+		OccurredAt  string `json:"occurred_at"`
+		Transient   bool   `json:"transient"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := json.Unmarshal(items, &nodeList); err != nil {
 		return nil, err
 	}
-	inputs := make([]db.NodeInput, len(a.Nodes))
-	for i, n := range a.Nodes {
+	inputs := make([]db.NodeInput, len(nodeList))
+	for i, n := range nodeList {
 		var occurredAt *time.Time
 		if n.OccurredAt != "" {
 			t, err := time.Parse(time.RFC3339, n.OccurredAt)
@@ -1040,7 +999,7 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 	}
 	orphanWarning := ""
 	if len(nodes) > 0 {
-		orphanWarning = "No connections were made. Call connect_all now to link these nodes — isolated memories lose context immediately."
+		orphanWarning = "No connections were made. Call connect now to link these nodes — isolated memories lose context immediately."
 	}
 
 	type response struct {
@@ -1052,20 +1011,71 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func (h *Handler) addEdges(args json.RawMessage) (*ToolResult, error) {
+// addNodes retains the old remember_all wire format for backward compat during transition (not exposed in ListTools).
+func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
-		Edges []struct {
-			FromNode     string `json:"from_node"`
-			ToNode       string `json:"to_node"`
-			Relationship string `json:"relationship"`
-			Narrative    string `json:"narrative"`
-		} `json:"edges"`
+		Nodes []struct {
+			Label       string `json:"label"`
+			Description string `json:"description"`
+			WhyMatters  string `json:"why_matters"`
+			Tags        string `json:"tags"`
+			Domain      string `json:"domain"`
+			OccurredAt  string `json:"occurred_at"`
+			Transient   bool   `json:"transient"`
+		} `json:"nodes"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
 	}
-	inputs := make([]db.EdgeInput, len(a.Edges))
-	for i, e := range a.Edges {
+	raw, err := json.Marshal(a.Nodes)
+	if err != nil {
+		return nil, err
+	}
+	return h.addNodesBatch(raw)
+}
+
+func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
+	// Peek for items field to decide mode.
+	var peek struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(args, &peek); err != nil {
+		return nil, err
+	}
+	if len(peek.Items) > 0 && string(peek.Items) != "null" {
+		return h.addEdgesBatch(peek.Items)
+	}
+
+	var a struct {
+		FromNode     string `json:"from_node"`
+		ToNode       string `json:"to_node"`
+		Relationship string `json:"relationship"`
+		Narrative    string `json:"narrative"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	edge, err := h.store.AddEdge(a.FromNode, a.ToNode, a.Relationship, a.Narrative)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(edge, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+// addEdgesBatch handles the batch mode of connect: items is the raw JSON array of edge objects.
+func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
+	var edgeList []struct {
+		FromNode     string `json:"from_node"`
+		ToNode       string `json:"to_node"`
+		Relationship string `json:"relationship"`
+		Narrative    string `json:"narrative"`
+	}
+	if err := json.Unmarshal(items, &edgeList); err != nil {
+		return nil, err
+	}
+	inputs := make([]db.EdgeInput, len(edgeList))
+	for i, e := range edgeList {
 		inputs[i] = db.EdgeInput{
 			FromNode:     e.FromNode,
 			ToNode:       e.ToNode,
@@ -1081,7 +1091,19 @@ func (h *Handler) addEdges(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
+
 func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
+	// Peek for items field to decide mode.
+	var peek struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(args, &peek); err != nil {
+		return nil, err
+	}
+	if len(peek.Items) > 0 && string(peek.Items) != "null" {
+		return h.updateNodesBatch(peek.Items)
+	}
+
 	var a struct {
 		ID          string  `json:"id"`
 		Label       *string `json:"label"`
@@ -1127,22 +1149,21 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Updates []struct {
-			ID          string  `json:"id"`
-			Label       *string `json:"label"`
-			Description *string `json:"description"`
-			WhyMatters  *string `json:"why_matters"`
-			Tags        *string `json:"tags"`
-			OccurredAt  *string `json:"occurred_at"`
-		} `json:"updates"`
+// updateNodesBatch handles the batch mode of revise: items is the raw JSON array of update objects.
+func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
+	var updateList []struct {
+		ID          string  `json:"id"`
+		Label       *string `json:"label"`
+		Description *string `json:"description"`
+		WhyMatters  *string `json:"why_matters"`
+		Tags        *string `json:"tags"`
+		OccurredAt  *string `json:"occurred_at"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := json.Unmarshal(items, &updateList); err != nil {
 		return nil, err
 	}
-	inputs := make([]db.NodeUpdateInput, len(a.Updates))
-	for i, u := range a.Updates {
+	inputs := make([]db.NodeUpdateInput, len(updateList))
+	for i, u := range updateList {
 		if u.ID == "" {
 			return nil, fmt.Errorf("update %d: id is required", i)
 		}
@@ -1188,6 +1209,29 @@ func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
 	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
+
+// updateNodes retains the old revise_all wire format for backward compat during transition (not exposed in ListTools).
+func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Updates []struct {
+			ID          string  `json:"id"`
+			Label       *string `json:"label"`
+			Description *string `json:"description"`
+			WhyMatters  *string `json:"why_matters"`
+			Tags        *string `json:"tags"`
+			OccurredAt  *string `json:"occurred_at"`
+		} `json:"updates"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(a.Updates)
+	if err != nil {
+		return nil, err
+	}
+	return h.updateNodesBatch(raw)
+}
+
 
 func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 	var a struct {

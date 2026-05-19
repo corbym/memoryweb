@@ -213,7 +213,7 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		"alias_domain", "list_aliases", "resolve_domain", "remove_alias",
 		"forget", "restore", "forgotten",
 		"whats_stale", "orient",
-		"remember_all", "connect_all",
+		"revise",
 		"suggest_connections",
 		"list_domains", "disconnect", "disconnected", "trace",
 		"rename_domain",
@@ -2171,8 +2171,8 @@ func TestAddNode_WithRelatedTo_UnknownIDSilentlySkipped(t *testing.T) {
 
 func TestAddNodes_WithTags_Searchable(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "remember_all", map[string]any{
-		"nodes": []map[string]any{
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
 			{
 				"label":  "Batch Node One",
 				"domain": "proj",
@@ -2316,16 +2316,13 @@ func TestOccurredAt_ToolDescriptions_ContainProposeConfirmGuidance(t *testing.T)
 		})
 	}
 
-	// For remember_all and revise_all the occurred_at guidance is embedded in
-	// the array items description (the top-level description for the nodes /
-	// updates field).
-	arrayTools := map[string]string{
-		"remember_all": "nodes",
-		"revise_all":   "updates",
-	}
-	for name, fieldName := range arrayTools {
-		name, fieldName := name, fieldName
-		t.Run(name, func(t *testing.T) {
+	// For remember and revise the occurred_at guidance for batch mode is
+	// embedded in the items array description. Verify the items property on
+	// each tool carries the propose+confirm contract phrases.
+	itemsTools := []string{"remember", "revise"}
+	for _, name := range itemsTools {
+		name := name
+		t.Run(name+"/items", func(t *testing.T) {
 			schema, ok := toolIndex[name]
 			if !ok {
 				t.Fatalf("tool %q not found in ListTools", name)
@@ -2338,13 +2335,13 @@ func TestOccurredAt_ToolDescriptions_ContainProposeConfirmGuidance(t *testing.T)
 			if err := json.Unmarshal(schema, &s); err != nil {
 				t.Fatalf("unmarshal schema: %v", err)
 			}
-			field, ok := s.Properties[fieldName]
+			field, ok := s.Properties["items"]
 			if !ok {
-				t.Fatalf("tool %q has no %q property", name, fieldName)
+				t.Fatalf("tool %q has no %q property", name, "items")
 			}
 			for _, phrase := range []string{"propose+confirm", "Never guess"} {
 				if !strings.Contains(field.Description, phrase) {
-					t.Errorf("tool %q.%q description missing phrase %q;\ngot: %s", name, fieldName, phrase, field.Description)
+					t.Errorf("tool %q.items description missing phrase %q;\ngot: %s", name, phrase, field.Description)
 				}
 			}
 		})
@@ -2517,8 +2514,8 @@ func TestRemember_OccurredAt_WithoutWhyMatters_Fails(t *testing.T) {
 // to remember_all — the failing node's index appears in the error.
 func TestRememberAll_OccurredAt_WithoutWhyMatters_Fails(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "remember_all", map[string]any{
-		"nodes": []map[string]any{
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
 			{"label": "fine node", "domain": "proj", "why_matters": "ok"},
 			{"label": "bad node", "domain": "proj", "occurred_at": "2024-06-01"},
 		},
@@ -2593,8 +2590,8 @@ func TestReviseAll_OccurredAt_WhyMattersMissingBoth_Fails(t *testing.T) {
 	}
 	id := resp.Node.ID
 
-	tr2 := call(t, h, "revise_all", map[string]any{
-		"updates": []map[string]any{
+	tr2 := call(t, h, "revise", map[string]any{
+		"items": []map[string]any{
 			{"id": id, "occurred_at": "2024-07-01"},
 		},
 	})
@@ -3474,8 +3471,8 @@ func TestReviseAll_SetsOccurredAt(t *testing.T) {
 		"why_matters": "batch revise test node B",
 	})
 
-	tr := call(t, h, "revise_all", map[string]any{
-		"updates": []map[string]any{
+	tr := call(t, h, "revise", map[string]any{
+		"items": []map[string]any{
 			{"id": id1, "occurred_at": "2026-04-01"},
 			{"id": id2, "occurred_at": "2026-05-01"},
 		},
@@ -3608,18 +3605,18 @@ func TestRemember_OrphanWarning_AbsentWhenRelatedToProvided(t *testing.T) {
 
 func TestRememberAll_OrphanWarning_PresentWhenNoEdges(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "remember_all", map[string]any{
-		"nodes": []map[string]any{
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
 			{"label": "node one", "domain": "test"},
 			{"label": "node two", "domain": "test"},
 		},
 	})
 	mustNotError(t, tr)
 	if !strings.Contains(tr.Content[0].Text, "orphan_warning") {
-		t.Error("expected orphan_warning field in remember_all response")
+		t.Error("expected orphan_warning field in remember batch response")
 	}
 	if !strings.Contains(tr.Content[0].Text, "No connections were made") {
-		t.Error("expected orphan_warning message in remember_all response")
+		t.Error("expected orphan_warning message in remember batch response")
 	}
 }
 
@@ -3693,5 +3690,200 @@ func TestRenameDomain_InListTools(t *testing.T) {
 	b, _ := json.Marshal(raw)
 	if !strings.Contains(string(b), `"rename_domain"`) {
 		t.Error("rename_domain not present in ListTools output")
+	}
+}
+
+// ── Batch consolidation: remember/revise/connect accept items array ───────────
+
+// TestRemember_BatchViaItems_FilesMultipleNodes: calling remember with an
+// items array must create all nodes and return a nodes array response.
+func TestRemember_BatchViaItems_FilesMultipleNodes(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{"label": "Batch node A", "domain": "batch-test"},
+			{"label": "Batch node B", "domain": "batch-test"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Node struct {
+				ID    string `json:"id"`
+				Label string `json:"label"`
+			} `json:"node"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember batch response: %v", err)
+	}
+	if len(resp.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes in response, got %d", len(resp.Nodes))
+	}
+	labels := map[string]bool{}
+	for _, n := range resp.Nodes {
+		if n.Node.ID == "" {
+			t.Error("batch node missing ID")
+		}
+		labels[n.Node.Label] = true
+	}
+	if !labels["Batch node A"] || !labels["Batch node B"] {
+		t.Errorf("unexpected labels in batch response: %v", labels)
+	}
+}
+
+// TestRemember_BatchViaItems_OrphanWarningPresent: batch remember with no
+// edges must include orphan_warning and return a nodes array (not single node shape).
+func TestRemember_BatchViaItems_OrphanWarningPresent(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{"label": "Orphan batch node", "domain": "batch-orphan"},
+		},
+	})
+	mustNotError(t, tr)
+
+	// Must return the batch shape (nodes array), not the single shape (node object).
+	var resp struct {
+		Nodes         []json.RawMessage `json:"nodes"`
+		OrphanWarning string            `json:"orphan_warning"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse batch remember response: %v", err)
+	}
+	if len(resp.Nodes) != 1 {
+		t.Fatalf("expected 1 node in batch response, got %d", len(resp.Nodes))
+	}
+	if resp.OrphanWarning == "" {
+		t.Error("expected non-empty orphan_warning in batch remember response")
+	}
+}
+
+// TestRememberAll_IsUnknownTool: after consolidation, remember_all must no
+// longer be a registered tool.
+func TestRememberAll_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember_all", map[string]any{
+		"nodes": []map[string]any{
+			{"label": "Should fail", "domain": "test"},
+		},
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool' error, got: %s", text(t, tr))
+	}
+}
+
+// TestRevise_BatchViaItems_UpdatesMultiple: calling revise with an items array
+// must update all entries and return an updated array response.
+func TestRevise_BatchViaItems_UpdatesMultiple(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Revise batch A", "batch-revise", nil)
+	idB := addNode(t, h, "Revise batch B", "batch-revise", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"items": []map[string]any{
+			{"id": idA, "label": "Revise batch A updated"},
+			{"id": idB, "description": "now has a description"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Updated []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"updated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise batch response: %v", err)
+	}
+	if len(resp.Updated) != 2 {
+		t.Fatalf("expected 2 updated in response, got %d", len(resp.Updated))
+	}
+	ids := map[string]bool{}
+	for _, n := range resp.Updated {
+		ids[n.ID] = true
+	}
+	if !ids[idA] || !ids[idB] {
+		t.Errorf("unexpected IDs in revise batch response: %v", ids)
+	}
+}
+
+// TestReviseAll_IsUnknownTool: after consolidation, revise_all must no
+// longer be a registered tool.
+func TestReviseAll_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "Revise all target", "test", nil)
+	tr := call(t, h, "revise_all", map[string]any{
+		"updates": []map[string]any{
+			{"id": id, "label": "Updated"},
+		},
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool' error, got: %s", text(t, tr))
+	}
+}
+
+// TestConnect_BatchViaItems_CreatesMultipleEdges: calling connect with an
+// items array must create all edges and return edges_created count.
+func TestConnect_BatchViaItems_CreatesMultipleEdges(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Connect batch A", "batch-connect", nil)
+	idB := addNode(t, h, "Connect batch B", "batch-connect", nil)
+	idC := addNode(t, h, "Connect batch C", "batch-connect", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"items": []map[string]any{
+			{"from_node": idA, "to_node": idB, "relationship": "connects_to"},
+			{"from_node": idB, "to_node": idC, "relationship": "led_to"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		EdgesCreated int `json:"edges_created"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse connect batch response: %v", err)
+	}
+	if resp.EdgesCreated != 2 {
+		t.Errorf("expected edges_created=2, got %d", resp.EdgesCreated)
+	}
+}
+
+// TestConnectAll_IsUnknownTool: after consolidation, connect_all must no
+// longer be a registered tool.
+func TestConnectAll_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Connect all A", "test", nil)
+	idB := addNode(t, h, "Connect all B", "test", nil)
+	tr := call(t, h, "connect_all", map[string]any{
+		"edges": []map[string]any{
+			{"from_node": idA, "to_node": idB, "relationship": "connects_to"},
+		},
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool' error, got: %s", text(t, tr))
+	}
+}
+
+// TestListTools_BatchVariantsRemoved: ListTools must not contain remember_all,
+// revise_all, or connect_all after consolidation.
+func TestListTools_BatchVariantsRemoved(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	s := string(b)
+	for _, removed := range []string{"remember_all", "revise_all", "connect_all"} {
+		if strings.Contains(s, `"`+removed+`"`) {
+			t.Errorf("tool %q must not appear in ListTools after consolidation", removed)
+		}
 	}
 }
