@@ -1,5 +1,13 @@
 # Future Implementation Plan: Graph Enhancements
 
+## Shared-surface aligned work (2026-05-19)
+
+New planning artifacts tied to memoryweb-shared-surface:
+
+1. Orient history spine work plan: `stories/orient-history-spine-work.md`
+2. Significance tool placeholder: `stories/significance-tool-placeholder.md`
+3. Tool consolidation placeholder: `stories/tool-consolidation-placeholder.md`
+
 This plan outlines the TDD approach for implementing four core graph enhancements in `memoryweb`. Each feature strictly follows your established project conventions: soft deletes, audit logging, append-only migrations, and agent-steered tool descriptions.
 
 ## General TDD Workflow

@@ -254,7 +254,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Return all known memories for a domain structured for synthesis. Synthesise the result into concise prose covering current state, blockers, recent decisions, and open questions. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Other tools in this server: remember, remember_all, recall, revise, revise_all, connect, connect_all, search, recent, history, orient, visualise, trace, why_connected, suggest_connections, forget, restore, forgotten, whats_stale, disconnected, alias_domain, list_aliases, remove_alias, resolve_domain, list_domains, rename_domain, disconnect, check_for_updates.",
+			Description: "Return all known memories for a domain structured for synthesis. Response includes: nodes (all live memories), recent (most recently changed), and declared_spine (key decisions in chronological order — nodes with occurred_at set). Synthesise into concise prose covering current state, blockers, recent decisions, and open questions; weigh the declared_spine heavily as it represents explicitly curated significance. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Other tools in this server: remember, remember_all, recall, revise, revise_all, connect, connect_all, search, recent, history, orient, visualise, trace, why_connected, suggest_connections, forget, restore, forgotten, whats_stale, disconnected, alias_domain, list_aliases, remove_alias, resolve_domain, list_domains, rename_domain, disconnect, check_for_updates.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -921,7 +921,13 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	// Step 3: build structured response for the model to synthesise.
+	// Step 3: fetch declared decision spine (nodes with occurred_at set, chronological).
+	spineNodes, err := h.store.Timeline(a.Domain, true, nil, nil, nil, 20)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 4: build structured response for the model to synthesise.
 	type nodeEntry struct {
 		ID          string  `json:"id"`
 		Label       string  `json:"label"`
@@ -951,17 +957,23 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	for i, n := range recent {
 		recentEntries[i] = toEntry(db.NodeResult{Node: n})
 	}
+	spineEntries := make([]nodeEntry, len(spineNodes))
+	for i, n := range spineNodes {
+		spineEntries[i] = toEntry(db.NodeResult{Node: n})
+	}
 
 	resp := struct {
-		SummaryHint string      `json:"summary_hint"`
-		TotalNodes  int         `json:"total_nodes"`
-		Nodes       interface{} `json:"nodes"`
-		Recent      interface{} `json:"recent"`
+		SummaryHint   string      `json:"summary_hint"`
+		TotalNodes    int         `json:"total_nodes"`
+		Nodes         interface{} `json:"nodes"`
+		Recent        interface{} `json:"recent"`
+		DeclaredSpine interface{} `json:"declared_spine"`
 	}{
-		SummaryHint: "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. Plain prose, no bullet points.",
-		TotalNodes:  len(sr.Nodes),
-		Nodes:       nodes,
-		Recent:      recentEntries,
+		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. Plain prose, no bullet points.",
+		TotalNodes:    len(sr.Nodes),
+		Nodes:         nodes,
+		Recent:        recentEntries,
+		DeclaredSpine: spineEntries,
 	}
 
 	b, _ := json.MarshalIndent(resp, "", "  ")

@@ -1803,6 +1803,123 @@ func TestOrient_IncludesTotalNodes(t *testing.T) {
 	}
 }
 
+// TestOrient_DeclaredSpineEmpty: orient on a domain whose nodes all lack
+// occurred_at must return an empty declared_spine list.
+func TestOrient_DeclaredSpineEmpty(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Undated alpha", "orient-spine-empty", nil)
+	addNode(t, h, "Undated beta", "orient-spine-empty", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-spine-empty"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		DeclaredSpine []struct {
+			Label string `json:"label"`
+		} `json:"declared_spine"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.DeclaredSpine) != 0 {
+		t.Errorf("declared_spine: got %d entries, want 0", len(resp.DeclaredSpine))
+	}
+}
+
+// TestOrient_DeclaredSpineOnlyContainsOccurredAtNodes: only nodes with
+// occurred_at set must appear in declared_spine; undated nodes must not.
+func TestOrient_DeclaredSpineOnlyContainsOccurredAtNodes(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Undated node", "orient-spine-filter", nil)
+	addNode(t, h, "Dated decision", "orient-spine-filter", map[string]any{
+		"occurred_at": "2026-03-10",
+		"why_matters": "significant choice that shaped the architecture",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-spine-filter"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		DeclaredSpine []struct {
+			Label string `json:"label"`
+		} `json:"declared_spine"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.DeclaredSpine) != 1 {
+		t.Fatalf("declared_spine: got %d entries, want 1", len(resp.DeclaredSpine))
+	}
+	if resp.DeclaredSpine[0].Label != "Dated decision" {
+		t.Errorf("declared_spine[0].label: got %q, want %q", resp.DeclaredSpine[0].Label, "Dated decision")
+	}
+}
+
+// TestOrient_DeclaredSpineIsChronological: multiple dated entries in the spine
+// must be ordered by occurred_at ascending.
+func TestOrient_DeclaredSpineIsChronological(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Third decision", "orient-spine-order", map[string]any{
+		"occurred_at": "2026-05-01",
+		"why_matters": "third in sequence",
+	})
+	addNode(t, h, "First decision", "orient-spine-order", map[string]any{
+		"occurred_at": "2026-01-01",
+		"why_matters": "first in sequence",
+	})
+	addNode(t, h, "Second decision", "orient-spine-order", map[string]any{
+		"occurred_at": "2026-03-01",
+		"why_matters": "second in sequence",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-spine-order"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		DeclaredSpine []struct {
+			Label string `json:"label"`
+		} `json:"declared_spine"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.DeclaredSpine) != 3 {
+		t.Fatalf("declared_spine: got %d entries, want 3", len(resp.DeclaredSpine))
+	}
+	want := []string{"First decision", "Second decision", "Third decision"}
+	for i, w := range want {
+		if resp.DeclaredSpine[i].Label != w {
+			t.Errorf("declared_spine[%d].label: got %q, want %q", i, resp.DeclaredSpine[i].Label, w)
+		}
+	}
+}
+
+// TestOrient_DeclaredSpineExcludesArchived: an archived node with occurred_at
+// must not appear in the declared_spine.
+func TestOrient_DeclaredSpineExcludesArchived(t *testing.T) {
+	store, h := newEnv(t)
+	addNode(t, h, "Live dated decision", "orient-spine-archive", map[string]any{
+		"occurred_at": "2026-04-01",
+		"why_matters": "live and significant",
+	})
+	archivedID := addNode(t, h, "Archived dated decision", "orient-spine-archive", map[string]any{
+		"occurred_at": "2026-04-02",
+		"why_matters": "will be archived",
+	})
+	store.ArchiveNode(archivedID, "test archive")
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-spine-archive"})
+	mustNotError(t, tr)
+
+	body := text(t, tr)
+	if strings.Contains(body, "Archived dated decision") {
+		t.Error("archived node must not appear in declared_spine")
+	}
+	if !strings.Contains(body, "Live dated decision") {
+		t.Error("live dated node must appear in declared_spine")
+	}
+}
+
 // ── add_node tags ─────────────────────────────────────────────────────────────
 
 func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
