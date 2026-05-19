@@ -34,7 +34,8 @@ jobs:
             {"os":"ubuntu-latest","goos":"linux","goarch":"arm64","cc":"aarch64-linux-gnu-gcc"},
             {"os":"macos-latest","goos":"darwin","goarch":"amd64","cc":"clang"},
             {"os":"macos-latest","goos":"darwin","goarch":"arm64","cc":"clang"},
-            {"os":"windows-latest","goos":"windows","goarch":"amd64","cc":"gcc","ext":".exe"}
+            {"os":"windows-latest","goos":"windows","goarch":"amd64","cc":"gcc","ext":".exe"},
+            {"os":"windows-latest","goos":"windows","goarch":"386","cc":"i686-w64-mingw32-gcc","ext":".exe"}
           ]'
           FILTER="${{ inputs.os_filter }}"
           if [ -z "$FILTER" ]; then
@@ -145,7 +146,7 @@ jobs:
               /tr http://timestamp.digicert.com `
               /f $certPath `
               /p $certPassword `
-              "bin\memoryweb_windows_amd64\memoryweb.exe"
+              "bin\memoryweb_${{ matrix.goos }}_${{ matrix.goarch }}\memoryweb.exe"
             if ($LASTEXITCODE -ne 0) { throw "signtool failed with exit code $LASTEXITCODE" }
             Write-Host "Binary signed successfully."
           } finally {
