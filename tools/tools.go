@@ -175,45 +175,17 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
-			Name:        "alias_domain",
-			Description: "Register an alternative name for a domain so both names return the same results.",
+			Name:        "alias",
+			Description: "Manage domain aliases — alternative names that resolve to a canonical domain. All four operations are available via the action field.\n\naction=add: register a new alias. Requires alias and domain. Example: alias=binder, domain=sedex.\naction=remove: remove an alias. Requires alias.\naction=resolve: return the canonical domain for a given name. Requires name.\naction=list: return all registered aliases.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"alias":  {Type: "string", Description: "The alternative name (e.g. 'binder')"},
-					"domain": {Type: "string", Description: "The canonical domain it should resolve to (e.g. 'sedex')"},
+					"action": {Type: "string", Description: "Required: add, remove, resolve, or list", Enum: []string{"add", "remove", "resolve", "list"}},
+					"alias":  {Type: "string", Description: "The alias name. Required for action=add and action=remove."},
+					"domain": {Type: "string", Description: "The canonical domain name. Required for action=add."},
+					"name":   {Type: "string", Description: "The name to resolve. Required for action=resolve."},
 				},
-				Required: []string{"alias", "domain"},
-			},
-		},
-		{
-			Name:        "list_aliases",
-			Description: "List all registered domain aliases and their canonical domains.",
-			InputSchema: InputSchema{
-				Type:       "object",
-				Properties: map[string]Property{},
-			},
-		},
-		{
-			Name:        "remove_alias",
-			Description: "Remove a registered domain alias. Returns an error if the alias does not exist.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"alias": {Type: "string", Description: "The alias to remove"},
-				},
-				Required: []string{"alias"},
-			},
-		},
-		{
-			Name:        "resolve_domain",
-			Description: "Return the canonical domain a name resolves to. Use this when you have an alias and need its canonical domain before scoping a search or filing an entry.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"name": {Type: "string", Description: "Domain name or alias to resolve"},
-				},
-				Required: []string{"name"},
+				Required: []string{"action"},
 			},
 		},
 		{
@@ -240,29 +212,36 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
-			Name:        "forgotten",
-			Description: "List all archived memories, optionally scoped to a domain. This is the right tool when search returns nothing but you expect the content to exist.",
+			Name:        "audit",
+			Description: "Inspect the health of knowledge in a domain across three modes.\n\nmode=stale: Return memories that may be stale, contradicted, or duplicated. Present each result to the user and ask for individual confirmation before archiving anything. Never archive autonomously.\n\nmode=orphans: Return live, non-transient nodes with zero connections. Present findings and suggest either linking them with connect, or archiving with forget if no longer relevant.\n\nmode=archived: List all archived memories. This is the right tool when search returns nothing but you expect content to exist. This tool only returns live nodes (for stale and orphans modes) or explicitly archived nodes (for archived mode).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain": {Type: "string", Description: "Optional domain to scope the listing"},
+					"mode":   {Type: "string", Description: "Required: stale (drift candidates), orphans (disconnected nodes), or archived (list archived memories)", Enum: []string{"stale", "orphans", "archived"}},
+					"domain": {Type: "string", Description: "Optional domain to scope the audit"},
+					"limit":  {Type: "integer", Description: "Max candidates to return (default 10, applies to stale mode)"},
 				},
+				Required: []string{"mode"},
 			},
 		},
 		{
-			Name:        "whats_stale",
-			Description: "Return memories that may be stale, contradicted, or duplicated. Present each result to the user and ask for individual confirmation before archiving anything.",
+			Name:        "forget_all",
+			Description: "Archive multiple memories in a single atomic transaction. All nodes are archived or none — partial failure rolls back the entire operation.\n\nOnly call this tool after explicit, unambiguous user confirmation for every item in the list — never on implication or casual mention. 'That looks stale' or 'probably outdated' is not confirmation. Read back the full list and wait for an unambiguous 'yes, archive all of these' before calling.\n\nAfter archiving, report each archived ID and note that nodes can be restored at any time with restore.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain": {Type: "string", Description: "Optional domain to scope drift detection"},
-					"limit":  {Type: "integer", Description: "Max candidates to return (default 10)"},
+					"items": {
+						Type:        "array",
+						Description: "Array of nodes to archive. Each must have id (string, required) and reason (string, required).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"reason":{"type":"string"}},"required":["id","reason"]}`),
+					},
 				},
+				Required: []string{"items"},
 			},
 		},
 		{
 			Name:        "orient",
-			Description: "Return all known memories for a domain structured for synthesis. Response includes: nodes (all live memories), recent (most recently changed), and declared_spine (key decisions in chronological order — nodes with occurred_at set). Synthesise into concise prose covering current state, blockers, recent decisions, and open questions; weigh the declared_spine heavily as it represents explicitly curated significance. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Other tools in this server: remember, recall, revise, connect, search, recent, history, orient, visualise, trace, why_connected, suggest_connections, forget, restore, forgotten, whats_stale, disconnected, alias_domain, list_aliases, remove_alias, resolve_domain, list_domains, rename_domain, disconnect, check_for_updates.",
+			Description: "Return all known memories for a domain structured for synthesis. Response includes: nodes (all live memories), recent (most recently changed), and declared_spine (key decisions in chronological order — nodes with occurred_at set). Synthesise into concise prose covering current state, blockers, recent decisions, and open questions; weigh the declared_spine heavily as it represents explicitly curated significance. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Other tools in this server: remember, recall, revise, connect, search, recent, history, orient, visualise, trace, why_connected, suggest_connections, forget, restore, forget_all, audit, domains, alias, rename_domain, disconnect.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -304,8 +283,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
-			Name:        "list_domains",
-			Description: "List all domains that have at least one live memory, sorted alphabetically. Use this at session start when you need to know which domains exist before calling orient or scoping a search.",
+			Name:        "domains",
+			Description: "Return all known domains and registered aliases in a single call. Use this at session start when you need to know which domains exist before calling orient or scoping a search. Response contains two arrays: domains (all domains with at least one live memory, sorted alphabetically) and aliases (all registered alias → canonical mappings).",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]Property{},
@@ -320,16 +299,6 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"id": {Type: "string", Description: "ID of the edge to remove"},
 				},
 				Required: []string{"id"},
-			},
-		},
-		{
-			Name:        "disconnected",
-			Description: "Return live, non-transient nodes with zero connections. Use this to find dropped context. Present findings to the user and suggest either linking them to related concepts using connect, or archiving them with forget if they are no longer relevant.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"domain": {Type: "string", Description: "Optional domain to scope the search"},
-				},
 			},
 		},
 		{
@@ -376,14 +345,6 @@ func (h *Handler) ListTools() (interface{}, error) {
 				Required: []string{"old_domain", "new_domain"},
 			},
 		},
-		{
-			Name:        "check_for_updates",
-			Description: "Check whether a newer version of memoryweb is available. Returns the current version, the latest available version, and instructions for updating. Call this when the user asks if memoryweb is up to date.",
-			InputSchema: InputSchema{
-				Type:       "object",
-				Properties: map[string]Property{},
-			},
-		},
 	}
 	return map[string]interface{}{"tools": tools}, nil
 }
@@ -413,21 +374,23 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	case "history":
 		result, err = h.timeline(req.Arguments)
 	case "alias_domain":
-		result, err = h.addAlias(req.Arguments)
+		return errorResult("unknown tool: alias_domain — use alias with action=add"), nil
 	case "list_aliases":
-		result, err = h.listAliases(req.Arguments)
+		return errorResult("unknown tool: list_aliases — use domains"), nil
 	case "remove_alias":
-		result, err = h.removeAlias(req.Arguments)
+		return errorResult("unknown tool: remove_alias — use alias with action=remove"), nil
 	case "resolve_domain":
-		result, err = h.resolveDomain(req.Arguments)
+		return errorResult("unknown tool: resolve_domain — use alias with action=resolve"), nil
 	case "forget":
 		result, err = h.forgetNode(req.Arguments)
 	case "restore":
 		result, err = h.restoreNode(req.Arguments)
 	case "forgotten":
-		result, err = h.listArchived(req.Arguments)
+		return errorResult("unknown tool: forgotten — use audit with mode=archived"), nil
+	case "audit":
+		result, err = h.auditTool(req.Arguments)
 	case "whats_stale":
-		result, err = h.drift(req.Arguments)
+		return errorResult("unknown tool: whats_stale — use audit with mode=stale"), nil
 	case "orient":
 		result, err = h.summariseDomain(req.Arguments)
 	case "remember_all":
@@ -440,12 +403,18 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		return errorResult("unknown tool: revise_all — use revise with an items array for batch updates"), nil
 	case "suggest_connections":
 		result, err = h.suggestEdges(req.Arguments)
+	case "domains":
+		result, err = h.domainsTool(req.Arguments)
 	case "list_domains":
-		result, err = h.listDomains(req.Arguments)
+		return errorResult("unknown tool: list_domains — use domains"), nil
+	case "alias":
+		result, err = h.aliasTool(req.Arguments)
 	case "disconnect":
 		result, err = h.disconnect(req.Arguments)
 	case "disconnected":
-		result, err = h.findDisconnected(req.Arguments)
+		return errorResult("unknown tool: disconnected — use audit with mode=orphans"), nil
+	case "forget_all":
+		result, err = h.forgetAll(req.Arguments)
 	case "trace":
 		result, err = h.tracePath(req.Arguments)
 	case "visualise":
@@ -453,7 +422,7 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	case "rename_domain":
 		result, err = h.renameDomain(req.Arguments)
 	case "check_for_updates":
-		result, err = h.checkForUpdates(req.Arguments)
+		return errorResult("unknown tool: check_for_updates — use the CLI: memoryweb check-for-updates"), nil
 	default:
 		return errorResult(fmt.Sprintf("unknown tool: %s", req.Name)), nil
 	}
@@ -1091,7 +1060,6 @@ func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-
 func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 	// Peek for items field to decide mode.
 	var peek struct {
@@ -1231,7 +1199,6 @@ func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
 	}
 	return h.updateNodesBatch(raw)
 }
-
 
 func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
@@ -1487,4 +1454,101 @@ func (h *Handler) renameDomain(args json.RawMessage) (*ToolResult, error) {
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+// auditTool dispatches mode=stale to drift, mode=orphans to findDisconnected,
+// and mode=archived to listArchived.
+func (h *Handler) auditTool(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	switch a.Mode {
+	case "stale":
+		return h.drift(args)
+	case "orphans":
+		return h.findDisconnected(args)
+	case "archived":
+		return h.listArchived(args)
+	default:
+		return errorResult(fmt.Sprintf("unknown audit mode %q — use stale, orphans, or archived", a.Mode)), nil
+	}
+}
+
+// domainsTool returns a combined response with both the domain list and alias list.
+func (h *Handler) domainsTool(_ json.RawMessage) (*ToolResult, error) {
+	domains, err := h.store.ListDomains()
+	if err != nil {
+		return nil, err
+	}
+	aliases, err := h.store.ListAliases()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]interface{}{
+		"domains": domains,
+		"aliases": aliases,
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+// aliasTool dispatches on action: add, remove, resolve, or list.
+func (h *Handler) aliasTool(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Action string `json:"action"`
+		Alias  string `json:"alias"`
+		Domain string `json:"domain"`
+		Name   string `json:"name"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	switch a.Action {
+	case "add":
+		return h.addAlias(args)
+	case "remove":
+		return h.removeAlias(args)
+	case "resolve":
+		return h.resolveDomain(args)
+	case "list":
+		return h.listAliases(args)
+	default:
+		return errorResult(fmt.Sprintf("unknown alias action %q — use add, remove, resolve, or list", a.Action)), nil
+	}
+}
+
+// forgetAll archives multiple nodes in a single atomic transaction.
+// If any ID is not found, the transaction is rolled back and no nodes are archived.
+func (h *Handler) forgetAll(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Items []struct {
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if len(a.Items) == 0 {
+		return errorResult("items is required and must not be empty"), nil
+	}
+	batch := make([]struct{ ID, Reason string }, len(a.Items))
+	for i, item := range a.Items {
+		if item.ID == "" {
+			return errorResult(fmt.Sprintf("item %d is missing id", i)), nil
+		}
+		batch[i] = struct{ ID, Reason string }{ID: item.ID, Reason: item.Reason}
+	}
+	if err := h.store.ArchiveNodesBatch(batch); err != nil {
+		return errorResult(err.Error()), nil
+	}
+	ids := make([]string, len(a.Items))
+	for i, item := range a.Items {
+		ids[i] = item.ID
+	}
+	msg := fmt.Sprintf("archived %d memories: %s\nAll nodes can be restored at any time with restore.", len(ids), strings.Join(ids, ", "))
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
 }

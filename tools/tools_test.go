@@ -208,14 +208,13 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 		t.Fatalf("parse ListTools: %v", err)
 	}
 	want := []string{
-		"remember", "connect", "recall", "search",
+		"remember", "connect", "revise", "recall", "search",
 		"recent", "why_connected", "history",
-		"alias_domain", "list_aliases", "resolve_domain", "remove_alias",
-		"forget", "restore", "forgotten",
-		"whats_stale", "orient",
-		"revise",
+		"alias",
+		"forget", "restore", "forget_all",
+		"audit", "orient",
 		"suggest_connections",
-		"list_domains", "disconnect", "disconnected", "trace",
+		"domains", "disconnect", "trace",
 		"rename_domain",
 	}
 	got := map[string]bool{}
@@ -1133,20 +1132,22 @@ func TestListDomains_ReturnsDistinctDomains(t *testing.T) {
 	addNode(t, h, "Node B", "domain-beta", nil)
 	addNode(t, h, "Node C", "domain-alpha", nil) // duplicate domain
 
-	tr := call(t, h, "list_domains", map[string]any{})
+	tr := call(t, h, "domains", map[string]any{})
 	mustNotError(t, tr)
 
-	var domains []string
-	if err := json.Unmarshal([]byte(text(t, tr)), &domains); err != nil {
-		t.Fatalf("parse list_domains response: %v", err)
+	var resp struct {
+		Domains []string `json:"domains"`
 	}
-	if len(domains) != 2 {
-		t.Errorf("expected 2 distinct domains, got %d: %v", len(domains), domains)
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse domains response: %v", err)
 	}
-	if !contains(domains, "domain-alpha") {
+	if len(resp.Domains) != 2 {
+		t.Errorf("expected 2 distinct domains, got %d: %v", len(resp.Domains), resp.Domains)
+	}
+	if !contains(resp.Domains, "domain-alpha") {
 		t.Error("expected domain-alpha in result")
 	}
-	if !contains(domains, "domain-beta") {
+	if !contains(resp.Domains, "domain-beta") {
 		t.Error("expected domain-beta in result")
 	}
 }
@@ -1157,27 +1158,31 @@ func TestListDomains_ExcludesArchivedOnlyDomains(t *testing.T) {
 	store.ArchiveNode(id, "test")
 	addNode(t, h, "Live node", "live-domain", nil)
 
-	tr := call(t, h, "list_domains", map[string]any{})
+	tr := call(t, h, "domains", map[string]any{})
 	mustNotError(t, tr)
 
-	var domains []string
-	json.Unmarshal([]byte(text(t, tr)), &domains)
-	if contains(domains, "dead-domain") {
+	var resp struct {
+		Domains []string `json:"domains"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	if contains(resp.Domains, "dead-domain") {
 		t.Error("dead-domain should not appear: all its nodes are archived")
 	}
-	if !contains(domains, "live-domain") {
+	if !contains(resp.Domains, "live-domain") {
 		t.Error("live-domain should appear")
 	}
 }
 
 func TestListDomains_EmptyDB(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "list_domains", map[string]any{})
+	tr := call(t, h, "domains", map[string]any{})
 	mustNotError(t, tr)
-	var domains []string
-	json.Unmarshal([]byte(text(t, tr)), &domains)
-	if len(domains) != 0 {
-		t.Errorf("expected empty list, got %v", domains)
+	var resp struct {
+		Domains []string `json:"domains"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	if len(resp.Domains) != 0 {
+		t.Errorf("expected empty list, got %v", resp.Domains)
 	}
 }
 
@@ -1187,7 +1192,7 @@ func TestAddAlias_SearchResolvesAlias(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Engine node", "deep-engine", nil)
 
-	call(t, h, "alias_domain", map[string]any{"alias": "engine", "domain": "deep-engine"})
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
 
 	tr := call(t, h, "search", map[string]any{"query": "Engine", "domain": "engine"})
 	mustNotError(t, tr)
@@ -1198,9 +1203,9 @@ func TestAddAlias_SearchResolvesAlias(t *testing.T) {
 
 func TestResolveDomain_ReturnsCanonical(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "alias_domain", map[string]any{"alias": "dg", "domain": "deep-game"})
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "dg", "domain": "deep-game"})
 
-	tr := call(t, h, "resolve_domain", map[string]any{"name": "dg"})
+	tr := call(t, h, "alias", map[string]any{"action": "resolve", "name": "dg"})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "deep-game") {
 		t.Errorf("resolve_domain should return canonical; got: %s", text(t, tr))
@@ -1209,7 +1214,7 @@ func TestResolveDomain_ReturnsCanonical(t *testing.T) {
 
 func TestResolveDomain_UnknownAliasReturnsItself(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "resolve_domain", map[string]any{"name": "unknown-domain"})
+	tr := call(t, h, "alias", map[string]any{"action": "resolve", "name": "unknown-domain"})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "unknown-domain") {
 		t.Errorf("unregistered name should resolve to itself; got: %s", text(t, tr))
@@ -1218,10 +1223,10 @@ func TestResolveDomain_UnknownAliasReturnsItself(t *testing.T) {
 
 func TestListAliases_ReturnsRegisteredAliases(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "alias_domain", map[string]any{"alias": "dg", "domain": "deep-game"})
-	call(t, h, "alias_domain", map[string]any{"alias": "sx", "domain": "sedex"})
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "dg", "domain": "deep-game"})
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "sx", "domain": "sedex"})
 
-	tr := call(t, h, "list_aliases", map[string]any{})
+	tr := call(t, h, "alias", map[string]any{"action": "list"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 	if !strings.Contains(body, "dg") || !strings.Contains(body, "sx") {
@@ -1233,16 +1238,16 @@ func TestListAliases_ReturnsRegisteredAliases(t *testing.T) {
 
 func TestRemoveAlias_RemovesExistingAlias(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "alias_domain", map[string]any{"alias": "dg", "domain": "deep-game"})
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "dg", "domain": "deep-game"})
 
-	tr := call(t, h, "remove_alias", map[string]any{"alias": "dg"})
+	tr := call(t, h, "alias", map[string]any{"action": "remove", "alias": "dg"})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "dg") {
 		t.Errorf("expected confirmation mentioning alias; got: %s", text(t, tr))
 	}
 
 	// list_aliases should no longer contain it
-	listTr := call(t, h, "list_aliases", map[string]any{})
+	listTr := call(t, h, "alias", map[string]any{"action": "list"})
 	mustNotError(t, listTr)
 	if strings.Contains(text(t, listTr), `"dg"`) {
 		t.Error("alias 'dg' should not appear in list_aliases after removal")
@@ -1251,7 +1256,7 @@ func TestRemoveAlias_RemovesExistingAlias(t *testing.T) {
 
 func TestRemoveAlias_NonExistentReturnsError(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "remove_alias", map[string]any{"alias": "ghost-alias"})
+	tr := call(t, h, "alias", map[string]any{"action": "remove", "alias": "ghost-alias"})
 	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "not found") {
 		t.Errorf("expected 'not found' error; got: %s", text(t, tr))
@@ -1262,7 +1267,7 @@ func TestRemoveAlias_SearchNoLongerResolvesRemovedAlias(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Engine node", "deep-engine", nil)
 
-	call(t, h, "alias_domain", map[string]any{"alias": "engine", "domain": "deep-engine"})
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
 
 	// confirm alias resolves while it exists
 	if !contains(searchIDs(t, call(t, h, "search", map[string]any{
@@ -1271,7 +1276,7 @@ func TestRemoveAlias_SearchNoLongerResolvesRemovedAlias(t *testing.T) {
 		t.Fatal("alias should resolve before removal")
 	}
 
-	mustNotError(t, call(t, h, "remove_alias", map[string]any{"alias": "engine"}))
+	mustNotError(t, call(t, h, "alias", map[string]any{"action": "remove", "alias": "engine"}))
 
 	// after removal, searching under the alias should return nothing
 	tr := call(t, h, "search", map[string]any{
@@ -1324,7 +1329,7 @@ func TestForgetNode_DoesNotDelete(t *testing.T) {
 
 	mustNotError(t, call(t, h, "forget", map[string]any{"id": id}))
 
-	archivedTr := call(t, h, "forgotten", map[string]any{"domain": "test"})
+	archivedTr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": "test"})
 	mustNotError(t, archivedTr)
 
 	var nodes []struct {
@@ -1437,7 +1442,7 @@ func TestListArchived_ScopedByDomain(t *testing.T) {
 	mustNotError(t, call(t, h, "forget", map[string]any{"id": id1, "reason": "scope test"}))
 	mustNotError(t, call(t, h, "forget", map[string]any{"id": id2, "reason": "scope test"}))
 
-	archivedTr := call(t, h, "forgotten", map[string]any{"domain": "domain-1"})
+	archivedTr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": "domain-1"})
 	mustNotError(t, archivedTr)
 
 	var nodes []struct {
@@ -1509,7 +1514,7 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify it appears in list_archived
-	archivedTr := call(t, h, "forgotten", map[string]any{"domain": "project-alpha"})
+	archivedTr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": "project-alpha"})
 	mustNotError(t, archivedTr)
 	var archivedNodes []struct {
 		ID string `json:"id"`
@@ -1537,7 +1542,7 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify it's no longer in list_archived
-	archivedTr = call(t, h, "forgotten", map[string]any{"domain": "project-alpha"})
+	archivedTr = call(t, h, "audit", map[string]any{"mode": "archived", "domain": "project-alpha"})
 	mustNotError(t, archivedTr)
 	json.Unmarshal([]byte(text(t, archivedTr)), &archivedNodes)
 	for _, n := range archivedNodes {
@@ -1594,7 +1599,7 @@ func TestDriftContradictingEdge(t *testing.T) {
 		"relationship": "contradicts",
 	}))
 
-	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-1"})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "test-drift-1"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1615,7 +1620,7 @@ func TestDriftSupersededLabel(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "old RST $10 approach", "test-drift-2", nil)
 
-	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-2"})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "test-drift-2"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1638,7 +1643,7 @@ func TestDriftStaleOpenQuestion(t *testing.T) {
 		"why_matters": "unresolved timing decision that affects boot reliability",
 	})
 
-	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-3"})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "test-drift-3"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1657,7 +1662,7 @@ func TestDriftDuplicateLabel(t *testing.T) {
 	id1 := addNode(t, h, "boot crash duplicate label", "test-drift-4", nil)
 	id2 := addNode(t, h, "boot crash duplicate label", "test-drift-4", nil)
 
-	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-4"})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "test-drift-4"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -1679,7 +1684,7 @@ func TestDriftDoesNotSurfaceArchived(t *testing.T) {
 	id := addNode(t, h, "old archived stale thing", "test-drift-5", nil)
 	store.ArchiveNode(id, "test")
 
-	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-5"})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "test-drift-5"})
 	mustNotError(t, tr)
 	if strings.Contains(text(t, tr), id) {
 		t.Errorf("archived node (%s) should NOT appear in drift; got:\n%s", id, text(t, tr))
@@ -1693,7 +1698,7 @@ func TestDriftScopedByDomain(t *testing.T) {
 	idA := addNode(t, h, "old deprecated approach", "test-drift-a", nil)
 	addNode(t, h, "fresh new approach", "test-drift-b", nil)
 
-	tr := call(t, h, "whats_stale", map[string]any{"domain": "test-drift-b"})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "test-drift-b"})
 	mustNotError(t, tr)
 	if strings.Contains(text(t, tr), idA) {
 		t.Errorf("node from test-drift-a (%s) should NOT appear in test-drift-b drift; got:\n%s", idA, text(t, tr))
@@ -2851,7 +2856,7 @@ func TestDrift_TransientOlderThan7Days_Surfaced(t *testing.T) {
 	}
 	rawDB.Close()
 
-	tr := call(t, h, "whats_stale", map[string]any{"domain": "transient-test"})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "transient-test"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2866,7 +2871,7 @@ func TestDrift_TransientNewerThan7Days_NotSurfaced(t *testing.T) {
 		"transient": true,
 	})
 
-	tr := call(t, h, "whats_stale", map[string]any{"domain": "transient-fresh"})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "transient-fresh"})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2910,7 +2915,7 @@ func TestDisconnectedReturnsUnconnectedNodes(t *testing.T) {
 		"from_node": idA, "to_node": idB, "relationship": "led_to",
 	}))
 
-	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
+	tr := call(t, h, "audit", map[string]any{"mode": "orphans", "domain": domain})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2932,7 +2937,7 @@ func TestDisconnectedExcludesTransient(t *testing.T) {
 	addNode(t, h, "Transient lone node", domain, map[string]any{"transient": true})
 	live := addNode(t, h, "Live lone node", domain, nil)
 
-	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
+	tr := call(t, h, "audit", map[string]any{"mode": "orphans", "domain": domain})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -2948,7 +2953,7 @@ func TestDisconnectedExcludesArchived(t *testing.T) {
 	id := addNode(t, h, "Archived lone node", domain, nil)
 	store.ArchiveNode(id, "test")
 
-	tr := call(t, h, "disconnected", map[string]any{"domain": domain})
+	tr := call(t, h, "audit", map[string]any{"mode": "orphans", "domain": domain})
 	mustNotError(t, tr)
 	body := text(t, tr)
 
@@ -3363,50 +3368,6 @@ func newHandlerWithVersion(t *testing.T, version string, checker func() (string,
 	return tools.New(store, version, checker)
 }
 
-func TestCheckForUpdates_UpToDate(t *testing.T) {
-	h := newHandlerWithVersion(t, "v1.0.0", func() (string, error) { return "v1.0.0", nil })
-	tr := call(t, h, "check_for_updates", map[string]any{})
-	mustNotError(t, tr)
-	if !strings.Contains(text(t, tr), "up to date") {
-		t.Errorf("expected 'up to date' message; got: %s", text(t, tr))
-	}
-}
-
-func TestCheckForUpdates_UpdateAvailable(t *testing.T) {
-	h := newHandlerWithVersion(t, "v1.0.0", func() (string, error) { return "v2.0.0", nil })
-	tr := call(t, h, "check_for_updates", map[string]any{})
-	mustNotError(t, tr)
-	got := text(t, tr)
-	if !strings.Contains(got, "v2.0.0") {
-		t.Errorf("expected latest version 'v2.0.0' in message; got: %s", got)
-	}
-	if !strings.Contains(got, "v1.0.0") {
-		t.Errorf("expected current version 'v1.0.0' in message; got: %s", got)
-	}
-	if !strings.Contains(got, "releases/latest") {
-		t.Errorf("expected download URL in message; got: %s", got)
-	}
-}
-
-func TestCheckForUpdates_DevBuild(t *testing.T) {
-	h := newHandlerWithVersion(t, "dev", func() (string, error) { return "v2.0.0", nil })
-	tr := call(t, h, "check_for_updates", map[string]any{})
-	mustNotError(t, tr)
-	if !strings.Contains(text(t, tr), "dev build") {
-		t.Errorf("expected 'dev build' skip message; got: %s", text(t, tr))
-	}
-}
-
-func TestCheckForUpdates_NetworkError(t *testing.T) {
-	h := newHandlerWithVersion(t, "v1.0.0", func() (string, error) { return "", fmt.Errorf("connection refused") })
-	tr := call(t, h, "check_for_updates", map[string]any{})
-	// Network failures must not be a tool-level error — they are advisory.
-	mustNotError(t, tr)
-	if !strings.Contains(text(t, tr), "could not reach") {
-		t.Errorf("expected advisory message on error; got: %s", text(t, tr))
-	}
-}
-
 // ── revise: occurred_at ───────────────────────────────────────────────────────
 
 func TestRevise_SetsOccurredAt(t *testing.T) {
@@ -3640,7 +3601,7 @@ func TestRenameDomain_RenamesNodesAndCreatesAlias(t *testing.T) {
 	}
 
 	// Old domain should resolve to new domain via alias.
-	resolve := call(t, h, "resolve_domain", map[string]any{"name": "old-dom"})
+	resolve := call(t, h, "alias", map[string]any{"action": "resolve", "name": "old-dom"})
 	mustNotError(t, resolve)
 	if !strings.Contains(resolve.Content[0].Text, "new-dom") {
 		t.Errorf("alias did not resolve: %s", resolve.Content[0].Text)
@@ -3882,6 +3843,277 @@ func TestListTools_BatchVariantsRemoved(t *testing.T) {
 	b, _ := json.Marshal(raw)
 	s := string(b)
 	for _, removed := range []string{"remember_all", "revise_all", "connect_all"} {
+		if strings.Contains(s, `"`+removed+`"`) {
+			t.Errorf("tool %q must not appear in ListTools after consolidation", removed)
+		}
+	}
+}
+
+// ── audit tool (slice 2) ──────────────────────────────────────────────────────
+
+// TestAudit_ModeStale_ReturnsDriftCandidates: mode=stale must return drift
+// candidates (same behaviour as the removed whats_stale tool).
+func TestAudit_ModeStale_ReturnsDriftCandidates(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "old transient", "proj", map[string]any{"transient": true})
+	tr := call(t, h, "audit", map[string]any{"mode": "stale"})
+	mustNotError(t, tr)
+}
+
+// TestAudit_ModeOrphans_ReturnsDisconnected: mode=orphans must return
+// non-transient nodes with zero connections.
+func TestAudit_ModeOrphans_ReturnsDisconnected(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "lonely node", "proj", nil)
+	tr := call(t, h, "audit", map[string]any{"mode": "orphans"})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), id) {
+		t.Errorf("expected orphan node %q in audit orphans response", id)
+	}
+}
+
+// TestAudit_ModeArchived_ReturnsArchivedNodes: mode=archived must return
+// nodes that were archived.
+func TestAudit_ModeArchived_ReturnsArchivedNodes(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "to be archived", "proj", nil)
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": id, "reason": "test"}))
+	tr := call(t, h, "audit", map[string]any{"mode": "archived"})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), id) {
+		t.Errorf("expected archived node %q in audit archived response", id)
+	}
+}
+
+// TestAudit_InvalidMode_ReturnsError: an unrecognised mode must return an error.
+func TestAudit_InvalidMode_ReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "audit", map[string]any{"mode": "nonsense"})
+	mustError(t, tr)
+}
+
+// TestWhatsStale_IsUnknownTool: after consolidation, whats_stale must return
+// an error directing to the audit tool.
+func TestWhatsStale_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "whats_stale", map[string]any{})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool' in error; got: %s", text(t, tr))
+	}
+}
+
+// TestDisconnected_IsUnknownTool: after consolidation, disconnected must
+// return an error directing to the audit tool.
+func TestDisconnected_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "disconnected", map[string]any{})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool' in error; got: %s", text(t, tr))
+	}
+}
+
+// TestForgotten_IsUnknownTool: after consolidation, forgotten must return an
+// error directing to the audit tool.
+func TestForgotten_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "forgotten", map[string]any{})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool' in error; got: %s", text(t, tr))
+	}
+}
+
+// ── domains tool (slice 3) ────────────────────────────────────────────────────
+
+// TestDomains_ReturnsDomainsAndAliases: domains must return a combined
+// response containing domain list and alias list.
+func TestDomains_ReturnsDomainsAndAliases(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "A", "alpha", nil)
+	addNode(t, h, "B", "beta", nil)
+	mustNotError(t, call(t, h, "alias", map[string]any{"action": "add", "alias": "al", "domain": "alpha"}))
+	tr := call(t, h, "domains", map[string]any{})
+	mustNotError(t, tr)
+	out := text(t, tr)
+	if !strings.Contains(out, "alpha") {
+		t.Error("expected 'alpha' in domains response")
+	}
+	if !strings.Contains(out, "al") {
+		t.Error("expected alias 'al' in domains response")
+	}
+}
+
+// TestListDomains_IsUnknownTool: list_domains must return an error after consolidation.
+func TestListDomains_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "list_domains", map[string]any{})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
+
+// TestListAliases_IsUnknownTool: list_aliases must return an error after consolidation.
+func TestListAliases_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "list_aliases", map[string]any{})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
+
+// ── alias tool (slice 4) ──────────────────────────────────────────────────────
+
+// TestAlias_Add_RegistersAlias: action=add must register the alias.
+func TestAlias_Add_RegistersAlias(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "alias", map[string]any{"action": "add", "alias": "mw", "domain": "memoryweb"})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), "mw") {
+		t.Errorf("expected alias name in response; got: %s", text(t, tr))
+	}
+}
+
+// TestAlias_Remove_RemovesAlias: action=remove must remove a registered alias.
+func TestAlias_Remove_RemovesAlias(t *testing.T) {
+	_, h := newEnv(t)
+	mustNotError(t, call(t, h, "alias", map[string]any{"action": "add", "alias": "mw", "domain": "memoryweb"}))
+	tr := call(t, h, "alias", map[string]any{"action": "remove", "alias": "mw"})
+	mustNotError(t, tr)
+}
+
+// TestAlias_Resolve_ReturnsCanonical: action=resolve must return the canonical domain.
+func TestAlias_Resolve_ReturnsCanonical(t *testing.T) {
+	_, h := newEnv(t)
+	mustNotError(t, call(t, h, "alias", map[string]any{"action": "add", "alias": "mw", "domain": "memoryweb"}))
+	tr := call(t, h, "alias", map[string]any{"action": "resolve", "name": "mw"})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), "memoryweb") {
+		t.Errorf("expected 'memoryweb' in resolve response; got: %s", text(t, tr))
+	}
+}
+
+// TestAlias_List_ReturnsAllAliases: action=list must return all registered aliases.
+func TestAlias_List_ReturnsAllAliases(t *testing.T) {
+	_, h := newEnv(t)
+	mustNotError(t, call(t, h, "alias", map[string]any{"action": "add", "alias": "mw", "domain": "memoryweb"}))
+	tr := call(t, h, "alias", map[string]any{"action": "list"})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), "mw") {
+		t.Errorf("expected alias 'mw' in list response; got: %s", text(t, tr))
+	}
+}
+
+// TestAlias_InvalidAction_ReturnsError: an unknown action must return an error.
+func TestAlias_InvalidAction_ReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "alias", map[string]any{"action": "badaction"})
+	mustError(t, tr)
+}
+
+// TestAliasDomain_IsUnknownTool: alias_domain must return an error after consolidation.
+func TestAliasDomain_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "alias_domain", map[string]any{"alias": "x", "domain": "y"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
+
+// TestRemoveAlias_IsUnknownTool: remove_alias must return an error after consolidation.
+func TestRemoveAlias_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remove_alias", map[string]any{"alias": "x"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
+
+// TestResolveDomain_IsUnknownTool: resolve_domain must return an error after consolidation.
+func TestResolveDomain_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "resolve_domain", map[string]any{"name": "x"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
+
+// ── forget_all tool ───────────────────────────────────────────────────────────
+
+// TestForgetAll_ArchivesMultipleNodes: forget_all must archive all provided
+// IDs in a single transaction; they must no longer appear in search.
+func TestForgetAll_ArchivesMultipleNodes(t *testing.T) {
+	_, h := newEnv(t)
+	id1 := addNode(t, h, "node alpha", "proj", nil)
+	id2 := addNode(t, h, "node beta", "proj", nil)
+	tr := call(t, h, "forget_all", map[string]any{
+		"items": []map[string]any{
+			{"id": id1, "reason": "test cleanup"},
+			{"id": id2, "reason": "test cleanup"},
+		},
+	})
+	mustNotError(t, tr)
+	// Both should no longer appear in search.
+	sr := call(t, h, "search", map[string]any{"query": "node alpha", "domain": "proj"})
+	mustNotError(t, sr)
+	if strings.Contains(text(t, sr), id1) {
+		t.Error("archived node id1 should not appear in search")
+	}
+}
+
+// TestForgetAll_UnknownID_ReturnsError: forget_all with an unknown ID must
+// return an error and not archive any nodes (atomic).
+func TestForgetAll_UnknownID_ReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	id1 := addNode(t, h, "should stay live", "proj", nil)
+	tr := call(t, h, "forget_all", map[string]any{
+		"items": []map[string]any{
+			{"id": id1, "reason": "cleanup"},
+			{"id": "nonexistent-id-xyz", "reason": "cleanup"},
+		},
+	})
+	mustError(t, tr)
+	// id1 must still be live (transaction rolled back).
+	sr := call(t, h, "search", map[string]any{"query": "should stay live", "domain": "proj"})
+	mustNotError(t, sr)
+	if !strings.Contains(text(t, sr), id1) {
+		t.Error("id1 should still be live after failed forget_all")
+	}
+}
+
+// TestCheckForUpdates_IsUnknownTool: check_for_updates must return an error
+// after being removed from the MCP surface.
+func TestCheckForUpdates_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "check_for_updates", map[string]any{})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
+
+// TestListTools_Slice2And3Removed: verifies all tools removed in slices 2–4
+// no longer appear in ListTools output.
+func TestListTools_Slice2And3Removed(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	s := string(b)
+	for _, removed := range []string{
+		"whats_stale", "disconnected", "forgotten",
+		"list_domains", "list_aliases",
+		"alias_domain", "remove_alias", "resolve_domain",
+		"check_for_updates",
+	} {
 		if strings.Contains(s, `"`+removed+`"`) {
 			t.Errorf("tool %q must not appear in ListTools after consolidation", removed)
 		}
