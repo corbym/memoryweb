@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -38,7 +39,11 @@ func TestMain(m *testing.M) {
 		dir = parent
 	}
 
-	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-hooks-%d", os.Getpid()))
+	exeSuffix := ""
+	if runtime.GOOS == "windows" {
+		exeSuffix = ".exe"
+	}
+	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-hooks-%d%s", os.Getpid(), exeSuffix))
 	buildCmd := exec.Command("go", "build", "-o", bin, ".")
 	buildCmd.Dir = root
 	if out, err := buildCmd.CombinedOutput(); err != nil {
@@ -93,6 +98,53 @@ func makeTranscript(t *testing.T, projectsDir, sessionID string, numHuman int) {
 	}
 }
 
+// shellCmd returns a command that executes a shell script. On Windows, .sh
+// files are not directly executable so the script is passed to bash.
+// Git Bash is preferred (it uses MSYS2 /c/... paths); WSL bash is used as
+// a fallback (it uses /mnt/c/... paths).
+func shellCmd(script string) *exec.Cmd {
+	if runtime.GOOS != "windows" {
+		return exec.Command(script)
+	}
+	// Prefer Git Bash — it uses MSYS2 paths (/c/...).
+	gitBashCandidates := []string{
+		`C:\Program Files\Git\bin\bash.exe`,
+		`C:\Program Files\Git\usr\bin\bash.exe`,
+	}
+	for _, candidate := range gitBashCandidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return exec.Command(candidate, winToMSYS2(script))
+		}
+	}
+	// Fall back to WSL bash — it uses /mnt/c/... paths.
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		bash = "bash" // will fail with a clear error if bash is not installed
+	}
+	return exec.Command(bash, winToWSL(script))
+}
+
+// winToMSYS2 converts a Windows path (C:\foo\bar) to MSYS2/Git Bash POSIX
+// path (/c/foo/bar) so scripts can be located by the Git Bash runtime.
+func winToMSYS2(p string) string {
+	p = strings.ReplaceAll(p, `\`, `/`)
+	// C:/foo → /c/foo
+	if len(p) >= 3 && p[1] == ':' && p[2] == '/' {
+		p = "/" + strings.ToLower(string(p[0])) + p[2:]
+	}
+	return p
+}
+
+// winToWSL converts a Windows path to WSL path (/mnt/c/...).
+func winToWSL(p string) string {
+	p = strings.ReplaceAll(p, `\`, `/`)
+	// C:/foo → /mnt/c/foo
+	if len(p) >= 3 && p[1] == ':' && p[2] == '/' {
+		p = "/mnt/" + strings.ToLower(string(p[0])) + p[2:]
+	}
+	return p
+}
+
 // runHook executes a hook script with JSON payload on stdin and custom env.
 func runHook(t *testing.T, script, sessionID, stateDir, projectsDir string) (string, int) {
 	t.Helper()
@@ -104,7 +156,7 @@ func runHook(t *testing.T, script, sessionID, stateDir, projectsDir string) (str
 func runHookExtra(t *testing.T, script, sessionID, stateDir, projectsDir string, extraEnv ...string) (string, int) {
 	t.Helper()
 	payload, _ := json.Marshal(map[string]string{"session_id": sessionID})
-	cmd := exec.Command(script)
+	cmd := shellCmd(script)
 	cmd.Stdin = strings.NewReader(string(payload))
 	env := append(os.Environ(),
 		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
@@ -198,7 +250,7 @@ func runPrecompactHook(t *testing.T, stateDir, sessionID string) (string, int) {
 	t.Helper()
 	script := filepath.Join(hooksDir(t), "memoryweb_precompact_hook.sh")
 	payload, _ := json.Marshal(map[string]string{"session_id": sessionID})
-	cmd := exec.Command(script)
+	cmd := shellCmd(script)
 	cmd.Stdin = strings.NewReader(string(payload))
 	cmd.Env = append(os.Environ(),
 		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,

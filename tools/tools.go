@@ -318,11 +318,12 @@ func (h *Handler) ListTools() (interface{}, error) {
 			Description: "Generate a Mermaid.js flowchart. " +
 				"Pass `memory_id` to see a single memory and all its direct connections. " +
 				"Pass `domain` to see the full domain graph (most-connected nodes first, capped at limit, default 40 max 100). " +
-				"Returns a JSON object with `mermaid` (the diagram source), `node_count`, `edge_count`, `truncated` (true when the domain has more nodes than the limit), " +
+				"Returns a JSON object with `mermaid` (the diagram source), `node_count` (shown), `nodes_total` (full domain), `edge_count` (shown), `edges_total` (full domain), `truncated` (true when the domain has more nodes than the limit), " +
 				"`nodes` ([{id, label}]) and `edges` ([{from, to, relationship}]) for structured rendering. " +
+				"Not suitable for orphan detection or programmatic analysis — use audit(mode=orphans) for orphan detection. Output may be truncated for large domains. Use for human visual inspection only. " +
 				"If the client supports HTML widgets, prefer passing the nodes and edges to an interactive renderer rather than outputting raw mermaid. " +
 				"If the client does not support HTML widgets, output the `mermaid` string inside a ```mermaid code block. " +
-				"If `truncated` is true, note that only the most-connected nodes are shown. " +
+				"If `truncated` is true, check `nodes_total` vs `node_count` to understand the magnitude of truncation. " +
 				"Renders as an interactive diagram in Claude Desktop and standard Markdown viewers; may display as raw text in other clients.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -1317,6 +1318,7 @@ func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 	var nodes []db.Node
 	var edges []db.Edge
 	var truncated bool
+	var nodesTotal, edgesTotal int
 
 	switch {
 	case a.MemoryID != "":
@@ -1330,7 +1332,7 @@ func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 			a.Limit = 40
 		}
 		var err error
-		nodes, edges, truncated, err = h.store.GetDomainGraph(a.Domain, a.Limit)
+		nodes, edges, truncated, nodesTotal, edgesTotal, err = h.store.GetDomainGraph(a.Domain, a.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -1388,19 +1390,23 @@ func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	result := struct {
-		Mermaid   string      `json:"mermaid"`
-		NodeCount int         `json:"node_count"`
-		EdgeCount int         `json:"edge_count"`
-		Truncated bool        `json:"truncated,omitempty"`
-		Nodes     []nodeEntry `json:"nodes"`
-		Edges     []edgeEntry `json:"edges"`
+		Mermaid    string      `json:"mermaid"`
+		NodeCount  int         `json:"node_count"`
+		NodesTotal int         `json:"nodes_total,omitempty"`
+		EdgeCount  int         `json:"edge_count"`
+		EdgesTotal int         `json:"edges_total,omitempty"`
+		Truncated  bool        `json:"truncated,omitempty"`
+		Nodes      []nodeEntry `json:"nodes"`
+		Edges      []edgeEntry `json:"edges"`
 	}{
-		Mermaid:   sb.String(),
-		NodeCount: len(nodes),
-		EdgeCount: len(edges),
-		Truncated: truncated,
-		Nodes:     nodeList,
-		Edges:     edgeList,
+		Mermaid:    sb.String(),
+		NodeCount:  len(nodes),
+		NodesTotal: nodesTotal,
+		EdgeCount:  len(edges),
+		EdgesTotal: edgesTotal,
+		Truncated:  truncated,
+		Nodes:      nodeList,
+		Edges:      edgeList,
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil

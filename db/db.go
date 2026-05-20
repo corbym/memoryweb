@@ -1890,8 +1890,10 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 // GetDomainGraph returns the live nodes and the edges between them for a domain.
 // Nodes are sorted by edge count descending so the most-connected appear first;
 // the result is capped at limit (default 40, max 100). truncated is true when
-// the full node set was larger than limit.
-func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []Edge, truncated bool, err error) {
+// the full node set was larger than limit. nodesTotal is the full domain node
+// count before any truncation; edgesTotal is the count of intra-domain edges
+// across all nodes (not just the shown subset).
+func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []Edge, truncated bool, nodesTotal int, edgesTotal int, err error) {
 	domain = s.ResolveAlias(domain)
 	if limit <= 0 {
 		limit = 40
@@ -1965,7 +1967,16 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 		ecRows.Close()
 	}
 
-	// Step 3: sort by edge count descending, then truncate.
+	// Step 3: record totals before any truncation, then sort and truncate.
+	nodesTotal = len(allNodes)
+	// Count intra-domain edges (both endpoints in domain) across the full node set.
+	if nodesTotal > 0 {
+		_ = s.db.QueryRow(
+			`SELECT COUNT(*) FROM edges WHERE from_node IN (`+ph+`) AND to_node IN (`+ph+`)`,
+			rankArgs...,
+		).Scan(&edgesTotal)
+	}
+
 	sort.Slice(allNodes, func(i, j int) bool {
 		return counts[allNodes[i].ID] > counts[allNodes[j].ID]
 	})

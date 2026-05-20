@@ -19,7 +19,11 @@ var setupBin string
 // single test binary Go produces for a directory.
 func TestMain(m *testing.M) {
 	root := setupFindRepoRoot()
-	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-setup-test-%d", os.Getpid()))
+	exeSuffix := ""
+	if runtime.GOOS == "windows" {
+		exeSuffix = ".exe"
+	}
+	bin := filepath.Join(os.TempDir(), fmt.Sprintf("mw-test-%d%s", os.Getpid(), exeSuffix))
 	buildCmd := exec.Command("go", "build", "-o", bin, ".")
 	buildCmd.Dir = root
 	if out, err := buildCmd.CombinedOutput(); err != nil {
@@ -58,7 +62,15 @@ func runSetupCmdWithStdin(t *testing.T, homeDir, stdinContent string, args ...st
 	t.Helper()
 	allArgs := append([]string{"setup"}, args...)
 	cmd := exec.Command(setupBin, allArgs...)
-	cmd.Env = append(os.Environ(), "HOME="+homeDir)
+	env := append(os.Environ(), "HOME="+homeDir)
+	if runtime.GOOS == "windows" {
+		// On Windows, agentSupportDir reads APPDATA from the environment.
+		// Point it at homeDir/AppData/Roaming so tests are isolated.
+		env = append(env, "APPDATA="+filepath.Join(homeDir, "AppData", "Roaming"))
+		// os.UserHomeDir() on Windows reads USERPROFILE, not HOME.
+		env = append(env, "USERPROFILE="+homeDir)
+	}
+	cmd.Env = env
 	if stdinContent != "" {
 		cmd.Stdin = strings.NewReader(stdinContent)
 	}
@@ -97,7 +109,11 @@ func TestSetupHomebrewLayout(t *testing.T) {
 	os.MkdirAll(shareHooksDir, 0755)
 
 	// Copy the compiled binary into <prefix>/bin/.
-	binCopy := filepath.Join(binDir, "memoryweb")
+	binName := "memoryweb"
+	if runtime.GOOS == "windows" {
+		binName = "memoryweb.exe"
+	}
+	binCopy := filepath.Join(binDir, binName)
 	srcData, err := os.ReadFile(setupBin)
 	if err != nil {
 		t.Fatalf("read test binary: %v", err)
@@ -154,10 +170,12 @@ func TestSetupInstallsHooks(t *testing.T) {
 	saveHook := filepath.Join(hooksDir(t), "memoryweb_save_hook.sh")
 	precompactHook := filepath.Join(hooksDir(t), "memoryweb_precompact_hook.sh")
 
-	if !strings.Contains(out, saveHook) {
+	// The output is JSON-encoded; on Windows backslashes are doubled.
+	outNorm := strings.ReplaceAll(out, `\\`, `\`)
+	if !strings.Contains(outNorm, saveHook) {
 		t.Errorf("output should contain save hook path %q; got:\n%s", saveHook, out)
 	}
-	if !strings.Contains(out, precompactHook) {
+	if !strings.Contains(outNorm, precompactHook) {
 		t.Errorf("output should contain precompact hook path %q; got:\n%s", precompactHook, out)
 	}
 

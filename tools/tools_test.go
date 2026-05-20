@@ -3167,8 +3167,9 @@ func TestVisualiseTruncation(t *testing.T) {
 	mustNotError(t, tr)
 
 	var resp struct {
-		NodeCount int  `json:"node_count"`
-		Truncated bool `json:"truncated"`
+		NodeCount  int  `json:"node_count"`
+		NodesTotal int  `json:"nodes_total"`
+		Truncated  bool `json:"truncated"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
@@ -3178,6 +3179,9 @@ func TestVisualiseTruncation(t *testing.T) {
 	}
 	if !resp.Truncated {
 		t.Error("truncated should be true when domain has more nodes than limit")
+	}
+	if resp.NodesTotal != 4 {
+		t.Errorf("nodes_total should be 4 (full domain count), got %d", resp.NodesTotal)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,7 +21,11 @@ var dreamBin string
 func TestMain(m *testing.M) {
 	root := findRepoRoot()
 
-	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-%d", os.Getpid()))
+	exeSuffix := ""
+	if runtime.GOOS == "windows" {
+		exeSuffix = ".exe"
+	}
+	bin := filepath.Join(os.TempDir(), fmt.Sprintf("memoryweb-%d%s", os.Getpid(), exeSuffix))
 	buildCmd := exec.Command("go", "build", "-o", bin, ".")
 	buildCmd.Dir = root
 	if out, err := buildCmd.CombinedOutput(); err != nil {

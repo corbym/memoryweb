@@ -478,7 +478,7 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string)
 		if err != nil {
 			return fmt.Errorf("hook script not found: %s (%w)", script, err)
 		}
-		if info.Mode()&0o111 == 0 {
+		if info.Mode()&0o111 == 0 && runtime.GOOS != "windows" {
 			return fmt.Errorf("hook script is not executable: %s", script)
 		}
 	}
