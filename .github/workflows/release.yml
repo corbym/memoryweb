@@ -35,7 +35,7 @@ jobs:
             {"os":"macos-latest","goos":"darwin","goarch":"amd64","cc":"clang"},
             {"os":"macos-latest","goos":"darwin","goarch":"arm64","cc":"clang"},
             {"os":"windows-latest","goos":"windows","goarch":"amd64","cc":"gcc","ext":".exe"},
-            {"os":"windows-latest","goos":"windows","goarch":"386","cc":"i686-w64-mingw32-gcc","ext":".exe"}
+            {"os":"ubuntu-latest","goos":"windows","goarch":"386","cc":"i686-w64-mingw32-gcc","ext":".exe"}
           ]'
           FILTER="${{ inputs.os_filter }}"
           if [ -z "$FILTER" ]; then
@@ -66,7 +66,7 @@ jobs:
 
       - name: Install gcc (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get install -y gcc gcc-aarch64-linux-gnu
+        run: sudo apt-get install -y gcc gcc-aarch64-linux-gnu gcc-mingw-w64-i686
 
       - name: Set up sqlite3 headers for Linux CGO build
         if: matrix.os == 'ubuntu-latest'
@@ -101,7 +101,7 @@ jobs:
         run: go build -ldflags="-s -w -X main.Version=${{ inputs.tag || github.ref_name }}" -o bin/memoryweb_${{ matrix.goos }}_${{ matrix.goarch }}/memoryweb${{ matrix.ext }} .
 
       - name: Sign Windows binary
-        if: matrix.goos == 'windows'
+        if: matrix.goos == 'windows' && matrix.os == 'windows-latest'
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
