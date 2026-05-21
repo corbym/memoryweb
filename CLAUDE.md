@@ -129,6 +129,11 @@ bytes as lowercase hex (8 chars).
 **Decision (session 2):** tool descriptions carry agent guidance. Follow these
 rules when writing or updating descriptions:
 
+**When removing or renaming a tool:** add the old tool name to the `removedTools`
+slice in `TestListTools_NoStaleToolReferences` in `tools/tools_test.go`. This
+prevents stale references to the removed name surviving in other tools'
+descriptions. No exceptions — the test will not catch the omission automatically.
+
 - Never expose structural vocabulary to the user: no "node", "edge", "the web",
   "stored in", "retrieved from", "what's recorded".
 - Present retrieved information as direct knowledge, no preamble.

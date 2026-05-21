@@ -437,6 +437,29 @@ var migrations = []migration{
 			return err
 		},
 	},
+	{
+		version: 11,
+		desc:    "add significance_log table",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS significance_log (
+    id          TEXT PRIMARY KEY,
+    call_id     TEXT NOT NULL,
+    called_at   DATETIME NOT NULL,
+    domain      TEXT NOT NULL,
+    limit_n     INTEGER NOT NULL,
+    node_id     TEXT NOT NULL,
+    node_label  TEXT NOT NULL,
+    rank_type   TEXT NOT NULL,
+    score       REAL
+);
+CREATE INDEX IF NOT EXISTS idx_significance_log_domain  ON significance_log(domain);
+CREATE INDEX IF NOT EXISTS idx_significance_log_node    ON significance_log(node_id);
+CREATE INDEX IF NOT EXISTS idx_significance_log_call_id ON significance_log(call_id);
+`)
+			return err
+		},
+	},
 }
 
 // migrate creates the schema_migrations tracking table (if needed) then applies
@@ -2911,4 +2934,205 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 	edgeRows.Close()
 	err = edgeRows.Err()
 	return
+}
+
+// ── GetSignificance ───────────────────────────────────────────────────────────
+
+// ScoredNode is a Node decorated with a structural importance score.
+type ScoredNode struct {
+	Node
+	ImportanceScore float64 `json:"importance_score"`
+}
+
+// SignificanceResult holds the four sections returned by GetSignificance.
+type SignificanceResult struct {
+	Declared         []Node       `json:"declared"`
+	Structural       []ScoredNode `json:"structural"`
+	Uncurated        []ScoredNode `json:"uncurated"`
+	PotentiallyStale []Node       `json:"potentially_stale"`
+	CallID           string       `json:"call_id"`
+}
+
+// GetSignificance returns a dual-signal importance analysis for a domain.
+//
+//   - declared:          live nodes with occurred_at set, ordered by occurred_at ASC.
+//   - structural:        live nodes ranked by weighted inbound degree (decay by linker age),
+//     capped at limit, ordered by importance_score DESC.
+//   - uncurated:         structural top-N nodes that have no occurred_at.
+//   - potentially_stale: declared nodes whose ID does not appear in structural top-N.
+//
+// Every call writes rows to significance_log (one per returned node in
+// structural, uncurated, potentially_stale) so the decay function can be
+// validated over time.
+func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int) (SignificanceResult, error) {
+	callID := shortID()
+	var res SignificanceResult
+	res.CallID = callID
+
+	// ── declared ─────────────────────────────────────────────────────────────
+	declaredRows, err := s.db.Query(`
+		SELECT id, label, description, why_matters, tags, domain,
+		       created_at, updated_at, occurred_at, archived_at, transient
+		FROM nodes
+		WHERE domain = ?
+		  AND occurred_at IS NOT NULL
+		  AND archived_at IS NULL
+		ORDER BY occurred_at ASC`, domain)
+	if err != nil {
+		return res, fmt.Errorf("GetSignificance declared: %w", err)
+	}
+	defer declaredRows.Close()
+	for declaredRows.Next() {
+		n, err := scanNode(declaredRows)
+		if err != nil {
+			return res, fmt.Errorf("GetSignificance scan declared: %w", err)
+		}
+		res.Declared = append(res.Declared, n)
+	}
+	if err := declaredRows.Err(); err != nil {
+		return res, fmt.Errorf("GetSignificance declared rows: %w", err)
+	}
+	if res.Declared == nil {
+		res.Declared = []Node{}
+	}
+
+	// ── structural ────────────────────────────────────────────────────────────
+	structRows, err := s.db.Query(`
+		SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
+		       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.transient,
+		       SUM(1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS importance_score
+		FROM edges e
+		JOIN nodes n  ON e.to_node   = n.id
+		JOIN nodes n2 ON e.from_node = n2.id
+		WHERE n.domain = ?
+		  AND n.archived_at IS NULL
+		  AND n2.archived_at IS NULL
+		  AND (julianday('now') - julianday(n2.updated_at)) <= ?
+		GROUP BY n.id
+		ORDER BY importance_score DESC
+		LIMIT ?`, domain, recencyWindowDays, limit)
+	if err != nil {
+		return res, fmt.Errorf("GetSignificance structural: %w", err)
+	}
+	defer structRows.Close()
+	structIDs := map[string]bool{}
+	for structRows.Next() {
+		var sn ScoredNode
+		var tags, desc, why sql.NullString
+		var occurredAt, archivedAt sql.NullTime
+		var transient int
+		if err := structRows.Scan(
+			&sn.ID, &sn.Label, &desc, &why, &tags, &sn.Domain,
+			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &transient,
+			&sn.ImportanceScore,
+		); err != nil {
+			return res, fmt.Errorf("GetSignificance scan structural: %w", err)
+		}
+		sn.Description = desc.String
+		sn.WhyMatters = why.String
+		sn.Tags = tags.String
+		if occurredAt.Valid {
+			sn.OccurredAt = &occurredAt.Time
+		}
+		if archivedAt.Valid {
+			sn.ArchivedAt = &archivedAt.Time
+		}
+		sn.Transient = transient != 0
+		res.Structural = append(res.Structural, sn)
+		structIDs[sn.ID] = true
+	}
+	if err := structRows.Err(); err != nil {
+		return res, fmt.Errorf("GetSignificance structural rows: %w", err)
+	}
+	if res.Structural == nil {
+		res.Structural = []ScoredNode{}
+	}
+
+	// ── uncurated: structural top-N with no occurred_at ───────────────────────
+	for _, sn := range res.Structural {
+		if sn.OccurredAt == nil {
+			res.Uncurated = append(res.Uncurated, sn)
+		}
+	}
+	if res.Uncurated == nil {
+		res.Uncurated = []ScoredNode{}
+	}
+
+	// ── potentially_stale: declared but not in structural ─────────────────────
+	for _, n := range res.Declared {
+		if !structIDs[n.ID] {
+			res.PotentiallyStale = append(res.PotentiallyStale, n)
+		}
+	}
+	if res.PotentiallyStale == nil {
+		res.PotentiallyStale = []Node{}
+	}
+
+	// ── log ───────────────────────────────────────────────────────────────────
+	calledAt := time.Now().UTC()
+	logged := map[string]bool{}
+	for _, sn := range res.Structural {
+		if !logged[sn.ID] {
+			if err := s.logSignificance(callID, calledAt, domain, limit, sn.ID, sn.Label, "structural", &sn.ImportanceScore); err != nil {
+				return res, fmt.Errorf("GetSignificance log structural: %w", err)
+			}
+			logged[sn.ID] = true
+		}
+	}
+	for _, sn := range res.Uncurated {
+		if !logged[sn.ID] {
+			if err := s.logSignificance(callID, calledAt, domain, limit, sn.ID, sn.Label, "uncurated", nil); err != nil {
+				return res, fmt.Errorf("GetSignificance log uncurated: %w", err)
+			}
+			logged[sn.ID] = true
+		}
+	}
+	for _, n := range res.PotentiallyStale {
+		if !logged[n.ID] {
+			if err := s.logSignificance(callID, calledAt, domain, limit, n.ID, n.Label, "potentially_stale", nil); err != nil {
+				return res, fmt.Errorf("GetSignificance log potentially_stale: %w", err)
+			}
+			logged[n.ID] = true
+		}
+	}
+
+	return res, nil
+}
+
+// logSignificance inserts one row into significance_log.
+func (s *Store) logSignificance(callID string, calledAt time.Time, domain string, limitN int, nodeID, nodeLabel, rankType string, score *float64) error {
+	id := shortID()
+	_, err := s.db.Exec(
+		`INSERT INTO significance_log (id, call_id, called_at, domain, limit_n, node_id, node_label, rank_type, score)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, callID, calledAt, domain, limitN, nodeID, nodeLabel, rankType, score,
+	)
+	return err
+}
+
+// scanNode scans a single row from a query that SELECTs the standard 11 node
+// columns in the order: id, label, description, why_matters, tags, domain,
+// created_at, updated_at, occurred_at, archived_at, transient.
+func scanNode(rows *sql.Rows) (Node, error) {
+	var n Node
+	var desc, why, tags sql.NullString
+	var occurredAt, archivedAt sql.NullTime
+	var transient int
+	if err := rows.Scan(
+		&n.ID, &n.Label, &desc, &why, &tags, &n.Domain,
+		&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &transient,
+	); err != nil {
+		return n, err
+	}
+	n.Description = desc.String
+	n.WhyMatters = why.String
+	n.Tags = tags.String
+	if occurredAt.Valid {
+		n.OccurredAt = &occurredAt.Time
+	}
+	if archivedAt.Valid {
+		n.ArchivedAt = &archivedAt.Time
+	}
+	n.Transient = transient != 0
+	return n, nil
 }

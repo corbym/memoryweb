@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -209,12 +210,12 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 	}
 	want := []string{
 		"remember", "connect", "revise", "recall", "search",
-		"recent", "why_connected", "history",
+		"recent", "why_connected", "history", "significance",
 		"alias",
 		"forget", "restore", "forget_all",
 		"audit", "orient",
 		"suggest_connections",
-		"domains", "disconnect", "trace",
+		"domains", "disconnect", "trace", "visualise",
 		"rename_domain",
 	}
 	got := map[string]bool{}
@@ -224,6 +225,120 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 	for _, name := range want {
 		if !got[name] {
 			t.Errorf("missing tool: %s", name)
+		}
+	}
+}
+
+func TestListTools_DescriptionsPresent(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+
+	// wantDescSubstr maps tool name → a distinctive substring of its description.
+	wantDescSubstr := map[string]string{
+		"remember":            "File one or more concepts",
+		"connect":             "Connect memories with typed",
+		"recall":              "Retrieve a memory and all its connections by ID",
+		"search":              "Search memories by text",
+		"recent":              "List the most recently added or updated memories",
+		"why_connected":       "Find how two concepts are related",
+		"history":             "Returns nodes in a domain in chronological order",
+		"significance":        "Dual-signal importance analysis",
+		"alias":               "Manage domain aliases",
+		"forget":              "Always provide a reason",
+		"restore":             "Restore an archived memory so it surfaces in search again. This reverses forget.",
+		"audit":               "Inspect the health of knowledge",
+		"forget_all":          "Archive multiple memories in a single atomic transaction",
+		"orient":              "Return all known memories for a domain structured for synthesis",
+		"revise":              "Update one or more existing live memories",
+		"suggest_connections": "Given a memory ID, return up to 5 candidate connections",
+		"domains":             "Return all known domains and registered aliases",
+		"disconnect":          "Remove a connection between two memories by edge ID",
+		"trace":               "Find the shortest chain of relationships",
+		"visualise":           "Generate a Mermaid.js flowchart",
+		"rename_domain":       "Rename a domain",
+	}
+
+	byName := map[string]string{}
+	for _, td := range resp.Tools {
+		byName[td.Name] = td.Description
+	}
+
+	for name, wantSubstr := range wantDescSubstr {
+		desc, ok := byName[name]
+		if !ok {
+			t.Errorf("tool %q: not found in ListTools response", name)
+			continue
+		}
+		if desc == "" {
+			t.Errorf("tool %q: description is empty", name)
+			continue
+		}
+		if !strings.Contains(desc, wantSubstr) {
+			t.Errorf("tool %q: description does not contain %q\n  got: %s", name, wantSubstr, desc[:min(len(desc), 120)])
+		}
+	}
+}
+
+// TestListTools_NoStaleToolReferences asserts that no tool description
+// references a removed or renamed tool by its old name. When a tool is
+// removed or renamed, add its former name to removedTools below so any
+// leftover references in descriptions are caught immediately.
+func TestListTools_NoStaleToolReferences(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+
+	// removedTools lists former tool names that must never appear in any
+	// description. Update this list whenever a tool is removed or renamed.
+	removedTools := []struct {
+		name       string
+		replacedBy string
+	}{
+		{"forgotten", "audit(mode=archived)"},
+		{"whats_stale", "audit(mode=stale)"},
+		{"remember_all", "remember with items array"},
+		{"revise_all", "revise with items array"},
+		{"connect_all", "connect with items array"},
+		{"list_domains", "domains"},
+		{"list_aliases", "alias(action=list)"},
+		{"disconnected", "audit(mode=orphans)"},
+		{"check_for_updates", "CLI only"},
+	}
+
+	for _, td := range resp.Tools {
+		for _, removed := range removedTools {
+			// Whole-word match: \b ensures "disconnected" does not fire on
+			// "disconnected staleness" but would fire on a bare tool name reference.
+			pat := regexp.MustCompile(`\b` + regexp.QuoteMeta(removed.name) + `\b`)
+			if pat.MatchString(td.Description) {
+				t.Errorf("tool %q: description references removed tool %q (use %s instead)",
+					td.Name, removed.name, removed.replacedBy)
+			}
 		}
 	}
 }
@@ -4121,5 +4236,131 @@ func TestListTools_Slice2And3Removed(t *testing.T) {
 		if strings.Contains(s, `"`+removed+`"`) {
 			t.Errorf("tool %q must not appear in ListTools after consolidation", removed)
 		}
+	}
+}
+
+// ── significance ──────────────────────────────────────────────────────────────
+
+func TestSignificance_ReturnsAllFourSections(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "significance", map[string]any{"domain": "empty-domain"})
+	mustNotError(t, tr)
+
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	for _, key := range []string{"declared", "structural", "uncurated", "potentially_stale", "call_id"} {
+		if _, ok := resp[key]; !ok {
+			t.Errorf("response missing key %q", key)
+		}
+	}
+}
+
+func TestSignificance_IsErrorOnMissingDomain(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "significance", map[string]any{})
+	mustError(t, tr)
+}
+
+func TestSignificance_StructuralRankingCorrect(t *testing.T) {
+	_, h := newEnv(t)
+
+	popular := addNode(t, h, "Popular node", "proj", nil)
+	niche := addNode(t, h, "Niche node", "proj", nil)
+
+	// 3 linkers → popular
+	for i := 0; i < 3; i++ {
+		linker := addNode(t, h, fmt.Sprintf("Linker %d", i), "proj", nil)
+		mustNotError(t, call(t, h, "connect", map[string]any{
+			"from_node": linker, "to_node": popular,
+			"relationship": "connects_to", "narrative": "links",
+		}))
+	}
+	// 1 linker → niche
+	nicheLinker := addNode(t, h, "Niche linker", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_node": nicheLinker, "to_node": niche,
+		"relationship": "connects_to", "narrative": "links",
+	}))
+
+	tr := call(t, h, "significance", map[string]any{"domain": "proj"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Structural []struct {
+			ID              string  `json:"id"`
+			ImportanceScore float64 `json:"importance_score"`
+		} `json:"structural"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if len(resp.Structural) < 2 {
+		t.Fatalf("expected at least 2 structural entries, got %d", len(resp.Structural))
+	}
+	if resp.Structural[0].ID != popular {
+		t.Errorf("Structural[0]: want %q (popular), got %q", popular, resp.Structural[0].ID)
+	}
+}
+
+func TestSignificance_PotentiallyStaleDetected(t *testing.T) {
+	_, h := newEnv(t)
+
+	// Node with occurred_at but no inbound edges — structurally irrelevant.
+	isolated := addNode(t, h, "Isolated significant node", "proj", map[string]any{
+		"occurred_at": "2026-01-01T00:00:00Z",
+		"why_matters": "key decision with no dependants",
+	})
+
+	tr := call(t, h, "significance", map[string]any{"domain": "proj"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		PotentiallyStale []struct {
+			ID string `json:"id"`
+		} `json:"potentially_stale"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	found := false
+	for _, n := range resp.PotentiallyStale {
+		if n.ID == isolated {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("isolated node with occurred_at and no inbound edges should appear in potentially_stale")
+	}
+}
+
+func TestSignificance_DefaultsApplied(t *testing.T) {
+	// Omitting limit and recency_window should default to 10 and 90.
+	// Verify: a domain with >10 linker targets returns at most 10 structural entries.
+	_, h := newEnv(t)
+
+	for i := 0; i < 12; i++ {
+		target := addNode(t, h, fmt.Sprintf("Target %d", i), "proj", nil)
+		linker := addNode(t, h, fmt.Sprintf("Linker %d", i), "proj", nil)
+		mustNotError(t, call(t, h, "connect", map[string]any{
+			"from_node": linker, "to_node": target,
+			"relationship": "connects_to", "narrative": "links",
+		}))
+	}
+
+	tr := call(t, h, "significance", map[string]any{"domain": "proj"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Structural []struct {
+			ID string `json:"id"`
+		} `json:"structural"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if len(resp.Structural) > 10 {
+		t.Errorf("default limit=10: structural should have at most 10 entries, got %d", len(resp.Structural))
 	}
 }
