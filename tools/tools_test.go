@@ -1054,6 +1054,60 @@ func TestAddEdge_HappyPath(t *testing.T) {
 	}
 }
 
+// TestConnect_RejectsLegacyFromNodeKey: sending from_node (retired key) must
+// return an error with a schema-refresh hint, not silently create a broken edge.
+func TestConnect_RejectsLegacyFromNodeKey(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "source", "proj", nil)
+	to := addNode(t, h, "target", "proj", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_node":    from, // retired key
+		"to_memory":    to,
+		"relationship": "connects_to",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "from_node") {
+		t.Error("error message should name the offending parameter 'from_node'")
+	}
+}
+
+// TestConnect_RejectsLegacyToNodeKey: sending to_node (retired key) must
+// return an error with a schema-refresh hint.
+func TestConnect_RejectsLegacyToNodeKey(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "source", "proj", nil)
+	to := addNode(t, h, "target", "proj", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory":  from,
+		"to_node":      to, // retired key
+		"relationship": "connects_to",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "to_node") {
+		t.Error("error message should name the offending parameter 'to_node'")
+	}
+}
+
+// TestConnect_BatchRejectsLegacyKeys: batch mode items using from_node/to_node
+// must return an error, not silently skip the edges.
+func TestConnect_BatchRejectsLegacyKeys(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "source", "proj", nil)
+	to := addNode(t, h, "target", "proj", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"items": []map[string]any{
+			{"from_node": from, "to_node": to, "relationship": "connects_to"},
+		},
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "from_node") {
+		t.Error("error message should name the offending parameter 'from_node'")
+	}
+}
+
 func TestAddEdge_NonExistentFromNode(t *testing.T) {
 	_, h := newEnv(t)
 	to := addNode(t, h, "ULA fix", "deep-game", nil)
@@ -2220,6 +2274,29 @@ func TestOrient_IncludesTotalNodes(t *testing.T) {
 	}
 	if resp.TotalNodes != 3 {
 		t.Errorf("total_nodes: got %d, want 3", resp.TotalNodes)
+	}
+}
+
+// TestOrient_ResponseIncludesServerVersion: orient response must include a
+// server_version field so agents can detect schema drift after a server update.
+func TestOrient_ResponseIncludesServerVersion(t *testing.T) {
+	_, h := newEnv(t) // newEnv creates handler with version "dev"
+	addNode(t, h, "Version test node", "orient-version", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-version"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		ServerVersion string `json:"server_version"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.ServerVersion == "" {
+		t.Error("server_version must be present and non-empty in orient response")
+	}
+	if resp.ServerVersion != "dev" {
+		t.Errorf("server_version: got %q, want %q", resp.ServerVersion, "dev")
 	}
 }
 

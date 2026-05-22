@@ -909,12 +909,14 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 
 	resp := struct {
 		SummaryHint   string      `json:"summary_hint"`
+		ServerVersion string      `json:"server_version"`
 		TotalNodes    int         `json:"total_nodes"`
 		Nodes         interface{} `json:"nodes"`
 		Recent        interface{} `json:"recent"`
 		DeclaredSpine interface{} `json:"declared_spine"`
 	}{
 		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. Plain prose, no bullet points.",
+		ServerVersion: h.version,
 		TotalNodes:    len(sr.Nodes),
 		Nodes:         nodes,
 		Recent:        recentEntries,
@@ -1031,6 +1033,11 @@ func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
 		return h.addEdgesBatch(peek.Items)
 	}
 
+	// Detect retired parameter names before unmarshalling.
+	if msg := detectLegacyEdgeKeys(args); msg != "" {
+		return errorResult(msg), nil
+	}
+
 	var a struct {
 		FromMemory   string `json:"from_memory"`
 		ToMemory     string `json:"to_memory"`
@@ -1048,8 +1055,43 @@ func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
+// detectLegacyEdgeKeys inspects raw JSON for retired connect parameter names
+// (from_node, to_node). Returns a non-empty error message if found.
+func detectLegacyEdgeKeys(raw json.RawMessage) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	_, hasFromNode := m["from_node"]
+	_, hasToNode := m["to_node"]
+	_, hasFromMemory := m["from_memory"]
+	_, hasToMemory := m["to_memory"]
+	var bad []string
+	if hasFromNode && !hasFromMemory {
+		bad = append(bad, "'from_node'")
+	}
+	if hasToNode && !hasToMemory {
+		bad = append(bad, "'to_node'")
+	}
+	if len(bad) == 0 {
+		return ""
+	}
+	return "Unknown parameter " + strings.Join(bad, " and ") +
+		". The connect tool uses 'from_memory' and 'to_memory'. Call tools/list to refresh your schema."
+}
+
 // addEdgesBatch handles the batch mode of connect: items is the raw JSON array of edge objects.
 func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(items, &rawItems); err != nil {
+		return nil, err
+	}
+	// Check each item for retired parameter names before any DB work.
+	for i, raw := range rawItems {
+		if msg := detectLegacyEdgeKeys(raw); msg != "" {
+			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
+		}
+	}
 	var edgeList []struct {
 		FromMemory   string `json:"from_memory"`
 		ToMemory     string `json:"to_memory"`

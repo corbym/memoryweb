@@ -156,6 +156,13 @@ func main() {
 
 		// Notifications have no ID - fire and forget
 		if req.ID == nil && req.Method == "notifications/initialized" {
+			// Signal the client to refresh its tool list. This ensures that if
+			// the server binary was updated between sessions, the agent picks up
+			// the current schema rather than relying on a stale cached copy.
+			encoder.Encode(map[string]interface{}{ //nolint:errcheck
+				"jsonrpc": "2.0",
+				"method":  "notifications/tools/list_changed",
+			})
 			continue
 		}
 
