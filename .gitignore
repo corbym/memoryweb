@@ -1,6 +1,9 @@
 # binary
 memoryweb
 
+# CGO header shim (machine-specific paths)
+.sqlite3-shim/
+
 # databases
 *.db
 

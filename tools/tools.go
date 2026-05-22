@@ -68,25 +68,25 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",
-			Description: "File one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field — always call connect for any that are relevant before ending your session.\n\nBatch mode (provide items array): file multiple memories in a single transaction. After filing, always call connect to link the nodes you've just filed — nodes without connections lose context immediately. Batch mode does not support related_to; use connect after filing.\n\nFor occurred_at in either mode: set only via the propose+confirm model: (1) recognise that something looks like a significant decision — a choice between options, a constraint that shapes future work, or a principle that will be referenced again — (2) propose filing it on the timeline and ask the user to confirm, (3) set occurred_at only after the user agrees. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse transient=true for ticket state, sprint notes, or any node expected to become stale within days. Transient nodes are candidates for archiving once the related work is complete.",
+			Description: "File one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field — always call connect for any that are relevant before ending your session.\n\nBatch mode (provide items array): file multiple memories in a single transaction. After filing, always call connect to link the memories you've just filed — memories without connections lose context immediately. Batch mode does not support related_to; use connect after filing.\n\nFor occurred_at in either mode: set only via the propose+confirm model: (1) recognise that something looks like a significant decision — a choice between options, a constraint that shapes future work, or a principle that will be referenced again — (2) propose filing it on the timeline and ask the user to confirm, (3) set occurred_at only after the user agrees. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse transient=true for ticket state, sprint notes, or any memory expected to become stale within days. Transient memories are candidates for archiving once the related work is complete.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"label":       {Type: "string", Description: "Short name for this node (e.g. 'RST $10 boot crash'). Required in single mode; omit when using items."},
-					"description": {Type: "string", Description: "What this node is about"},
+					"label":       {Type: "string", Description: "Short name for this memory (e.g. 'RST $10 boot crash'). Required in single mode; omit when using items."},
+					"description": {Type: "string", Description: "What this memory is about"},
 					"why_matters": {Type: "string", Description: "Why this is significant - the 'so what'"},
 					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general'). Required in single mode; omit when using items."},
 					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. propose+confirm: recognise a significant decision, propose to user, confirm before setting. Never set silently. Never guess or infer a date. Single mode only."},
-					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this node later."},
+					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this memory later."},
 					"related_to": {
 						Type:        "array",
 						Description: "Optional list of memories to auto-connect at creation time. Single mode only. Each item is either a plain memory ID string (creates a connects_to connection) or an object with id and relationship fields. Invalid or unknown IDs are silently skipped.",
 						Items:       json.RawMessage(`{"oneOf":[{"type":"string"},{"type":"object","properties":{"id":{"type":"string"},"relationship":{"type":"string"}},"required":["id"],"additionalProperties":false}]}`),
 					},
-					"transient": {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient nodes older than 7 days are surfaced by whats_stale as archiving candidates."},
+					"transient": {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient memories older than 7 days are surfaced by audit(mode=stale) as archiving candidates."},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of node objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — propose+confirm only, Never guess), transient (boolean).",
+						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — propose+confirm only, Never guess), transient (boolean).",
 						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["label","domain"]}`),
 					},
 				},
@@ -94,18 +94,18 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "connect",
-			Description: "Connect memories with typed, narrative relationships. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of — and all memory IDs must already exist before calling this.\n\nSingle mode (omit items): provide from_node, to_node, relationship directly.\n\nBatch mode (provide items array): create multiple connections in a single transaction.\n\nRelationship guidance: caused_by / led_to describe the same link from opposite ends (A caused_by B ≡ B led_to A). blocked_by / unblocks describe dependency on resolving an external issue. depends_on is a hard technical or logical prerequisite. contradicts marks a direct conflict. is_example_of marks an illustration. connects_to is the general fallback — use it only when no typed relationship fits.",
+			Description: "Connect memories with typed, narrative relationships. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of — and all memory IDs must already exist before calling this.\n\nSingle mode (omit items): provide from_memory, to_memory, relationship directly.\n\nBatch mode (provide items array): create multiple connections in a single transaction.\n\nRelationship guidance: caused_by / led_to describe the same link from opposite ends (A caused_by B ≡ B led_to A). blocked_by / unblocks describe dependency on resolving an external issue. depends_on is a hard technical or logical prerequisite. contradicts marks a direct conflict. is_example_of marks an illustration. connects_to is the general fallback — use it only when no typed relationship fits.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"from_node":    {Type: "string", Description: "ID of the source node. Required in single mode; omit when using items."},
-					"to_node":      {Type: "string", Description: "ID of the target node. Required in single mode; omit when using items."},
+					"from_memory":  {Type: "string", Description: "ID of the source memory. Required in single mode; omit when using items."},
+					"to_memory":    {Type: "string", Description: "ID of the target memory. Required in single mode; omit when using items."},
 					"relationship": {Type: "string", Description: "Type of relationship. Required in single mode.", Enum: []string{"caused_by", "led_to", "blocked_by", "unblocks", "connects_to", "contradicts", "depends_on", "is_example_of"}},
 					"narrative":    {Type: "string", Description: "The story of this connection - why these two things are linked"},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of edge objects. Each must have from_node, to_node, relationship (string). Optional: narrative (string).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"from_node":{"type":"string"},"to_node":{"type":"string"},"relationship":{"type":"string"},"narrative":{"type":"string"}},"required":["from_node","to_node","relationship"]}`),
+						Description: "Batch mode: array of edge objects. Each must have from_memory, to_memory, relationship (string). Optional: narrative (string).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"from_memory":{"type":"string"},"to_memory":{"type":"string"},"relationship":{"type":"string"},"narrative":{"type":"string"}},"required":["from_memory","to_memory","relationship"]}`),
 					},
 				},
 			},
@@ -161,13 +161,13 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "history",
-			Description: "Returns nodes in a domain in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL nodes — the complete chronological view of everything filed in the domain. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only nodes where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nUse from/to to scope by effective date. Use tags to further filter results in either mode (comma-separated).\n\nThe two modes are complementary:\n  - Default: 'what happened in this domain, and in what order?'\n  - important_only=true: 'what were the important decisions and events?'\n\nFor importance analysis beyond the timeline — which nodes are structurally load-bearing right now — use significance.",
+			Description: "Returns memories in a domain in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL memories — the complete chronological view of everything filed in the domain. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only memories where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nUse from/to to scope by effective date. Use tags to further filter results in either mode (comma-separated).\n\nThe two modes are complementary:\n  - Default: 'what happened in this domain, and in what order?'\n  - important_only=true: 'what were the important decisions and events?'\n\nFor importance analysis beyond the timeline — which nodes are structurally load-bearing right now — use significance.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
 					"domain":         {Type: "string", Description: "Optional domain to scope"},
-					"important_only": {Type: "boolean", Description: "When true, return only nodes with occurred_at explicitly set (significant decisions and events). When false or absent, return all nodes ordered by effective date."},
-					"tags":           {Type: "string", Description: "Optional comma-separated list of tags to filter by. Only nodes matching at least one tag are returned. Applies in both modes."},
+					"important_only": {Type: "boolean", Description: "When true, return only memories with occurred_at explicitly set (significant decisions and events). When false or absent, return all memories ordered by effective date."},
+					"tags":           {Type: "string", Description: "Optional comma-separated list of tags to filter by. Only memories matching at least one tag are returned. Applies in both modes."},
 					"from":           {Type: "string", Description: "ISO8601 date or datetime. Filter to nodes whose effective date (COALESCE(occurred_at, created_at)) is on or after this value."},
 					"to":             {Type: "string", Description: "ISO8601 date or datetime. Filter to nodes whose effective date (COALESCE(occurred_at, created_at)) is on or before this value."},
 					"limit":          {Type: "integer", Description: "Max results (default 20)"},
@@ -207,8 +207,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id":     {Type: "string", Description: "ID of the node to archive"},
-					"reason": {Type: "string", Description: "Why this node is being archived"},
+					"id":     {Type: "string", Description: "ID of the memory to archive"},
+					"reason": {Type: "string", Description: "Why this memory is being archived"},
 				},
 				Required: []string{"id"},
 			},
@@ -219,18 +219,18 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id": {Type: "string", Description: "ID of the node to restore"},
+					"id": {Type: "string", Description: "ID of the memory to restore"},
 				},
 				Required: []string{"id"},
 			},
 		},
 		{
 			Name:        "audit",
-			Description: "Inspect the health of knowledge in a domain across three modes.\n\nmode=stale: Return memories that may be stale, contradicted, or duplicated. Present each result to the user and ask for individual confirmation before archiving anything. Never archive autonomously.\n\nmode=orphans: Return live, non-transient nodes with zero connections. Present findings and suggest either linking them with connect, or archiving with forget if no longer relevant.\n\nmode=archived: List all archived memories. This is the right tool when search returns nothing but you expect content to exist. This tool only returns live nodes (for stale and orphans modes) or explicitly archived nodes (for archived mode).",
+			Description: "Inspect the health of knowledge in a domain across three modes.\n\nmode=stale: Return memories that may be stale, contradicted, or duplicated. Present each result to the user and ask for individual confirmation before archiving anything. Never archive autonomously.\n\nmode=orphans: Return live, non-transient memories with zero connections. Present findings and suggest either linking them with connect, or archiving with forget if no longer relevant.\n\nmode=archived: List all archived memories. This is the right tool when search returns nothing but you expect content to exist. This tool only returns live nodes (for stale and orphans modes) or explicitly archived nodes (for archived mode).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"mode":   {Type: "string", Description: "Required: stale (drift candidates), orphans (disconnected nodes), or archived (list archived memories)", Enum: []string{"stale", "orphans", "archived"}},
+					"mode":   {Type: "string", Description: "Required: stale (drift candidates), orphans (isolated memories), or archived (list archived memories)", Enum: []string{"stale", "orphans", "archived"}},
 					"domain": {Type: "string", Description: "Optional domain to scope the audit"},
 					"limit":  {Type: "integer", Description: "Max candidates to return (default 10, applies to stale mode)"},
 				},
@@ -239,13 +239,13 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "forget_all",
-			Description: "Archive multiple memories in a single atomic transaction. All nodes are archived or none — partial failure rolls back the entire operation.\n\nOnly call this tool after explicit, unambiguous user confirmation for every item in the list — never on implication or casual mention. 'That looks stale' or 'probably outdated' is not confirmation. Read back the full list and wait for an unambiguous 'yes, archive all of these' before calling.\n\nAfter archiving, report each archived ID and note that nodes can be restored at any time with restore.",
+			Description: "Archive multiple memories in a single atomic transaction. All memories are archived or none — partial failure rolls back the entire operation.\n\nOnly call this tool after explicit, unambiguous user confirmation for every item in the list — never on implication or casual mention. 'That looks stale' or 'probably outdated' is not confirmation. Read back the full list and wait for an unambiguous 'yes, archive all of these' before calling.\n\nAfter archiving, report each archived ID and note that memories can be restored at any time with restore.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
 					"items": {
 						Type:        "array",
-						Description: "Array of nodes to archive. Each must have id (string, required) and reason (string, required).",
+						Description: "Array of memories to archive. Each must have id (string, required) and reason (string, required).",
 						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"reason":{"type":"string"}},"required":["id","reason"]}`),
 					},
 				},
@@ -269,7 +269,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id":          {Type: "string", Description: "ID of the node to update. Required in single mode; omit when using items."},
+					"id":          {Type: "string", Description: "ID of the memory to update. Required in single mode; omit when using items."},
 					"label":       {Type: "string", Description: "New label (optional)"},
 					"description": {Type: "string", Description: "New description (optional)"},
 					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
@@ -289,7 +289,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id":    {Type: "string", Description: "ID of the node to find connection candidates for"},
+					"id":    {Type: "string", Description: "ID of the memory to find connection candidates for"},
 					"limit": {Type: "integer", Description: "Max candidates to return (default 5)"},
 				},
 				Required: []string{"id"},
@@ -320,8 +320,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"from_id": {Type: "string", Description: "ID of the starting node"},
-					"to_id":   {Type: "string", Description: "ID of the destination node"},
+					"from_id": {Type: "string", Description: "ID of the starting memory"},
+					"to_id":   {Type: "string", Description: "ID of the destination memory"},
 				},
 				Required: []string{"from_id", "to_id"},
 			},
@@ -1032,15 +1032,15 @@ func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	var a struct {
-		FromNode     string `json:"from_node"`
-		ToNode       string `json:"to_node"`
+		FromMemory   string `json:"from_memory"`
+		ToMemory     string `json:"to_memory"`
 		Relationship string `json:"relationship"`
 		Narrative    string `json:"narrative"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
 	}
-	edge, err := h.store.AddEdge(a.FromNode, a.ToNode, a.Relationship, a.Narrative)
+	edge, err := h.store.AddEdge(a.FromMemory, a.ToMemory, a.Relationship, a.Narrative)
 	if err != nil {
 		return nil, err
 	}
@@ -1051,8 +1051,8 @@ func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
 // addEdgesBatch handles the batch mode of connect: items is the raw JSON array of edge objects.
 func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	var edgeList []struct {
-		FromNode     string `json:"from_node"`
-		ToNode       string `json:"to_node"`
+		FromMemory   string `json:"from_memory"`
+		ToMemory     string `json:"to_memory"`
 		Relationship string `json:"relationship"`
 		Narrative    string `json:"narrative"`
 	}
@@ -1062,8 +1062,8 @@ func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	inputs := make([]db.EdgeInput, len(edgeList))
 	for i, e := range edgeList {
 		inputs[i] = db.EdgeInput{
-			FromNode:     e.FromNode,
-			ToNode:       e.ToNode,
+			FromNode:     e.FromMemory,
+			ToNode:       e.ToMemory,
 			Relationship: e.Relationship,
 			Narrative:    e.Narrative,
 		}

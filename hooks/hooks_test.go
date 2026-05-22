@@ -417,8 +417,8 @@ func seedRealisticDB(t *testing.T, dbPath string) {
 
 	// Contradicting pair — drift rule 1.
 	call("connect", map[string]any{
-		"from_node":    cssID,
-		"to_node":      webglID,
+		"from_memory":  cssID,
+		"to_memory":    webglID,
 		"relationship": "contradicts",
 		"narrative":    "CSS transform approach directly contradicts the WebGL decision: they cannot both be the canonical animation strategy.",
 	})

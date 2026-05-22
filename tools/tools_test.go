@@ -254,7 +254,7 @@ func TestListTools_DescriptionsPresent(t *testing.T) {
 		"search":              "Search memories by text",
 		"recent":              "List the most recently added or updated memories",
 		"why_connected":       "Find how two concepts are related",
-		"history":             "Returns nodes in a domain in chronological order",
+		"history":             "Returns memories in a domain in chronological order",
 		"significance":        "Dual-signal importance analysis",
 		"alias":               "Manage domain aliases",
 		"forget":              "Always provide a reason",
@@ -338,6 +338,127 @@ func TestListTools_NoStaleToolReferences(t *testing.T) {
 			if pat.MatchString(td.Description) {
 				t.Errorf("tool %q: description references removed tool %q (use %s instead)",
 					td.Name, removed.name, removed.replacedBy)
+			}
+		}
+	}
+}
+
+// TestConnect_AcceptsFromMemoryToMemory asserts that the connect tool accepts
+// from_memory/to_memory as parameter keys (tier 2 vocabulary rename). If this
+// test fails it means the schema still uses from_memory/to_memory.
+func TestConnect_AcceptsFromMemoryToMemory(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "source memory", "deep-game", nil)
+	to := addNode(t, h, "target memory", "deep-game", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory":  from,
+		"to_memory":    to,
+		"relationship": "led_to",
+	})
+	mustNotError(t, tr)
+
+	var e struct {
+		Relationship string `json:"relationship"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &e)
+	if e.Relationship != "led_to" {
+		t.Errorf("connect with from_memory/to_memory: got relationship %q, want %q", e.Relationship, "led_to")
+	}
+}
+
+// TestConnect_BatchAcceptsFromMemoryToMemory asserts that batch mode items also
+// use from_memory/to_memory keys (tier 2 vocabulary rename).
+func TestConnect_BatchAcceptsFromMemoryToMemory(t *testing.T) {
+	_, h := newEnv(t)
+	a := addNode(t, h, "alpha", "proj", nil)
+	b := addNode(t, h, "beta", "proj", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"items": []map[string]any{
+			{"from_memory": a, "to_memory": b, "relationship": "depends_on"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var result struct {
+		EdgesCreated int `json:"edges_created"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &result)
+	if result.EdgesCreated != 1 {
+		t.Errorf("batch connect with from_memory/to_memory: got edges_created=%d, want 1", result.EdgesCreated)
+	}
+}
+
+// TestListTools_PropertyDescriptionsNoForbiddenWords asserts that property-level
+// Description strings in every tool's schema do not contain:
+//   - any retired tool name from the removedTools blocklist
+//   - the blacklisted word "disconnected"
+//   - the word "node" as a standalone noun (vocabulary contract)
+//
+// This covers the blind spot in TestListTools_NoStaleToolReferences, which only
+// scans top-level tool Description fields.
+func TestListTools_PropertyDescriptionsNoForbiddenWords(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+
+	// Parse into a structure that preserves the full InputSchema.
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+
+	removedTools := []struct {
+		name       string
+		replacedBy string
+	}{
+		{"forgotten", "audit(mode=archived)"},
+		{"whats_stale", "audit(mode=stale)"},
+		{"remember_all", "remember with items array"},
+		{"revise_all", "revise with items array"},
+		{"connect_all", "connect with items array"},
+		{"list_domains", "domains"},
+		{"list_aliases", "alias(action=list)"},
+		{"disconnected", "audit(mode=orphans)"},
+		{"check_for_updates", "CLI only"},
+	}
+
+	nodeWord := regexp.MustCompile(`(?i)\bnode\b`)
+
+	for _, td := range resp.Tools {
+		for propName, prop := range td.InputSchema.Properties {
+			desc := prop.Description
+			if desc == "" {
+				continue
+			}
+			loc := fmt.Sprintf("tool %q property %q", td.Name, propName)
+
+			// Check retired tool names.
+			for _, removed := range removedTools {
+				pat := regexp.MustCompile(`\b` + regexp.QuoteMeta(removed.name) + `\b`)
+				if pat.MatchString(desc) {
+					t.Errorf("%s: description references removed tool %q (use %s instead)\n  got: %s",
+						loc, removed.name, removed.replacedBy, desc)
+				}
+			}
+
+			// Check standalone "node" vocabulary.
+			if nodeWord.MatchString(desc) {
+				t.Errorf("%s: description uses forbidden word 'node' (use 'memory' instead)\n  got: %s",
+					loc, desc)
 			}
 		}
 	}
@@ -737,8 +858,8 @@ func TestAddEdge_HappyPath(t *testing.T) {
 	to := addNode(t, h, "ULA fix", "deep-game", nil)
 
 	tr := call(t, h, "connect", map[string]any{
-		"from_node":    from,
-		"to_node":      to,
+		"from_memory":  from,
+		"to_memory":    to,
 		"relationship": "unblocks",
 		"narrative":    "direct ULA writes bypass the ROM ISR that causes the hang",
 	})
@@ -759,8 +880,8 @@ func TestAddEdge_NonExistentFromNode(t *testing.T) {
 	to := addNode(t, h, "ULA fix", "deep-game", nil)
 
 	tr := call(t, h, "connect", map[string]any{
-		"from_node":    "ghost-node-id",
-		"to_node":      to,
+		"from_memory":  "ghost-node-id",
+		"to_memory":    to,
 		"relationship": "unblocks",
 	})
 	mustError(t, tr)
@@ -771,8 +892,8 @@ func TestAddEdge_NonExistentToNode(t *testing.T) {
 	from := addNode(t, h, "RST crash", "deep-game", nil)
 
 	tr := call(t, h, "connect", map[string]any{
-		"from_node":    from,
-		"to_node":      "ghost-node-id",
+		"from_memory":  from,
+		"to_memory":    "ghost-node-id",
 		"relationship": "unblocks",
 	})
 	mustError(t, tr)
@@ -781,8 +902,8 @@ func TestAddEdge_NonExistentToNode(t *testing.T) {
 func TestAddEdge_BothNodesNonExistent(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "connect", map[string]any{
-		"from_node":    "ghost-a",
-		"to_node":      "ghost-b",
+		"from_memory":  "ghost-a",
+		"to_memory":    "ghost-b",
 		"relationship": "connects_to",
 	})
 	mustError(t, tr)
@@ -793,7 +914,7 @@ func TestGetNode_IncludesEdges(t *testing.T) {
 	from := addNode(t, h, "RST crash", "deep-game", nil)
 	to := addNode(t, h, "ULA fix", "deep-game", nil)
 	call(t, h, "connect", map[string]any{
-		"from_node": from, "to_node": to, "relationship": "unblocks",
+		"from_memory": from, "to_memory": to, "relationship": "unblocks",
 	})
 
 	tr := call(t, h, "recall", map[string]any{"id": from})
@@ -823,7 +944,7 @@ func TestFindConnections_ReturnsEdgeBetweenNodes(t *testing.T) {
 	to := addNode(t, h, "ULA memory write fix", "deep-game", nil)
 	from := addNode(t, h, "RST boot crash second", "deep-game", nil)
 	call(t, h, "connect", map[string]any{
-		"from_node": from, "to_node": to, "relationship": "unblocks",
+		"from_memory": from, "to_memory": to, "relationship": "unblocks",
 		"narrative": "direct writes bypass the ROM ISR",
 	})
 
@@ -892,7 +1013,7 @@ func TestDisconnect_RemovesEdge(t *testing.T) {
 	to := addNode(t, h, "Effect Node", "proj", nil)
 
 	connectTr := call(t, h, "connect", map[string]any{
-		"from_node": from, "to_node": to, "relationship": "led_to",
+		"from_memory": from, "to_memory": to, "relationship": "led_to",
 	})
 	mustNotError(t, connectTr)
 	var edge struct {
@@ -1709,8 +1830,8 @@ func TestDriftContradictingEdge(t *testing.T) {
 	idA := addNode(t, h, "Approach Alpha", "test-drift-1", nil)
 	idB := addNode(t, h, "Approach Beta", "test-drift-1", nil)
 	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_node":    idA,
-		"to_node":      idB,
+		"from_memory":  idA,
+		"to_memory":    idB,
 		"relationship": "contradicts",
 	}))
 
@@ -3027,7 +3148,7 @@ func TestDisconnectedReturnsUnconnectedNodes(t *testing.T) {
 	idA := addNode(t, h, "Connected A", domain, nil)
 	idB := addNode(t, h, "Connected B", domain, nil)
 	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_node": idA, "to_node": idB, "relationship": "led_to",
+		"from_memory": idA, "to_memory": idB, "relationship": "led_to",
 	}))
 
 	tr := call(t, h, "audit", map[string]any{"mode": "orphans", "domain": domain})
@@ -3088,9 +3209,9 @@ func TestTraceReturnsChain(t *testing.T) {
 	idD := addNode(t, h, "Node D", domain, nil)
 
 	// A -> B -> C -> D
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idA, "to_node": idB, "relationship": "led_to"}))
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idC, "relationship": "led_to"}))
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idC, "to_node": idD, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idA, "to_memory": idB, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idB, "to_memory": idC, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idC, "to_memory": idD, "relationship": "led_to"}))
 
 	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idD})
 	mustNotError(t, tr)
@@ -3124,8 +3245,8 @@ func TestTraceIgnoresArchived(t *testing.T) {
 	idB := addNode(t, h, "Middle node", domain, nil)
 	idC := addNode(t, h, "End node", domain, nil)
 
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idA, "to_node": idB, "relationship": "led_to"}))
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idC, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idA, "to_memory": idB, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idB, "to_memory": idC, "relationship": "led_to"}))
 
 	// Archive the middle node — path A→C no longer traversable.
 	store.ArchiveNode(idB, "test")
@@ -3146,10 +3267,10 @@ func TestTraceReturnsContextEdges(t *testing.T) {
 	idC := addNode(t, h, "End", domain, nil)
 	idX := addNode(t, h, "Side branch X", domain, nil)
 
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idA, "to_node": idB, "relationship": "led_to"}))
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idC, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idA, "to_memory": idB, "relationship": "led_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idB, "to_memory": idC, "relationship": "led_to"}))
 	// Side branch off the path.
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_node": idB, "to_node": idX, "relationship": "connects_to"}))
+	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idB, "to_memory": idX, "relationship": "connects_to"}))
 
 	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idC})
 	mustNotError(t, tr)
@@ -3172,10 +3293,10 @@ func TestVisualiseMermaidSyntax(t *testing.T) {
 	idC := addNode(t, h, "Gamma node", domain, nil)
 
 	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_node": idA, "to_node": idB, "relationship": "led_to", "narrative": "alpha led to beta",
+		"from_memory": idA, "to_memory": idB, "relationship": "led_to", "narrative": "alpha led to beta",
 	}))
 	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_node": idB, "to_node": idC, "relationship": "depends_on", "narrative": "beta depends on gamma",
+		"from_memory": idB, "to_memory": idC, "relationship": "depends_on", "narrative": "beta depends on gamma",
 	}))
 
 	tr := call(t, h, "visualise", map[string]any{"domain": domain})
@@ -3352,10 +3473,10 @@ func TestVisualiseNeighbourhood_MultipleConnections(t *testing.T) {
 	idC := addNode(t, h, "Spoke C", domain, nil)
 
 	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_node": idA, "to_node": idB, "relationship": "led_to", "narrative": "a led to b",
+		"from_memory": idA, "to_memory": idB, "relationship": "led_to", "narrative": "a led to b",
 	}))
 	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_node": idA, "to_node": idC, "relationship": "depends_on", "narrative": "a depends on c",
+		"from_memory": idA, "to_memory": idC, "relationship": "depends_on", "narrative": "a depends on c",
 	}))
 
 	tr := call(t, h, "visualise", map[string]any{"memory_id": idA})
@@ -3917,8 +4038,8 @@ func TestConnect_BatchViaItems_CreatesMultipleEdges(t *testing.T) {
 
 	tr := call(t, h, "connect", map[string]any{
 		"items": []map[string]any{
-			{"from_node": idA, "to_node": idB, "relationship": "connects_to"},
-			{"from_node": idB, "to_node": idC, "relationship": "led_to"},
+			{"from_memory": idA, "to_memory": idB, "relationship": "connects_to"},
+			{"from_memory": idB, "to_memory": idC, "relationship": "led_to"},
 		},
 	})
 	mustNotError(t, tr)
@@ -3942,7 +4063,7 @@ func TestConnectAll_IsUnknownTool(t *testing.T) {
 	idB := addNode(t, h, "Connect all B", "test", nil)
 	tr := call(t, h, "connect_all", map[string]any{
 		"edges": []map[string]any{
-			{"from_node": idA, "to_node": idB, "relationship": "connects_to"},
+			{"from_memory": idA, "to_memory": idB, "relationship": "connects_to"},
 		},
 	})
 	mustError(t, tr)
@@ -4273,14 +4394,14 @@ func TestSignificance_StructuralRankingCorrect(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		linker := addNode(t, h, fmt.Sprintf("Linker %d", i), "proj", nil)
 		mustNotError(t, call(t, h, "connect", map[string]any{
-			"from_node": linker, "to_node": popular,
+			"from_memory": linker, "to_memory": popular,
 			"relationship": "connects_to", "narrative": "links",
 		}))
 	}
 	// 1 linker → niche
 	nicheLinker := addNode(t, h, "Niche linker", "proj", nil)
 	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_node": nicheLinker, "to_node": niche,
+		"from_memory": nicheLinker, "to_memory": niche,
 		"relationship": "connects_to", "narrative": "links",
 	}))
 
@@ -4344,7 +4465,7 @@ func TestSignificance_DefaultsApplied(t *testing.T) {
 		target := addNode(t, h, fmt.Sprintf("Target %d", i), "proj", nil)
 		linker := addNode(t, h, fmt.Sprintf("Linker %d", i), "proj", nil)
 		mustNotError(t, call(t, h, "connect", map[string]any{
-			"from_node": linker, "to_node": target,
+			"from_memory": linker, "to_memory": target,
 			"relationship": "connects_to", "narrative": "links",
 		}))
 	}
