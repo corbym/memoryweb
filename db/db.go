@@ -46,8 +46,8 @@ type Node struct {
 
 type Edge struct {
 	ID           string    `json:"id"`
-	FromNode     string    `json:"from_node"`
-	ToNode       string    `json:"to_node"`
+	FromNode     string    `json:"from_memory"`
+	ToNode       string    `json:"to_memory"`
 	Relationship string    `json:"relationship"`
 	Narrative    string    `json:"narrative"`
 	CreatedAt    time.Time `json:"created_at"`

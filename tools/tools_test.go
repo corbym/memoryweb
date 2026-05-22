@@ -464,6 +464,67 @@ func TestListTools_PropertyDescriptionsNoForbiddenWords(t *testing.T) {
 	}
 }
 
+// TestConnect_ResponseUsesFromMemoryToMemory asserts that the connect tool
+// response serialises edge fields as from_memory/to_memory (not from_node/to_node).
+// If this test fails it means db.Edge still uses the old json tags.
+func TestConnect_ResponseUsesFromMemoryToMemory(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "response source", "proj", nil)
+	to := addNode(t, h, "response target", "proj", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory":  from,
+		"to_memory":    to,
+		"relationship": "led_to",
+	})
+	mustNotError(t, tr)
+
+	raw := text(t, tr)
+	if !strings.Contains(raw, `"from_memory"`) {
+		t.Errorf("connect response should contain from_memory, got: %s", raw)
+	}
+	if !strings.Contains(raw, `"to_memory"`) {
+		t.Errorf("connect response should contain to_memory, got: %s", raw)
+	}
+	if strings.Contains(raw, `"from_node"`) {
+		t.Errorf("connect response must not contain from_node (old vocabulary), got: %s", raw)
+	}
+	if strings.Contains(raw, `"to_node"`) {
+		t.Errorf("connect response must not contain to_node (old vocabulary), got: %s", raw)
+	}
+}
+
+// TestRecall_EdgeResponseUsesFromMemoryToMemory asserts that recall returns
+// edges with from_memory/to_memory keys (not from_node/to_node).
+func TestRecall_EdgeResponseUsesFromMemoryToMemory(t *testing.T) {
+	_, h := newEnv(t)
+	a := addNode(t, h, "recall edge from", "proj", nil)
+	b := addNode(t, h, "recall edge to", "proj", nil)
+
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  a,
+		"to_memory":    b,
+		"relationship": "depends_on",
+	}))
+
+	tr := call(t, h, "recall", map[string]any{"id": a})
+	mustNotError(t, tr)
+
+	raw := text(t, tr)
+	if !strings.Contains(raw, `"from_memory"`) {
+		t.Errorf("recall response should contain from_memory, got: %s", raw)
+	}
+	if !strings.Contains(raw, `"to_memory"`) {
+		t.Errorf("recall response should contain to_memory, got: %s", raw)
+	}
+	if strings.Contains(raw, `"from_node"`) {
+		t.Errorf("recall response must not contain from_node (old vocabulary), got: %s", raw)
+	}
+	if strings.Contains(raw, `"to_node"`) {
+		t.Errorf("recall response must not contain to_node (old vocabulary), got: %s", raw)
+	}
+}
+
 // ── Schema validation ─────────────────────────────────────────────────────────
 
 // validateSchema recursively validates that a JSON Schema object (parsed from
@@ -2281,8 +2342,8 @@ func TestAddNode_WithRelatedTo_PlainStringCreatesConnectsToEdge(t *testing.T) {
 
 	var nwe struct {
 		Edges []struct {
-			FromNode     string `json:"from_node"`
-			ToNode       string `json:"to_node"`
+			FromMemory   string `json:"from_memory"`
+			ToMemory     string `json:"to_memory"`
 			Relationship string `json:"relationship"`
 		} `json:"edges"`
 	}
@@ -2291,8 +2352,8 @@ func TestAddNode_WithRelatedTo_PlainStringCreatesConnectsToEdge(t *testing.T) {
 	found := false
 	for _, e := range nwe.Edges {
 		if e.Relationship == "connects_to" &&
-			((e.FromNode == newID && e.ToNode == existingID) ||
-				(e.FromNode == existingID && e.ToNode == newID)) {
+			((e.FromMemory == newID && e.ToMemory == existingID) ||
+				(e.FromMemory == existingID && e.ToMemory == newID)) {
 			found = true
 		}
 	}
@@ -2316,8 +2377,8 @@ func TestAddNode_WithRelatedTo_ExplicitRelationshipObject(t *testing.T) {
 
 	var nwe struct {
 		Edges []struct {
-			FromNode     string `json:"from_node"`
-			ToNode       string `json:"to_node"`
+			FromMemory   string `json:"from_memory"`
+			ToMemory     string `json:"to_memory"`
 			Relationship string `json:"relationship"`
 		} `json:"edges"`
 	}
@@ -2328,8 +2389,8 @@ func TestAddNode_WithRelatedTo_ExplicitRelationshipObject(t *testing.T) {
 	found := false
 	for _, e := range nwe.Edges {
 		if e.Relationship == "led_to" &&
-			((e.FromNode == newID && e.ToNode == existingID) ||
-				(e.FromNode == existingID && e.ToNode == newID)) {
+			((e.FromMemory == newID && e.ToMemory == existingID) ||
+				(e.FromMemory == existingID && e.ToMemory == newID)) {
 			found = true
 		}
 	}
@@ -2356,8 +2417,8 @@ func TestAddNode_WithRelatedTo_MixedFormats(t *testing.T) {
 
 	var nwe struct {
 		Edges []struct {
-			FromNode     string `json:"from_node"`
-			ToNode       string `json:"to_node"`
+			FromMemory   string `json:"from_memory"`
+			ToMemory     string `json:"to_memory"`
 			Relationship string `json:"relationship"`
 		} `json:"edges"`
 	}
@@ -2365,10 +2426,10 @@ func TestAddNode_WithRelatedTo_MixedFormats(t *testing.T) {
 
 	relByTarget := map[string]string{}
 	for _, e := range nwe.Edges {
-		if e.FromNode == idC {
-			relByTarget[e.ToNode] = e.Relationship
-		} else if e.ToNode == idC {
-			relByTarget[e.FromNode] = e.Relationship
+		if e.FromMemory == idC {
+			relByTarget[e.ToMemory] = e.Relationship
+		} else if e.ToMemory == idC {
+			relByTarget[e.FromMemory] = e.Relationship
 		}
 	}
 
