@@ -711,8 +711,9 @@ type NodeResult struct {
 }
 
 type SearchResult struct {
-	Nodes []NodeResult `json:"nodes"`
-	Edges []Edge       `json:"edges"`
+	Nodes     []NodeResult `json:"nodes"`
+	Edges     []Edge       `json:"edges"`
+	Truncated bool         `json:"truncated,omitempty"`
 }
 
 func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, error) {
@@ -748,8 +749,10 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 		return nil, err
 	}
 
-	// Fetch candidates ordered by cosine distance, including the distance
-	// value so we can apply the in-memory relevance threshold.
+	// Fetch one extra row so we can detect truncation without a separate COUNT
+	// query. The threshold check still cuts off results beyond semanticDistanceThreshold.
+	fetch := limit + 1
+
 	var rows *sql.Rows
 	if domain != "" {
 		rows, err = s.db.Query(`
@@ -761,7 +764,7 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 			WHERE n.archived_at IS NULL AND n.domain = ?
 			ORDER BY dist ASC
 			LIMIT ?`,
-			blob, domain, limit)
+			blob, domain, fetch)
 	} else {
 		rows, err = s.db.Query(`
 			SELECT n.id, n.label, n.description, n.why_matters, n.domain,
@@ -772,7 +775,7 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 			WHERE n.archived_at IS NULL
 			ORDER BY dist ASC
 			LIMIT ?`,
-			blob, limit)
+			blob, fetch)
 	}
 	if err != nil {
 		return nil, err
@@ -810,7 +813,13 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 		return s.searchNodesLike(query, domain, limit)
 	}
 
-	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, extractNodes(results))}, nil
+	truncated := len(results) > limit
+	if truncated {
+		results = results[:limit]
+	}
+
+	nodes := extractNodes(results)
+	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, nodes), Truncated: truncated}, nil
 }
 
 // searchNodesLike performs a full-phrase LIKE search with a multi-word fallback.
@@ -819,19 +828,22 @@ func (s *Store) searchNodesLike(query, domain string, limit int) (*SearchResult,
 	var rows *sql.Rows
 	var err error
 
+	// Fetch one extra row to detect truncation without a separate COUNT query.
+	fetch := limit + 1
+
 	if domain != "" {
 		rows, err = s.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
 			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY updated_at DESC LIMIT ?`,
-			domain, q, q, q, q, limit,
+			domain, q, q, q, q, fetch,
 		)
 	} else {
 		rows, err = s.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
 			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY updated_at DESC LIMIT ?`,
-			q, q, q, q, limit,
+			q, q, q, q, fetch,
 		)
 	}
 	if err != nil {
@@ -844,22 +856,29 @@ func (s *Store) searchNodesLike(query, domain string, limit int) (*SearchResult,
 		return nil, err
 	}
 
+	truncated := len(nodes) > limit
+	if truncated {
+		nodes = nodes[:limit]
+	}
+
 	// If the full-phrase LIKE returned nothing and the query contains multiple
 	// words, fall back to an OR of individual-word LIKE terms so that nodes
 	// whose fields collectively cover the query words are still surfaced.
-	if len(nodes) == 0 {
+	if len(nodes) == 0 && !truncated {
 		words := strings.Fields(query)
 		if len(words) > 1 {
 			log.Printf("[memoryweb] search: no results for %q (domain=%q), falling back to individual-word search", query, domain)
-			nodes, err = s.searchByWords(words, domain, limit)
+			var wordTruncated bool
+			nodes, wordTruncated, err = s.searchByWords(words, domain, limit)
 			if err != nil {
 				return nil, err
 			}
+			truncated = wordTruncated
 		}
 	}
 
 	results := wrapNodes(nodes)
-	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, nodes)}, nil
+	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, nodes), Truncated: truncated}, nil
 }
 
 // extractNodes extracts the embedded Node from each NodeResult.
@@ -1076,7 +1095,9 @@ func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) 
 // searchByWords executes a fallback query that matches nodes containing ANY of
 // the provided words in ANY of the searchable fields (label, description,
 // why_matters, tags). Results are ordered by updated_at DESC.
-func (s *Store) searchByWords(words []string, domain string, limit int) ([]Node, error) {
+// Returns the matching nodes and a truncated flag (true when the result set
+// was capped at limit).
+func (s *Store) searchByWords(words []string, domain string, limit int) ([]Node, bool, error) {
 	// Build: (label LIKE ? OR desc LIKE ? OR why LIKE ? OR tags LIKE ?)
 	//        OR (label LIKE ? OR ...)   ... one group per word.
 	const fields = 4 // label, description, why_matters, tags
@@ -1095,6 +1116,9 @@ func (s *Store) searchByWords(words []string, domain string, limit int) ([]Node,
 		}
 	}
 
+	// Fetch one extra row to detect truncation.
+	fetch := limit + 1
+
 	var q string
 	if domain != "" {
 		q = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
@@ -1103,20 +1127,28 @@ func (s *Store) searchByWords(words []string, domain string, limit int) ([]Node,
 		finalArgs := make([]interface{}, 0, 1+len(args)+1)
 		finalArgs = append(finalArgs, domain)
 		finalArgs = append(finalArgs, args...)
-		finalArgs = append(finalArgs, limit)
+		finalArgs = append(finalArgs, fetch)
 		args = finalArgs
 	} else {
 		q = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
 		     WHERE archived_at IS NULL AND (` + combined + `) ORDER BY updated_at DESC LIMIT ?`
-		args = append(args, limit)
+		args = append(args, fetch)
 	}
 
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
-	return scanNodeRows(rows)
+	nodes, err := scanNodeRows(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(nodes) > limit
+	if truncated {
+		nodes = nodes[:limit]
+	}
+	return nodes, truncated, nil
 }
 
 type ConnectionResult struct {

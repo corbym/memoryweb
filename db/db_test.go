@@ -187,6 +187,37 @@ func TestSearchNodes_LimitIsRespected(t *testing.T) {
 	}
 }
 
+func TestSearchNodes_TruncatedFlagSetWhenLimitExceeded(t *testing.T) {
+	s := newStore(t)
+	for i := 0; i < 5; i++ {
+		mustAddNode(t, s, "truncation test", "proj")
+	}
+	res, err := s.SearchNodes("truncation test", "proj", 3)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	if len(res.Nodes) != 3 {
+		t.Errorf("expected 3 results, got %d", len(res.Nodes))
+	}
+	if !res.Truncated {
+		t.Error("Truncated should be true when results are capped by limit")
+	}
+}
+
+func TestSearchNodes_TruncatedFlagNotSetWhenUnderLimit(t *testing.T) {
+	s := newStore(t)
+	for i := 0; i < 3; i++ {
+		mustAddNode(t, s, "truncation under", "proj")
+	}
+	res, err := s.SearchNodes("truncation under", "proj", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	if res.Truncated {
+		t.Error("Truncated should be false when results are under the limit")
+	}
+}
+
 func TestSearchNodes_includesEdgesBetweenResults(t *testing.T) {
 	s := newStore(t)
 	a := mustAddNode(t, s, "alpha edge test", "proj")

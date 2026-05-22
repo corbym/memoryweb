@@ -911,6 +911,124 @@ func TestSearchNodes_LimitIsRespected(t *testing.T) {
 	}
 }
 
+func TestSearch_TruncatedFlagSetWhenLimitExceeded(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	for i := 0; i < 5; i++ {
+		addNode(t, h, "truncation flag test", "ttest", nil)
+	}
+	tr := call(t, h, "search", map[string]any{
+		"query": "truncation flag", "domain": "ttest", "limit": 3,
+	})
+	mustNotError(t, tr)
+
+	var result struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+		Truncated bool `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	if len(result.Nodes) != 3 {
+		t.Errorf("expected 3 results, got %d", len(result.Nodes))
+	}
+	if !result.Truncated {
+		t.Error("truncated should be true when results hit the limit")
+	}
+}
+
+func TestSearch_TruncatedFlagNotSetWhenUnderLimit(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	for i := 0; i < 3; i++ {
+		addNode(t, h, "truncation under limit", "ttest2", nil)
+	}
+	tr := call(t, h, "search", map[string]any{
+		"query": "truncation under", "domain": "ttest2", "limit": 10,
+	})
+	mustNotError(t, tr)
+
+	var result struct {
+		Truncated bool `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	if result.Truncated {
+		t.Error("truncated should be false when results are under the limit")
+	}
+}
+
+func TestSearch_DescriptionHasVocabularyGuidance(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "search" {
+			continue
+		}
+		const want = "vocabulary that appears in the stored"
+		if !strings.Contains(td.Description, want) {
+			t.Errorf("search description missing vocabulary guidance\nwant substring: %q\ngot: %s", want, td.Description)
+		}
+		return
+	}
+	t.Fatal("search tool not found in ListTools")
+}
+
+func TestSearch_PropertyDescriptionsHaveGuidance(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "search" {
+			continue
+		}
+		queryDesc := td.InputSchema.Properties["query"].Description
+		const wantQuery = "vocabulary that appears in the stored"
+		if !strings.Contains(queryDesc, wantQuery) {
+			t.Errorf("search.query property description missing vocabulary guidance\nwant substring: %q\ngot: %q", wantQuery, queryDesc)
+		}
+		limitDesc := td.InputSchema.Properties["limit"].Description
+		const wantLimit = "truncated: true"
+		if !strings.Contains(limitDesc, wantLimit) {
+			t.Errorf("search.limit property description missing truncation hint\nwant substring: %q\ngot: %q", wantLimit, limitDesc)
+		}
+		return
+	}
+	t.Fatal("search tool not found in ListTools")
+}
+
 // ── add_edge ──────────────────────────────────────────────────────────────────
 
 func TestAddEdge_HappyPath(t *testing.T) {

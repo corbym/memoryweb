@@ -123,13 +123,13 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "search",
-			Description: "Search memories by text across label, description, why_matters, and tags. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. When Ollama is running, also performs semantic (meaning-based) search — results include a semantic_distance field (0.0–1.0, lower = closer match). If a result looks relevant, call recall with its ID to get the full memory and all its connections.",
+			Description: "Search memories by text across label, description, why_matters, and tags. Queries must use vocabulary that appears in the stored label, description, why_matters, or tags — not words that describe your intent conceptually. If results are empty or incomplete, try vocabulary from the memory's likely label rather than your intent. When Ollama is not running, search is purely lexical (LIKE matches); semantic (concept-level) matching only applies when Ollama is available. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. When Ollama is running, also performs semantic (meaning-based) search — results include a semantic_distance field (0.0–1.0, lower = closer match). Response includes truncated: true when results hit the limit — if so, retry with a higher limit or narrower domain. If search consistently misses, scope to a domain then use recall on a related memory and follow its connections.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"query":  {Type: "string", Description: "Search text"},
+					"query":  {Type: "string", Description: "Terms to search for. Must use vocabulary that appears in the stored label, description, why_matters, or tags. Conceptual paraphrases that don't share vocabulary with the stored content will not match."},
 					"domain": {Type: "string", Description: "Optional domain to scope search"},
-					"limit":  {Type: "integer", Description: "Max results (default 10)"},
+					"limit":  {Type: "integer", Description: "Max results (default 10). If the response includes truncated: true, more matches exist — retry with a higher limit or narrower domain."},
 				},
 				Required: []string{"query"},
 			},
