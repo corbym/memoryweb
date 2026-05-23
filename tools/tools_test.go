@@ -1142,6 +1142,73 @@ func TestAddEdge_BothNodesNonExistent(t *testing.T) {
 	mustError(t, tr)
 }
 
+// TestSuggestedConnections_IncludesDomain asserts that each entry in
+// suggested_connections carries a non-empty domain field, so agents know which
+// domain to pass to connect when linking the suggestion.
+func TestSuggestedConnections_IncludesDomain(t *testing.T) {
+	_, h := newEnv(t)
+	// File a node with enough tags to generate at least one suggestion.
+	addNode(t, h, "existing node", "proj", map[string]any{"tags": "alpha beta gamma"})
+	tr := call(t, h, "remember", map[string]any{
+		"label":  "new node",
+		"domain": "proj",
+		"tags":   "alpha beta gamma",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		SuggestedConnections []struct {
+			ID     string `json:"id"`
+			Domain string `json:"domain"`
+		} `json:"suggested_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+	for i, s := range resp.SuggestedConnections {
+		if s.Domain == "" {
+			t.Errorf("suggested_connections[%d] (id=%q) has empty domain field", i, s.ID)
+		}
+	}
+	if len(resp.SuggestedConnections) == 0 {
+		t.Skip("no suggestions generated — cannot assert domain field; adjust tags if needed")
+	}
+}
+
+// TestConnect_CrossDomain_ErrorMentionsDomain asserts that when connect fails
+// because the to_memory ID is not found, the error message names the domain
+// that was searched, making the failure recoverable for agents.
+func TestConnect_CrossDomain_ErrorMentionsDomain(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "domain-a node", "domain-a", nil)
+	// to node is in domain-b — connect does not support cross-domain
+	addNode(t, h, "domain-b node", "domain-b", nil)
+	// Use a non-existent ID so the error fires
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory":  from,
+		"to_memory":    "does-not-exist",
+		"relationship": "connects_to",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "domain-a") {
+		t.Errorf("error message should name the searched domain (domain-a);\ngot: %s", text(t, tr))
+	}
+}
+
+// TestConnect_SameDomain_Succeeds is a sanity check that same-domain connect
+// still works after the error message changes.
+func TestConnect_SameDomain_Succeeds(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "a", "proj", nil)
+	to := addNode(t, h, "b", "proj", nil)
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory":  from,
+		"to_memory":    to,
+		"relationship": "depends_on",
+	})
+	mustNotError(t, tr)
+}
+
 func TestGetNode_IncludesEdges(t *testing.T) {
 	_, h := newEnv(t)
 	from := addNode(t, h, "RST crash", "deep-game", nil)
@@ -2805,7 +2872,7 @@ func TestOccurredAt_ToolDescriptions_ContainProposeConfirmGuidance(t *testing.T)
 			if !ok {
 				t.Fatalf("tool %q has no occurred_at property", name)
 			}
-			for _, phrase := range []string{"propose", "confirm", "Never set silently", "Never guess"} {
+			for _, phrase := range []string{"propose", "confirm", "Never guess"} {
 				if !strings.Contains(oat.Description, phrase) {
 					t.Errorf("tool %q occurred_at description missing phrase %q;\ngot: %s", name, phrase, oat.Description)
 				}
@@ -2836,9 +2903,72 @@ func TestOccurredAt_ToolDescriptions_ContainProposeConfirmGuidance(t *testing.T)
 			if !ok {
 				t.Fatalf("tool %q has no %q property", name, "items")
 			}
-			for _, phrase := range []string{"propose+confirm", "Never guess"} {
+			for _, phrase := range []string{"propose+confirm", "never infer silently"} {
 				if !strings.Contains(field.Description, phrase) {
 					t.Errorf("tool %q.items description missing phrase %q;\ngot: %s", name, phrase, field.Description)
+				}
+			}
+		})
+	}
+}
+
+// TestOccurredAtWording_TwoCases asserts that the occurred_at property
+// description in remember and revise contains the (a)/(b) epistemic split:
+// an explicit "in-session witnessed" case and an "inferred or back-dated" case
+// with the "Never guess" / "Never infer" forbidder.
+func TestOccurredAtWording_TwoCases(t *testing.T) {
+	_, h := newEnv(t)
+
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+
+	var resp struct {
+		Tools []struct {
+			Name        string          `json:"name"`
+			InputSchema json.RawMessage `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+
+	toolIndex := map[string]json.RawMessage{}
+	for _, td := range resp.Tools {
+		toolIndex[td.Name] = td.InputSchema
+	}
+
+	for _, name := range []string{"remember", "revise"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			schema, ok := toolIndex[name]
+			if !ok {
+				t.Fatalf("tool %q not found", name)
+			}
+			var s struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			}
+			if err := json.Unmarshal(schema, &s); err != nil {
+				t.Fatalf("unmarshal schema: %v", err)
+			}
+			oat, ok := s.Properties["occurred_at"]
+			if !ok {
+				t.Fatalf("tool %q has no occurred_at property", name)
+			}
+			for _, phrase := range []string{
+				"(a)",
+				"(b)",
+				"In-session witnessed",
+				"Inferred or back-dated",
+				"Never guess",
+				"Never infer",
+			} {
+				if !strings.Contains(oat.Description, phrase) {
+					t.Errorf("tool %q occurred_at description missing phrase %q;\ngot: %s", name, phrase, oat.Description)
 				}
 			}
 		})
@@ -4326,6 +4456,111 @@ func TestConnectAll_IsUnknownTool(t *testing.T) {
 	if !strings.Contains(text(t, tr), "unknown tool") {
 		t.Errorf("expected 'unknown tool' error, got: %s", text(t, tr))
 	}
+}
+
+// ── tool description quality tests ───────────────────────────────────────────
+
+// TestListTools_PresentationInstructionOnAllRetrievalTools asserts that every
+// retrieval tool carries the "Never acknowledge that you are retrieving"
+// presentation instruction so agents don't expose the memory system.
+func TestListTools_PresentationInstructionOnAllRetrievalTools(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	index := map[string]string{}
+	for _, td := range resp.Tools {
+		index[td.Name] = td.Description
+	}
+	retrieval := []string{"search", "recall", "recent", "orient", "history", "why_connected", "significance"}
+	const want = "Never acknowledge that you are retrieving"
+	for _, name := range retrieval {
+		desc, ok := index[name]
+		if !ok {
+			t.Errorf("tool %q not found in ListTools", name)
+			continue
+		}
+		if !strings.Contains(desc, want) {
+			t.Errorf("tool %q missing presentation instruction; want substring %q\ngot: %.200s...", name, want, desc)
+		}
+	}
+}
+
+// TestVisualise_NoClientConditional asserts that the visualise description
+// contains no "If the client supports" conditional — agents cannot reliably
+// detect rendering capabilities at runtime.
+func TestVisualise_NoClientConditional(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "visualise" {
+			if strings.Contains(td.Description, "If the client supports") {
+				t.Errorf("visualise description must not contain client capability conditional;\ngot: %s", td.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("visualise tool not found in ListTools")
+}
+
+// TestRemember_ConnectInstructionAtTop asserts that the post-filing connect
+// imperative appears before the "Single mode" parameter documentation in the
+// remember description — agents must see it before reaching parameter docs.
+func TestRemember_ConnectInstructionAtTop(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "remember" {
+			connectIdx := strings.Index(td.Description, "After filing, call connect")
+			singleModeIdx := strings.Index(td.Description, "Single mode")
+			if connectIdx == -1 {
+				t.Error(`remember description missing "After filing, call connect" imperative`)
+				return
+			}
+			if connectIdx > singleModeIdx {
+				t.Errorf("remember description: connect imperative (pos %d) must appear before Single mode docs (pos %d)", connectIdx, singleModeIdx)
+			}
+			return
+		}
+	}
+	t.Fatal("remember tool not found in ListTools")
 }
 
 // TestListTools_BatchVariantsRemoved: ListTools must not contain remember_all,

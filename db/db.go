@@ -642,13 +642,19 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 }
 
 func (s *Store) AddEdge(fromID, toID, relationship, narrative string) (*Edge, error) {
-	// Validate nodes exist
-	for _, nodeID := range []string{fromID, toID} {
-		var count int
-		s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ?`, nodeID).Scan(&count)
-		if count == 0 {
-			return nil, fmt.Errorf("node not found: %s", nodeID)
+	// Look up from node and get its domain.
+	var fromDomain string
+	if err := s.db.QueryRow(`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, fromID).Scan(&fromDomain); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("node not found: %s", fromID)
 		}
+		return nil, err
+	}
+	// Check to node exists.
+	var toCount int
+	s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NULL`, toID).Scan(&toCount)
+	if toCount == 0 {
+		return nil, fmt.Errorf("node not found: %q was not found (searched domain %q). If this node is in a different domain, cross-domain connections are not yet supported — search for it first to confirm its domain", toID, fromDomain)
 	}
 	id := "edge-" + shortID()
 	now := time.Now().UTC()
@@ -2331,6 +2337,7 @@ type EdgeSuggestion struct {
 	ID     string `json:"id"`
 	Label  string `json:"label"`
 	Reason string `json:"reason"`
+	Domain string `json:"domain"`
 }
 
 // SuggestEdges returns up to limit candidate connections for the given node:
@@ -2434,7 +2441,7 @@ func (s *Store) SuggestEdges(id string, limit int) ([]EdgeSuggestion, error) {
 
 	result := make([]EdgeSuggestion, len(candidates))
 	for i, c := range candidates {
-		result[i] = EdgeSuggestion{ID: c.id, Label: c.label, Reason: c.reason}
+		result[i] = EdgeSuggestion{ID: c.id, Label: c.label, Reason: c.reason, Domain: targetDomain}
 	}
 	return result, nil
 }

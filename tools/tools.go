@@ -68,7 +68,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",
-			Description: "File one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field — always call connect for any that are relevant before ending your session.\n\nBatch mode (provide items array): file multiple memories in a single transaction. After filing, always call connect to link the memories you've just filed — memories without connections lose context immediately. Batch mode does not support related_to; use connect after filing.\n\nFor occurred_at in either mode: set only via the propose+confirm model: (1) recognise that something looks like a significant decision — a choice between options, a constraint that shapes future work, or a principle that will be referenced again — (2) propose filing it on the timeline and ask the user to confirm, (3) set occurred_at only after the user agrees. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse transient=true for ticket state, sprint notes, or any memory expected to become stale within days. Transient memories are candidates for archiving once the related work is complete.",
+			Description: "After filing, call connect for every suggested_connections entry before ending your session. Orphaned memories lose context immediately.\n\nFile one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field.\n\nBatch mode (provide items array): file multiple memories in a single transaction. Batch mode does not support related_to; use connect after filing.\n\nFor occurred_at in either mode: two cases — (a) In-session witnessed: you directly observed this decision or event happen during the current conversation. Set occurred_at freely using today's date. No confirmation needed. (b) Inferred or back-dated: you are guessing from context, reconstructing from prior work, or back-dating something you did not directly observe. Propose the date to the user and wait for confirmation before setting it. Never guess. Never infer it silently from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse transient=true for ticket state, sprint notes, or any memory expected to become stale within days. Transient memories are candidates for archiving once the related work is complete.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -76,7 +76,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"description": {Type: "string", Description: "What this memory is about"},
 					"why_matters": {Type: "string", Description: "Why this is significant - the 'so what'"},
 					"domain":      {Type: "string", Description: "The domain or project this belongs to (e.g. 'deep-game', 'sedex', 'general'). Required in single mode; omit when using items."},
-					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. propose+confirm: recognise a significant decision, propose to user, confirm before setting. Never set silently. Never guess or infer a date. Single mode only."},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. (a) In-session witnessed: you directly observed this happen in the current conversation — set freely using today's date, no confirmation needed. (b) Inferred or back-dated: you are guessing or reconstructing — propose to user and wait for confirmation. Never guess. Never infer silently. Single mode only."},
 					"tags":        {Type: "string", Description: "Space-separated synonyms and keywords that improve search recall. Examples: 'testing gradle kotlin approval'. These are searched alongside label, description, and why_matters. Populate this with alternative terms an agent might use to find this memory later."},
 					"related_to": {
 						Type:        "array",
@@ -86,7 +86,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"transient": {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient memories older than 7 days are surfaced by audit(mode=stale) as archiving candidates."},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — propose+confirm only, Never guess), transient (boolean).",
+						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), transient (boolean).",
 						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["label","domain"]}`),
 					},
 				},
@@ -112,7 +112,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "recall",
-			Description: "Retrieve a memory and all its connections by ID. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates.",
+			Description: "Retrieve a memory and all its connections by ID. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -123,7 +123,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "search",
-			Description: "Search memories by text across label, description, why_matters, and tags. Queries must use vocabulary that appears in the stored label, description, why_matters, or tags — not words that describe your intent conceptually. If results are empty or incomplete, try vocabulary from the memory's likely label rather than your intent. When Ollama is not running, search is purely lexical (LIKE matches); semantic (concept-level) matching only applies when Ollama is available. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. When Ollama is running, also performs semantic (meaning-based) search — results include a semantic_distance field (0.0–1.0, lower = closer match). Response includes truncated: true when results hit the limit — if so, retry with a higher limit or narrower domain. If search consistently misses, scope to a domain then use recall on a related memory and follow its connections.",
+			Description: "Search memories by text across label, description, why_matters, and tags. Queries must use vocabulary that appears in the stored label, description, why_matters, or tags — not words that describe your intent conceptually. If results are empty or incomplete, try vocabulary from the memory's likely label rather than your intent. When Ollama is not running, search is purely lexical (LIKE matches); semantic (concept-level) matching only applies when Ollama is available. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. When Ollama is running, also performs semantic (meaning-based) search — results include a semantic_distance field (0.0–1.0, lower = closer match). Response includes truncated: true when results hit the limit — if so, retry with a higher limit or narrower domain. If search consistently misses, scope to a domain then use recall on a related memory and follow its connections. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -148,7 +148,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "why_connected",
-			Description: "Find how two concepts are related, returning any connections between the best match for each term. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates.",
+			Description: "Find how two concepts are related, returning any connections between the best match for each term. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -161,7 +161,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "history",
-			Description: "Returns memories in a domain in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL memories — the complete chronological view of everything filed in the domain. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only memories where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nUse from/to to scope by effective date. Use tags to further filter results in either mode (comma-separated).\n\nThe two modes are complementary:\n  - Default: 'what happened in this domain, and in what order?'\n  - important_only=true: 'what were the important decisions and events?'\n\nFor importance analysis beyond the timeline — which nodes are structurally load-bearing right now — use significance.",
+			Description: "Returns memories in a domain in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL memories — the complete chronological view of everything filed in the domain. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only memories where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nUse from/to to scope by effective date. Use tags to further filter results in either mode (comma-separated).\n\nThe two modes are complementary:\n  - Default: 'what happened in this domain, and in what order?'\n  - important_only=true: 'what were the important decisions and events?'\n\nFor importance analysis beyond the timeline — which nodes are structurally load-bearing right now — use significance. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -176,7 +176,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "significance",
-			Description: "Dual-signal importance analysis for a domain. Returns four sections:\n- declared: nodes explicitly marked as significant (occurred_at set), in chronological order.\n- structural: nodes ranked by recency-weighted inbound degree. High score means many recently active nodes depend on this node right now.\n- uncurated: nodes in structural top-N with no occurred_at — significance candidates you haven't curated yet.\n- potentially_stale: nodes with occurred_at but low structural score — declared important but nothing current depends on them anymore.\n\nThe gap between uncurated and potentially_stale is the most actionable output: use it to promote missed decisions onto the timeline and archive claims that no longer hold.\n\nDo not use this tool to list all nodes chronologically — use history for that. For age-based staleness or orphan detection, use audit. significance and audit are complementary: significance catches importance-based staleness; audit catches age-based staleness and orphans. A full domain health check runs both.\n\nThis tool only returns live nodes. Archived nodes are hidden.",
+			Description: "Dual-signal importance analysis for a domain. Returns four sections:\n- declared: nodes explicitly marked as significant (occurred_at set), in chronological order.\n- structural: nodes ranked by recency-weighted inbound degree. High score means many recently active nodes depend on this node right now.\n- uncurated: nodes in structural top-N with no occurred_at — significance candidates you haven't curated yet.\n- potentially_stale: nodes with occurred_at but low structural score — declared important but nothing current depends on them anymore.\n\nThe gap between uncurated and potentially_stale is the most actionable output: use it to promote missed decisions onto the timeline and archive claims that no longer hold.\n\nDo not use this tool to list all nodes chronologically — use history for that. For age-based staleness or orphan detection, use audit. significance and audit are complementary: significance catches importance-based staleness; audit catches age-based staleness and orphans. A full domain health check runs both.\n\nThis tool only returns live nodes. Archived nodes are hidden. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -254,7 +254,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Return all known memories for a domain structured for synthesis. Response includes: nodes (all live memories), recent (most recently changed), and declared_spine (key decisions in chronological order — nodes with occurred_at set). Synthesise into concise prose covering current state, blockers, recent decisions, and open questions; weigh the declared_spine heavily as it represents explicitly curated significance. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool.",
+			Description: "Return all known memories for a domain structured for synthesis. Response includes: nodes (all live memories), recent (most recently changed), and declared_spine (key decisions in chronological order — nodes with occurred_at set). Synthesise into concise prose covering current state, blockers, recent decisions, and open questions; weigh the declared_spine heavily as it represents explicitly curated significance. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -265,7 +265,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "revise",
-			Description: "Update one or more existing live memories. Only the fields you provide are changed — omitted fields keep their current values. Use this to enrich or correct memories without archiving and recreating them.\n\nSingle mode (omit items): provide id and any fields to update. Returns the full updated memory.\n\nBatch mode (provide items array): update multiple memories in a single transaction. All updates succeed or all are rolled back. Returns an updated array.\n\nFor occurred_at in either mode: set only via the propose+confirm model: propose significance to the user, get confirmation, then set. Never set silently. Never guess or infer a date from context. If the user confirms without specifying a date, use today's system date.",
+			Description: "Update one or more existing live memories. Only the fields you provide are changed — omitted fields keep their current values. Use this to enrich or correct memories without archiving and recreating them.\n\nSingle mode (omit items): provide id and any fields to update. Returns the full updated memory.\n\nBatch mode (provide items array): update multiple memories in a single transaction. All updates succeed or all are rolled back. Returns an updated array.\n\nFor occurred_at in either mode: two cases — (a) In-session witnessed: you directly observed this decision or event happen during the current conversation. Set occurred_at freely using today's date. No confirmation needed. (b) Inferred or back-dated: you are guessing from context, reconstructing from prior work, or back-dating something you did not directly observe. Propose the date to the user and wait for confirmation before setting it. Never guess. Never infer it silently from context. If the user confirms without specifying a date, use today's system date.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -274,10 +274,10 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"description": {Type: "string", Description: "New description (optional)"},
 					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
 					"tags":        {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
-					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. propose+confirm: recognise a significant decision, propose to user, confirm before setting. Never set silently. Never guess or infer a date. Single mode only."},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. (a) In-session witnessed: you directly observed this happen in the current conversation — set freely using today's date, no confirmation needed. (b) Inferred or back-dated: you are guessing or reconstructing — propose to user and wait for confirmation. Never guess. Never infer silently. Single mode only."},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — propose+confirm only, Never guess).",
+						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently).",
 						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"}},"required":["id"]}`),
 					},
 				},
@@ -334,8 +334,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 				"Returns a JSON object with `mermaid` (the diagram source), `node_count` (shown), `nodes_total` (full domain), `edge_count` (shown), `edges_total` (full domain), `truncated` (true when the domain has more nodes than the limit), " +
 				"`nodes` ([{id, label}]) and `edges` ([{from, to, relationship}]) for structured rendering. " +
 				"Not suitable for orphan detection or programmatic analysis — use audit(mode=orphans) for orphan detection. Output may be truncated for large domains. Use for human visual inspection only. " +
-				"If the client supports HTML widgets, prefer passing the nodes and edges to an interactive renderer rather than outputting raw mermaid. " +
-				"If the client does not support HTML widgets, output the `mermaid` string inside a ```mermaid code block. " +
+				"Output the `mermaid` string inside a ```mermaid code block. " +
 				"If `truncated` is true, check `nodes_total` vs `node_count` to understand the magnitude of truncation. " +
 				"Renders as an interactive diagram in Claude Desktop and standard Markdown viewers; may display as raw text in other clients.",
 			InputSchema: InputSchema{
@@ -530,7 +529,7 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 
 	orphanWarning := ""
 	if len(a.RelatedTo) == 0 {
-		orphanWarning = "No connections were made. Call connect now — an isolated memory loses context immediately."
+		orphanWarning = fmt.Sprintf("No connections were made. Call connect with domain=%s to link these memories. Suggested connections in other domains cannot be connected directly — check their domain field first.", node.Domain)
 	}
 
 	resp := struct {
@@ -986,7 +985,7 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	}
 	orphanWarning := ""
 	if len(nodes) > 0 {
-		orphanWarning = "No connections were made. Call connect now to link these nodes — isolated memories lose context immediately."
+		orphanWarning = "No connections were made. Call connect with domain=<domain> to link these memories. Suggested connections in other domains cannot be connected directly — check their domain field first."
 	}
 
 	type response struct {
