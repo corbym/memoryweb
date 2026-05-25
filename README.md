@@ -39,7 +39,7 @@ The `why_matters` field is not optional. A node without it is an event, not a de
   - [Connecting memories](#connecting-memories)
   - [Retrieving memories](#retrieving-memories)
   - [Archive / forget](#archive--forget)
-  - [Domain aliases](#domain-aliases)
+  - [Domain management](#domain-management)
   - [Relationship types](#relationship-types)
 - [Conventions](#conventions)
 - [CLI](#cli)
@@ -97,34 +97,30 @@ Override with `MEMORYWEB_DB=/path/to/your.db`
 
 | Tool | What it does |
 |------|-------------|
-| `remember` | File a single concept, decision, or finding. Required: `label`, `domain`. Optional: `description`, `why_matters`, `occurred_at` (ISO8601), `tags` (space-separated keywords), `related_to` (auto-connect at creation), `transient` (mark as short-lived). Response includes `suggested_connections` and `possible_duplicates`. |
-| `remember_all` | Batch version of `remember` — insert multiple nodes in one transaction. Returns `[{node, suggested_connections}]` per entry. |
-| `revise` | Update `label`, `description`, `why_matters`, or `tags` on a live node without archiving it. Only supplied fields are changed. Writes an audit log entry on every call. |
-| `revise_all` | Batch version of `revise` — update multiple nodes in one transaction. All succeed or all roll back. |
+| `remember` | File a single concept, decision, or finding. Required: `label`, `domain`. Optional: `description`, `why_matters`, `occurred_at` (ISO8601), `tags` (space-separated keywords), `related_to` (auto-connect at creation), `transient` (mark as short-lived). Supply an `items` array to file multiple nodes in one transaction. Response includes `suggested_connections` and `possible_duplicates`. |
+| `revise` | Update `label`, `description`, `why_matters`, `tags`, or `occurred_at` on a live node without archiving it. Supply an `items` array for batch updates. Writes an audit log entry on every call. |
 
 ### Connecting memories
 
 | Tool | What it does |
 |------|-------------|
-| `connect` | Connect two nodes with a typed relationship and narrative *because*. Both nodes must exist first. |
-| `connect_all` | Batch version of `connect` — insert multiple connections in one transaction. |
+| `connect` | Connect two nodes with a typed relationship and narrative *because*. Both nodes must exist first. Supply an `items` array to create multiple connections in one transaction. |
 | `disconnect` | Remove a connection by edge ID. Hard delete — cannot be restored. Obtain the ID from `recall`. |
-| `disconnected` | Return live, non-transient nodes that have zero connections. Use this to surface dropped context — nodes that were filed but never linked into the graph. Present findings to the user and suggest either connecting them or archiving them. |
-| `suggest_connections` | Given a node ID, return up to 5 candidate connections from the same domain. Read-only. |
+| `suggest_connections` | Given a node ID, return up to 5 candidate connections. Returns a `domain` field on each suggestion so cross-domain connects can be scoped correctly. Read-only. |
 
 ### Retrieving memories
 
 | Tool | What it does |
 |------|-------------|
 | `recall` | Retrieve a node and all its connections by ID. |
-| `search` | Text search across `label`, `description`, `why_matters`, and `tags`. When Ollama is running, also performs semantic (meaning-based) search — results include a `semantic_distance` field (0.0–1.0, lower = closer). |
+| `search` | Text search across `label`, `description`, `why_matters`, and `tags`. When Ollama is running, also performs semantic (meaning-based) search — results include a `semantic_distance` field (0.0–1.0, lower = closer). Returns `truncated: true` when results are capped by the limit. |
 | `recent` | What was filed recently. Set `group_by_domain=true` (with no domain) to see activity broken down per domain. |
-| `history` | Nodes ordered by when they actually occurred. Supports `from`/`to` date range filtering. |
-| `why_connected` | Look up the reasoning linking two named concepts. |
+| `history` | Nodes ordered by when they actually occurred. Supports `from`/`to` date range filtering, `tags` filtering, and `important_only` for the curated decision spine only. |
+| `why_connected` | Look up the reasoning linking two named concepts (by label). |
 | `trace` | Find the shortest chain of relationships between two nodes (by ID). Returns intermediate nodes and edges up to 6 hops. Synthesise the result into a narrative explaining how one concept leads to the other. |
-| `orient` | Return all nodes for a domain structured for synthesis — current state, blockers, decisions, open questions. Includes `total_nodes` so you know when the view is truncated. |
-| `list_domains` | List all domains that have at least one live node. Use at session start to discover what domains exist before scoping a search. |
-| `check_for_updates` | Check whether a newer version of memoryweb is available. Returns current version, latest available version, and update instructions. |
+| `orient` | Return all nodes for a domain structured for synthesis — current state, recent activity, and a `declared_spine` of key decisions in chronological order. Includes `total_nodes` and `server_version`. |
+| `visualise` | Mermaid flowchart for a domain or a single node's neighbourhood (pass `memory_id`). Output inside a mermaid code block. |
+| `significance` | Dual-signal importance analysis for a domain. Returns four sections: `declared` (nodes with `occurred_at` set), `structural` (ranked by recency-weighted inbound degree), `uncurated` (structural top-N without `occurred_at` — curation candidates), and `potentially_stale` (declared but low structural score). |
 
 ### Archive / forget
 
@@ -132,19 +128,18 @@ Nodes are never hard-deleted via the tools. Archive = soft delete; the node disa
 
 | Tool | What it does |
 |------|-------------|
-| `forget` | Archive a node with a reason. Strict protocol: only after `whats_stale` surfaces a candidate or the user explicitly confirms. |
+| `forget` | Archive a node with a reason. Strict protocol: only after `audit(mode=stale)` surfaces a candidate or the user explicitly confirms. |
+| `forget_all` | Archive multiple nodes atomically in a single call. Same strict protocol applies. |
 | `restore` | Restore an archived node so it surfaces in search again. |
-| `forgotten` | Review what's been archived. Optionally scope by domain. |
-| `whats_stale` | Surface nodes that may be stale, contradicted, duplicated, or transient and overdue. Returns candidates for review — never archives automatically. |
+| `audit` | Surface nodes that need attention. `mode=stale` — stale, contradicted, duplicated, or overdue transient nodes. `mode=orphans` — live nodes with zero connections. `mode=archived` — review what has been archived. |
 
-### Domain aliases
+### Domain management
 
 | Tool | What it does |
 |------|-------------|
-| `alias_domain` | Register an alternative name for a domain so both names return the same results. |
-| `remove_alias` | Remove a registered alias. |
-| `list_aliases` | List all registered aliases and what they map to. |
-| `resolve_domain` | Check what canonical domain a name resolves to. |
+| `domains` | List all domains with at least one live node, and all registered aliases. |
+| `alias` | Manage domain aliases. Actions: `add`, `remove`, `resolve`, `list`. Register short aliases so both `dg` and `deep-game` return the same results. |
+| `rename_domain` | Rename a domain in place. Automatically registers an alias from the old name so existing references keep working. Fails with a clear error if the new domain already has live nodes — use `merge-domains` (CLI) instead. |
 
 ### Relationship types
 `caused_by` `led_to` `blocked_by` `unblocks` `connects_to` `contradicts` `depends_on` `is_example_of`
@@ -152,13 +147,13 @@ Nodes are never hard-deleted via the tools. Archive = soft delete; the node disa
 ## Conventions
 
 - Use `domain` to separate concerns: `deep-game`, `sedex`, `general`
-- Call `list_domains` at session start if you don't know what domains exist
+- Call `domains` at session start if you don't know what domains exist
 - The `why_matters` field is the most important one for retrieval — don't skip it
 - The `narrative` on a connection is the *because* — the reasoning that makes it meaningful, not just the fact that a connection exists
 - Add connections immediately after filing related nodes, or use `related_to` on `remember` to auto-connect at creation time
-- Call `recent` or `orient` at the start of a session to orient without needing to know what to search for
+- Call `orient` at the start of a session to orient without needing to know what to search for
 - Use `why_connected` when asking about the relationship between two specific things
-- Use `transient: true` for ticket state, sprint notes, or anything expected to go stale within days — `whats_stale` will surface these for cleanup
+- Use `transient: true` for ticket state, sprint notes, or anything expected to go stale within days — `audit(mode=stale)` will surface these for cleanup
 - `remember` returns `suggested_connections` and `possible_duplicates` — review both before filing more nodes
 
 ## CLI
@@ -215,7 +210,7 @@ memoryweb doctor --json                              # machine-readable JSON out
 Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[i]` informational. The command exits with code 1 if any check fails. Example output:
 
 ```
-[✓] Database:        ~/.memoryweb.db (WAL, schema v9)
+[✓] Database:        ~/.memoryweb.db (WAL, schema v11)
 [✓] sqlite-vec:      v0.1.6 — 142/145 nodes embedded (98%)
 [✗] Ollama binary:   not found in PATH — install from https://ollama.com/download
 [!] Ollama server:   skipped (Ollama binary not found)
@@ -227,6 +222,22 @@ Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[
 [i] Update:          running dev build — skipping update check
 ```
 
+The `merge-domains` subcommand consolidates two domains into one:
+
+```bash
+memoryweb merge-domains --source <domain> --target <domain> [--dry-run]
+```
+
+- `--dry-run` reports what would happen without making any changes
+- Detects label collisions between the two domains — reported as warnings, not blocking
+- Automatically creates an alias from source → target
+
+The `check-for-updates` subcommand checks GitHub for a newer release:
+
+```bash
+memoryweb check-for-updates
+```
+
 ## Hooks
 
 Two Claude Code hooks automate filing and pre-compaction capture.
@@ -234,7 +245,7 @@ Two Claude Code hooks automate filing and pre-compaction capture.
 ### What they do
 
 **`hooks/memoryweb_save_hook.sh`** (Stop hook — fires after every AI response)  
-Counts human messages in the session transcript. Every `SAVE_INTERVAL` messages (default 15) it blocks the response and asks the model to call `remember_all` and `connect_all` for anything significant before continuing. Before blocking, it runs `memoryweb dream` and embeds the resulting digest — recent nodes and drift candidates — directly in the `stopReason` so the model has live context before it files. If `memoryweb` is not available the hook still blocks but omits the digest. Uses a re-entry flag so the block fires once and allows immediately after the model files.
+Counts human messages in the session transcript. Every `SAVE_INTERVAL` messages (default 15) it blocks the response and asks the model to call `remember` and `connect` for anything significant before continuing. Before blocking, it runs `memoryweb dream` and embeds the resulting digest — recent nodes and drift candidates — directly in the `stopReason` so the model has live context before it files. If `memoryweb` is not available the hook still blocks but omits the digest. Uses a re-entry flag so the block fires once and allows immediately after the model files.
 
 **`hooks/memoryweb_precompact_hook.sh`** (PreCompact hook — fires before context compaction)  
 Blocks compaction once and asks the model to file everything important that hasn't been filed yet. Allows on re-entry so compaction proceeds after the filing pass.
@@ -355,7 +366,7 @@ To check whether a newer version is available, run:
 memoryweb doctor
 ```
 
-The `Update:` line in the output will tell you if a newer release is available and where to download it. You can also ask the agent directly — the `check_for_updates` tool checks GitHub for the latest release and tells you the current and latest versions.
+The `Update:` line in the output will tell you if a newer release is available and where to download it.
 
 To update:
 
