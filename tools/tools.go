@@ -68,7 +68,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",
-			Description: "After filing, call connect for every suggested_connections entry before ending your session. Orphaned memories lose context immediately.\n\nFile one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field.\n\nBatch mode (provide items array): file multiple memories in a single transaction. Batch mode does not support related_to; use connect after filing.\n\nFor occurred_at in either mode: two cases — (a) In-session witnessed: you directly observed this decision or event happen during the current conversation. Set occurred_at freely using today's date. No confirmation needed. (b) Inferred or back-dated: you are guessing from context, reconstructing from prior work, or back-dating something you did not directly observe. Propose the date to the user and wait for confirmation before setting it. Never guess. Never infer it silently from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse transient=true for ticket state, sprint notes, or any memory expected to become stale within days. Transient memories are candidates for archiving once the related work is complete.",
+			Description: "After filing, call connect for every suggested_connections entry before ending your session. Orphaned memories lose context immediately.\n\nFile one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field.\n\nBatch mode (provide items array): file multiple memories in a single transaction. Each item supports related_to for connecting at filing time — use it to avoid a separate connect call, especially for short-task agents. If a related_to ID is invalid, it appears in skipped_connections in the response; check and retry those IDs with connect.\n\nFor occurred_at in either mode: two cases — (a) In-session witnessed: you directly observed this decision or event happen during the current conversation. Set occurred_at freely using today's date. No confirmation needed. (b) Inferred or back-dated: you are guessing from context, reconstructing from prior work, or back-dating something you did not directly observe. Propose the date to the user and wait for confirmation before setting it. Never guess. Never infer it silently from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse transient=true for ticket state, sprint notes, or any memory expected to become stale within days. Transient memories are candidates for archiving once the related work is complete.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -86,8 +86,8 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"transient": {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient memories older than 7 days are surfaced by audit(mode=stale) as archiving candidates."},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), transient (boolean).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["label","domain"]}`),
+						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), transient (boolean), related_to (string ID, object with id+relationship, or array of either — connects at filing time; invalid IDs appear in skipped_connections).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"},"related_to":{"description":"Connect at filing time. String ID (connects_to), object {id, relationship}, or array of either. Invalid IDs appear in skipped_connections — not silently dropped."}},"required":["label","domain"]}`),
 					},
 				},
 			},
@@ -492,30 +492,7 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	for _, raw := range a.RelatedTo {
-		relID := ""
-		relationship := "connects_to"
-
-		var strID string
-		if err := json.Unmarshal(raw, &strID); err == nil {
-			relID = strID
-		} else {
-			var entry struct {
-				ID           string `json:"id"`
-				Relationship string `json:"relationship"`
-			}
-			if err := json.Unmarshal(raw, &entry); err == nil {
-				relID = entry.ID
-				if entry.Relationship != "" {
-					relationship = entry.Relationship
-				}
-			}
-		}
-
-		if relID != "" {
-			h.store.AddEdge(node.ID, relID, relationship, "auto-linked at creation") //nolint:errcheck
-		}
-	}
+	skipped := processRelatedTo(h, node.ID, a.RelatedTo)
 
 	suggestions, err := h.store.SuggestEdges(node.ID, 5)
 	if err != nil || suggestions == nil {
@@ -528,7 +505,7 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	orphanWarning := ""
-	if len(a.RelatedTo) == 0 {
+	if len(a.RelatedTo) == 0 || (len(a.RelatedTo) > 0 && len(skipped) == len(a.RelatedTo)) {
 		orphanWarning = fmt.Sprintf("No connections were made. Call connect with domain=%s to link these memories. Suggested connections in other domains cannot be connected directly — check their domain field first.", node.Domain)
 	}
 
@@ -536,11 +513,13 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 		Node                 *db.Node            `json:"node"`
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
 		PossibleDuplicates   []db.Node           `json:"possible_duplicates"`
+		SkippedConnections   []skippedConnection `json:"skipped_connections,omitempty"`
 		OrphanWarning        string              `json:"orphan_warning,omitempty"`
 	}{
 		Node:                 node,
 		SuggestedConnections: suggestions,
 		PossibleDuplicates:   duplicates,
+		SkippedConnections:   skipped,
 		OrphanWarning:        orphanWarning,
 	}
 	b, _ := json.MarshalIndent(resp, "", "  ")
@@ -926,16 +905,58 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
+// skippedConnection records a related_to ID that could not be connected and why.
+type skippedConnection struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// processRelatedTo attempts to create edges for each entry in the related_to list.
+// Entries that fail (node not found, etc.) are collected in the returned slice instead of silently dropped.
+func processRelatedTo(h *Handler, fromID string, entries []json.RawMessage) []skippedConnection {
+	var skipped []skippedConnection
+	for _, raw := range entries {
+		relID := ""
+		relationship := "connects_to"
+
+		var strID string
+		if err := json.Unmarshal(raw, &strID); err == nil {
+			relID = strID
+		} else {
+			var entry struct {
+				ID           string `json:"id"`
+				Relationship string `json:"relationship"`
+			}
+			if err := json.Unmarshal(raw, &entry); err == nil {
+				relID = entry.ID
+				if entry.Relationship != "" {
+					relationship = entry.Relationship
+				}
+			}
+		}
+
+		if relID == "" {
+			continue
+		}
+		if _, err := h.store.AddEdge(fromID, relID, relationship, "auto-linked at creation"); err != nil {
+			reason := err.Error()
+			skipped = append(skipped, skippedConnection{ID: relID, Reason: reason})
+		}
+	}
+	return skipped
+}
+
 // addNodesBatch handles the batch mode of remember: items is the raw JSON array of node objects.
 func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	var nodeList []struct {
-		Label       string `json:"label"`
-		Description string `json:"description"`
-		WhyMatters  string `json:"why_matters"`
-		Tags        string `json:"tags"`
-		Domain      string `json:"domain"`
-		OccurredAt  string `json:"occurred_at"`
-		Transient   bool   `json:"transient"`
+		Label       string            `json:"label"`
+		Description string            `json:"description"`
+		WhyMatters  string            `json:"why_matters"`
+		Tags        string            `json:"tags"`
+		Domain      string            `json:"domain"`
+		OccurredAt  string            `json:"occurred_at"`
+		Transient   bool              `json:"transient"`
+		RelatedTo   []json.RawMessage `json:"related_to"`
 	}
 	if err := json.Unmarshal(items, &nodeList); err != nil {
 		return nil, err
@@ -974,17 +995,23 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	type entry struct {
 		Node                 *db.Node            `json:"node"`
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
+		SkippedConnections   []skippedConnection `json:"skipped_connections,omitempty"`
 	}
 	result := make([]entry, len(nodes))
+	anyConnected := false
 	for i, n := range nodes {
 		suggestions, _ := h.store.SuggestEdges(n.ID, 5)
 		if suggestions == nil {
 			suggestions = []db.EdgeSuggestion{}
 		}
-		result[i] = entry{Node: n, SuggestedConnections: suggestions}
+		skipped := processRelatedTo(h, n.ID, nodeList[i].RelatedTo)
+		if len(nodeList[i].RelatedTo) > 0 && len(skipped) < len(nodeList[i].RelatedTo) {
+			anyConnected = true
+		}
+		result[i] = entry{Node: n, SuggestedConnections: suggestions, SkippedConnections: skipped}
 	}
 	orphanWarning := ""
-	if len(nodes) > 0 {
+	if len(nodes) > 0 && !anyConnected {
 		orphanWarning = "No connections were made. Call connect with domain=<domain> to link these memories. Suggested connections in other domains cannot be connected directly — check their domain field first."
 	}
 

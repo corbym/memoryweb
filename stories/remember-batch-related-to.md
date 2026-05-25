@@ -1,4 +1,4 @@
-# remember Batch related_to
+# remember Batch related_to — COMPLETE (v1.17.0, 2025-07-15)
 
 Adds `related_to` support to `remember`'s batch mode so agents can connect nodes at filing
 time without a separate `connect` call.
@@ -37,8 +37,14 @@ existing single-mode `related_to`:
 Also accept an array of either form to connect to multiple nodes at filing time:
 `"related_to": ["id-one", {"id": "id-two", "relationship": "depends_on"}]`
 
-Invalid IDs in `related_to` must be silently skipped (consistent with existing single-mode
-behaviour). Do not fail the whole batch item if one `related_to` ID is bad.
+Invalid IDs in `related_to` must not fail the whole item, but they must not be silently
+dropped either. Include a `skipped_connections` array in the response for every item
+where one or more `related_to` IDs could not be connected. Each entry: `{"id": "...",
+"reason": "not found"}` (or `"archived"`, etc.). An empty or absent `skipped_connections`
+means all connections succeeded.
+
+Apply the same fix to **single-mode** `related_to` as well: today single mode also silently
+skips bad IDs. After this story, both modes surface skipped connections consistently.
 
 ### Handler update
 
@@ -60,30 +66,46 @@ Update the `items` array property description in the `remember` schema to mentio
 
 ## Acceptance criteria
 
+**Batch mode — happy path**
 - `TestBatchRemember_RelatedToString`: batch-remember two nodes, one with `related_to`
-  as a plain string ID; assert an edge exists from the filed node to the target.
+  as a plain string ID; assert an edge exists and `skipped_connections` is absent/empty.
 - `TestBatchRemember_RelatedToObject`: batch-remember a node with `related_to` as
   `{"id": "...", "relationship": "caused_by"}`; assert edge exists with correct relationship.
 - `TestBatchRemember_RelatedToArray`: batch-remember a node with `related_to` as an
   array of two entries; assert both edges exist.
-- `TestBatchRemember_RelatedToInvalidId_Skipped`: batch-remember a node with an invalid
-  `related_to` ID; assert the node was created (no error) and the bad edge was silently
-  skipped.
 - `TestBatchRemember_RelatedToAbsent_NoEdge`: batch-remember a node with no `related_to`;
   assert no edges were created for that node.
 - `TestBatchRemember_OrphanWarning_AbsentWhenRelatedToUsed`: batch-remember with
-  `related_to` on all items; assert `orphan_warning` is `""` in the response (coordinates
-  with orphan-nudge.md).
-- Existing single-mode `related_to` tests still pass — no regression.
+  `related_to` on all items and all IDs valid; assert `orphan_warning` is `""` in the
+  response (coordinates with orphan-nudge.md).
+
+**Batch mode — skipped connections surfaced**
+- `TestBatchRemember_RelatedToInvalidId_ReportedNotSilent`: batch-remember a node with
+  an invalid `related_to` ID; assert the node was created (no error on the item) and the
+  response includes `skipped_connections` with an entry containing the bad ID and a reason.
+- `TestBatchRemember_RelatedToPartialSuccess`: batch-remember a node with two `related_to`
+  IDs — one valid, one invalid; assert the valid edge was created and only the invalid ID
+  appears in `skipped_connections`.
+
+**Single mode — skipped connections surfaced (regression fix)**
+- `TestSingleRemember_RelatedToInvalidId_ReportedNotSilent`: single-mode remember with an
+  invalid `related_to` ID; assert the node was created and the response includes
+  `skipped_connections` with the bad ID and a reason.
+- `TestSingleRemember_RelatedToValidId_NoSkipped`: single-mode remember with a valid
+  `related_to` ID; assert `skipped_connections` is absent or empty.
+
+**Regression**
+- Existing single-mode `related_to` tests still pass.
 - `go test ./...` green.
 
 ---
 
 ## Files
 
-- `tools/tools.go` — `items` array item schema, `handleAddNodes` batch handler
-- `db/db.go` — no change expected (edge creation uses existing `AddEdge` / `LogAudit`)
-- `tools/tools_test.go` — new batch related_to tests
+- `tools/tools.go` — `items` array item schema, `handleAddNodes` batch handler,
+  `handleAddNode` single-mode handler; `skipped_connections` field on response structs
+- `db/db.go` — no schema change expected; edge creation uses existing `AddEdge` / `LogAudit`
+- `tools/tools_test.go` — new batch and single-mode skipped_connections tests
 
 ## References
 

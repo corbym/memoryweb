@@ -2731,7 +2731,378 @@ func TestAddNode_WithRelatedTo_UnknownIDSilentlySkipped(t *testing.T) {
 	}
 }
 
-// ── add_nodes with tags ───────────────────────────────────────────────────────
+// ── related_to: skipped_connections surfaced ──────────────────────────────────
+
+func TestSingleRemember_RelatedToInvalidId_ReportedNotSilent(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"label":      "Node With Bad Link",
+		"domain":     "proj",
+		"related_to": []string{"bad-id-does-not-exist"},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		SkippedConnections []struct {
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
+		} `json:"skipped_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if len(resp.SkippedConnections) == 0 {
+		t.Fatal("expected skipped_connections to contain the bad ID, got none")
+	}
+	if resp.SkippedConnections[0].ID != "bad-id-does-not-exist" {
+		t.Errorf("expected skipped ID %q, got %q", "bad-id-does-not-exist", resp.SkippedConnections[0].ID)
+	}
+	if resp.SkippedConnections[0].Reason == "" {
+		t.Error("expected non-empty reason for skipped connection")
+	}
+}
+
+func TestSingleRemember_RelatedToValidId_NoSkipped(t *testing.T) {
+	_, h := newEnv(t)
+	existingID := addNode(t, h, "Target Node", "proj", nil)
+	tr := call(t, h, "remember", map[string]any{
+		"label":      "Source Node",
+		"domain":     "proj",
+		"related_to": []string{existingID},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		SkippedConnections []struct{} `json:"skipped_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if len(resp.SkippedConnections) != 0 {
+		t.Errorf("expected no skipped_connections for valid ID, got %d", len(resp.SkippedConnections))
+	}
+}
+
+// ── batch remember: related_to support ───────────────────────────────────────
+
+func TestBatchRemember_RelatedToString(t *testing.T) {
+	_, h := newEnv(t)
+	targetID := addNode(t, h, "Batch Target", "proj", nil)
+
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{
+				"label":      "Batch Source",
+				"domain":     "proj",
+				"related_to": []string{targetID},
+			},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Node struct {
+				ID string `json:"id"`
+			} `json:"node"`
+			SkippedConnections []struct{} `json:"skipped_connections"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse batch response: %v", err)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected at least one node in batch response")
+	}
+	sourceID := resp.Nodes[0].Node.ID
+
+	// Edge should exist
+	recall := call(t, h, "recall", map[string]any{"id": sourceID})
+	mustNotError(t, recall)
+	var nwe struct {
+		Edges []struct {
+			FromMemory string `json:"from_memory"`
+			ToMemory   string `json:"to_memory"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, recall)), &nwe)
+	found := false
+	for _, e := range nwe.Edges {
+		if (e.FromMemory == sourceID && e.ToMemory == targetID) || (e.FromMemory == targetID && e.ToMemory == sourceID) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected edge between %q and %q; got edges: %+v", sourceID, targetID, nwe.Edges)
+	}
+	if len(resp.Nodes[0].SkippedConnections) != 0 {
+		t.Errorf("expected no skipped_connections for valid ID, got %d", len(resp.Nodes[0].SkippedConnections))
+	}
+}
+
+func TestBatchRemember_RelatedToObject(t *testing.T) {
+	_, h := newEnv(t)
+	targetID := addNode(t, h, "Batch Cause", "proj", nil)
+
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{
+				"label":  "Batch Effect",
+				"domain": "proj",
+				"related_to": []map[string]any{
+					{"id": targetID, "relationship": "caused_by"},
+				},
+			},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Node struct {
+				ID string `json:"id"`
+			} `json:"node"`
+		} `json:"nodes"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	sourceID := resp.Nodes[0].Node.ID
+
+	recall := call(t, h, "recall", map[string]any{"id": sourceID})
+	mustNotError(t, recall)
+	var nwe struct {
+		Edges []struct {
+			FromMemory   string `json:"from_memory"`
+			ToMemory     string `json:"to_memory"`
+			Relationship string `json:"relationship"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, recall)), &nwe)
+	found := false
+	for _, e := range nwe.Edges {
+		if e.Relationship == "caused_by" &&
+			((e.FromMemory == sourceID && e.ToMemory == targetID) ||
+				(e.FromMemory == targetID && e.ToMemory == sourceID)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected caused_by edge between %q and %q; got: %+v", sourceID, targetID, nwe.Edges)
+	}
+}
+
+func TestBatchRemember_RelatedToArray(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "Batch Array Target A", "proj", nil)
+	idB := addNode(t, h, "Batch Array Target B", "proj", nil)
+
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{
+				"label":  "Batch Array Source",
+				"domain": "proj",
+				"related_to": []any{
+					idA,
+					map[string]any{"id": idB, "relationship": "depends_on"},
+				},
+			},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Node struct {
+				ID string `json:"id"`
+			} `json:"node"`
+		} `json:"nodes"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	sourceID := resp.Nodes[0].Node.ID
+
+	recall := call(t, h, "recall", map[string]any{"id": sourceID})
+	mustNotError(t, recall)
+	var nwe struct {
+		Edges []struct {
+			FromMemory   string `json:"from_memory"`
+			ToMemory     string `json:"to_memory"`
+			Relationship string `json:"relationship"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, recall)), &nwe)
+
+	relByTarget := map[string]string{}
+	for _, e := range nwe.Edges {
+		if e.FromMemory == sourceID {
+			relByTarget[e.ToMemory] = e.Relationship
+		} else if e.ToMemory == sourceID {
+			relByTarget[e.FromMemory] = e.Relationship
+		}
+	}
+	if relByTarget[idA] != "connects_to" {
+		t.Errorf("expected connects_to to idA, got %q", relByTarget[idA])
+	}
+	if relByTarget[idB] != "depends_on" {
+		t.Errorf("expected depends_on to idB, got %q", relByTarget[idB])
+	}
+}
+
+func TestBatchRemember_RelatedToAbsent_NoEdge(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{"label": "Batch No Links", "domain": "proj"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Node struct {
+				ID string `json:"id"`
+			} `json:"node"`
+		} `json:"nodes"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	sourceID := resp.Nodes[0].Node.ID
+
+	recall := call(t, h, "recall", map[string]any{"id": sourceID})
+	mustNotError(t, recall)
+	var nwe struct {
+		Edges []struct{} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, recall)), &nwe)
+	if len(nwe.Edges) != 0 {
+		t.Errorf("expected no edges, got %d", len(nwe.Edges))
+	}
+}
+
+func TestBatchRemember_OrphanWarning_AbsentWhenRelatedToUsed(t *testing.T) {
+	_, h := newEnv(t)
+	targetID := addNode(t, h, "Batch Orphan Target", "proj", nil)
+
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{
+				"label":      "Batch Orphan Source",
+				"domain":     "proj",
+				"related_to": []string{targetID},
+			},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		OrphanWarning string `json:"orphan_warning"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	if resp.OrphanWarning != "" {
+		t.Errorf("expected no orphan_warning when related_to used, got %q", resp.OrphanWarning)
+	}
+}
+
+func TestBatchRemember_RelatedToInvalidId_ReportedNotSilent(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{
+				"label":      "Batch Bad Link",
+				"domain":     "proj",
+				"related_to": []string{"bad-batch-id-xxxx"},
+			},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Node struct {
+				ID string `json:"id"`
+			} `json:"node"`
+			SkippedConnections []struct {
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			} `json:"skipped_connections"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse batch response: %v", err)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected node in response")
+	}
+	sc := resp.Nodes[0].SkippedConnections
+	if len(sc) == 0 {
+		t.Fatal("expected skipped_connections in batch item, got none")
+	}
+	if sc[0].ID != "bad-batch-id-xxxx" {
+		t.Errorf("expected skipped ID %q, got %q", "bad-batch-id-xxxx", sc[0].ID)
+	}
+	if sc[0].Reason == "" {
+		t.Error("expected non-empty reason in skipped_connections")
+	}
+}
+
+func TestBatchRemember_RelatedToPartialSuccess(t *testing.T) {
+	_, h := newEnv(t)
+	validID := addNode(t, h, "Partial Valid Target", "proj", nil)
+
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{
+				"label":  "Partial Source",
+				"domain": "proj",
+				"related_to": []any{
+					validID,
+					"ghost-partial-id-xxxx",
+				},
+			},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Node struct {
+				ID string `json:"id"`
+			} `json:"node"`
+			SkippedConnections []struct {
+				ID string `json:"id"`
+			} `json:"skipped_connections"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	sourceID := resp.Nodes[0].Node.ID
+
+	// Valid edge should exist
+	recall := call(t, h, "recall", map[string]any{"id": sourceID})
+	var nwe struct {
+		Edges []struct {
+			FromMemory string `json:"from_memory"`
+			ToMemory   string `json:"to_memory"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, recall)), &nwe)
+	found := false
+	for _, e := range nwe.Edges {
+		if (e.FromMemory == sourceID && e.ToMemory == validID) || (e.FromMemory == validID && e.ToMemory == sourceID) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected valid edge to %q to exist", validID)
+	}
+
+	// Only invalid ID in skipped_connections
+	sc := resp.Nodes[0].SkippedConnections
+	if len(sc) != 1 {
+		t.Fatalf("expected exactly 1 skipped connection, got %d: %+v", len(sc), sc)
+	}
+	if sc[0].ID != "ghost-partial-id-xxxx" {
+		t.Errorf("expected skipped ID %q, got %q", "ghost-partial-id-xxxx", sc[0].ID)
+	}
+}
 
 func TestAddNodes_WithTags_Searchable(t *testing.T) {
 	_, h := newEnv(t)
