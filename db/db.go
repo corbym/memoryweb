@@ -1234,6 +1234,17 @@ func (s *Store) FindConnections(fromTerm, toTerm, domain string) (*ConnectionRes
 	return &ConnectionResult{From: from, To: to, Edges: edges}, nil
 }
 
+// CountNodes returns the number of live (non-archived) nodes in a domain.
+func (s *Store) CountNodes(domain string) (int, error) {
+	domain = s.ResolveAlias(domain)
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`,
+		domain,
+	).Scan(&count)
+	return count, err
+}
+
 func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 	var rows *sql.Rows

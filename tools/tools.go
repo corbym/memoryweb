@@ -254,7 +254,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Return all known memories for a domain structured for synthesis. Response includes: nodes (all live memories), recent (most recently changed), and declared_spine (key decisions in chronological order — nodes with occurred_at set). Synthesise into concise prose covering current state, blockers, recent decisions, and open questions; weigh the declared_spine heavily as it represents explicitly curated significance. Each entry includes its id so you can pass it directly to update or connect without a second lookup. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
+			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -829,28 +829,34 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	// Step 1: fetch all live nodes for the domain.
-	sr, err := h.store.SearchNodes("", a.Domain, 100)
+	// Step 1: count live nodes for the domain (for the total_nodes field and empty check).
+	totalNodes, err := h.store.CountNodes(a.Domain)
 	if err != nil {
 		return nil, err
 	}
-	if len(sr.Nodes) == 0 {
+	if totalNodes == 0 {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "Nothing has been filed for this domain yet."}}}, nil
 	}
 
-	// Step 2: fetch recent changes.
-	recent, err := h.store.RecentChanges(a.Domain, 50)
+	// Step 2: fetch significant nodes (structurally load-bearing, recency-weighted inbound degree).
+	sigResult, err := h.store.GetSignificance(a.Domain, 15, 90)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 3: fetch declared decision spine (nodes with occurred_at set, chronological).
+	// Step 3: fetch recent changes — capped at 10.
+	recent, err := h.store.RecentChanges(a.Domain, 10)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 4: fetch declared decision spine (nodes with occurred_at set, chronological).
 	spineNodes, err := h.store.Timeline(a.Domain, true, nil, nil, nil, 20)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 4: build structured response for the model to synthesise.
+	// Step 5: build structured response for the model to synthesise.
 	type nodeEntry struct {
 		ID          string  `json:"id"`
 		Label       string  `json:"label"`
@@ -858,7 +864,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		WhyMatters  string  `json:"why_matters,omitempty"`
 		OccurredAt  *string `json:"occurred_at,omitempty"`
 	}
-	toEntry := func(n db.NodeResult) nodeEntry {
+	toEntry := func(n db.Node) nodeEntry {
 		e := nodeEntry{
 			ID:          n.ID,
 			Label:       n.Label,
@@ -872,33 +878,41 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return e
 	}
 
-	nodes := make([]nodeEntry, len(sr.Nodes))
-	for i, n := range sr.Nodes {
-		nodes[i] = toEntry(n)
+	type scoredEntry struct {
+		nodeEntry
+		ImportanceScore float64 `json:"importance_score"`
 	}
+
 	recentEntries := make([]nodeEntry, len(recent))
 	for i, n := range recent {
-		recentEntries[i] = toEntry(db.NodeResult{Node: n})
+		recentEntries[i] = toEntry(n)
 	}
 	spineEntries := make([]nodeEntry, len(spineNodes))
 	for i, n := range spineNodes {
-		spineEntries[i] = toEntry(db.NodeResult{Node: n})
+		spineEntries[i] = toEntry(n)
+	}
+	sigEntries := make([]scoredEntry, len(sigResult.Structural))
+	for i, sn := range sigResult.Structural {
+		sigEntries[i] = scoredEntry{
+			nodeEntry:       toEntry(sn.Node),
+			ImportanceScore: sn.ImportanceScore,
+		}
 	}
 
 	resp := struct {
 		SummaryHint   string      `json:"summary_hint"`
 		ServerVersion string      `json:"server_version"`
 		TotalNodes    int         `json:"total_nodes"`
-		Nodes         interface{} `json:"nodes"`
-		Recent        interface{} `json:"recent"`
 		DeclaredSpine interface{} `json:"declared_spine"`
+		Significant   interface{} `json:"significant"`
+		Recent        interface{} `json:"recent"`
 	}{
-		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. Plain prose, no bullet points.",
+		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. significant lists structurally load-bearing memories right now. recent shows where work was last happening. Plain prose, no bullet points.",
 		ServerVersion: h.version,
-		TotalNodes:    len(sr.Nodes),
-		Nodes:         nodes,
-		Recent:        recentEntries,
+		TotalNodes:    totalNodes,
 		DeclaredSpine: spineEntries,
+		Significant:   sigEntries,
+		Recent:        recentEntries,
 	}
 
 	b, _ := json.MarshalIndent(resp, "", "  ")

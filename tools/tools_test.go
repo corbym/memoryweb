@@ -261,7 +261,7 @@ func TestListTools_DescriptionsPresent(t *testing.T) {
 		"restore":             "Restore an archived memory so it surfaces in search again. This reverses forget.",
 		"audit":               "Inspect the health of knowledge",
 		"forget_all":          "Archive multiple memories in a single atomic transaction",
-		"orient":              "Return all known memories for a domain structured for synthesis",
+		"orient":              "Call this at the start of every session",
 		"revise":              "Update one or more existing live memories",
 		"suggest_connections": "Given a memory ID, return up to 5 candidate connections",
 		"domains":             "Return all known domains and registered aliases",
@@ -2484,6 +2484,143 @@ func TestOrient_DeclaredSpineExcludesArchived(t *testing.T) {
 	}
 }
 
+// ── orient: significant section + no all_nodes ───────────────────────────────
+
+// TestOrient_HasSignificantSection: orient response must include a `significant`
+// array. It may be empty when no edges exist in the domain.
+func TestOrient_HasSignificantSection(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Lone node", "orient-sig", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-sig"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Significant *json.RawMessage `json:"significant"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.Significant == nil {
+		t.Error("significant field must be present in orient response (even if empty)")
+	}
+}
+
+// TestOrient_SignificantRankedByImportance: the node with more inbound edges from
+// recent nodes must appear first in the significant section.
+func TestOrient_SignificantRankedByImportance(t *testing.T) {
+	_, h := newEnv(t)
+	popularID := addNode(t, h, "Popular node", "orient-sig-rank", nil)
+	nicheID := addNode(t, h, "Niche node", "orient-sig-rank", nil)
+
+	// Three linkers → popular
+	for _, label := range []string{"Linker A", "Linker B", "Linker C"} {
+		linkerID := addNode(t, h, label, "orient-sig-rank", nil)
+		call(t, h, "connect", map[string]any{
+			"from_memory":  linkerID,
+			"to_memory":    popularID,
+			"relationship": "connects_to",
+			"narrative":    "links to popular",
+		})
+	}
+	// One linker → niche
+	nicheLinkerID := addNode(t, h, "Niche linker", "orient-sig-rank", nil)
+	call(t, h, "connect", map[string]any{
+		"from_memory":  nicheLinkerID,
+		"to_memory":    nicheID,
+		"relationship": "connects_to",
+		"narrative":    "links to niche",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-sig-rank"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Significant []struct {
+			ID string `json:"id"`
+		} `json:"significant"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.Significant) < 2 {
+		t.Fatalf("significant: want at least 2 entries, got %d", len(resp.Significant))
+	}
+	if resp.Significant[0].ID != popularID {
+		t.Errorf("significant[0]: got %q, want popular node %q", resp.Significant[0].ID, popularID)
+	}
+}
+
+// TestOrient_NoAllNodes: orient response must NOT include a top-level `nodes`
+// (all_nodes dump) field. The response is the three-section design only.
+func TestOrient_NoAllNodes(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Test node", "orient-no-all", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-no-all"})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if _, ok := raw["nodes"]; ok {
+		t.Error("orient response must not contain a top-level `nodes` field (all_nodes dump removed)")
+	}
+}
+
+// TestOrient_DescriptionImperativeFirst: orient description must not start with
+// "The " or "This " — it must open with an imperative verb.
+func TestOrient_DescriptionImperativeFirst(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "orient" {
+			if strings.HasPrefix(td.Description, "The ") || strings.HasPrefix(td.Description, "This ") {
+				t.Errorf("orient description starts with %q — must open with an imperative verb",
+					td.Description[:min(50, len(td.Description))])
+			}
+			return
+		}
+	}
+	t.Error("orient tool not found in ListTools response")
+}
+
+// TestOrient_RecentCappedAtTen: the recent section must contain at most 10 entries
+// even when more than 10 live nodes exist in the domain.
+func TestOrient_RecentCappedAtTen(t *testing.T) {
+	_, h := newEnv(t)
+	for i := 0; i < 15; i++ {
+		addNode(t, h, fmt.Sprintf("Node %02d", i), "orient-recent-cap", nil)
+	}
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-recent-cap"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Recent []json.RawMessage `json:"recent"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.Recent) > 10 {
+		t.Errorf("recent: got %d entries, want at most 10", len(resp.Recent))
+	}
+}
+
 // ── add_node tags ─────────────────────────────────────────────────────────────
 
 func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
@@ -3751,9 +3888,10 @@ func TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings(t *testing.T) {
 	}
 }
 
-// TestSummariseDomain_IncludesNodeIDs: each entry in nodes and recent must
-// carry an "id" field so the agent can pass it directly to update_node or
-// add_edge without a second lookup.
+// TestSummariseDomain_IncludesNodeIDs: each entry in recent must carry an "id"
+// field so the agent can pass it directly to revise or connect without a second
+// lookup. (The all_nodes dump was removed in the orient redesign; IDs are
+// available via recent, significant, and declared_spine.)
 func TestSummariseDomain_IncludesNodeIDs(t *testing.T) {
 	_, h := newEnv(t)
 	id1 := addNode(t, h, "ID check node alpha", "id-test-domain", map[string]any{
@@ -3768,37 +3906,34 @@ func TestSummariseDomain_IncludesNodeIDs(t *testing.T) {
 	mustNotError(t, tr)
 	body := text(t, tr)
 
-	// Parse the structured response.
+	// Parse the structured response — IDs must appear in recent.
 	var resp struct {
-		Nodes []struct {
+		Recent []struct {
 			ID    string `json:"id"`
 			Label string `json:"label"`
-		} `json:"nodes"`
-		Recent []struct {
-			ID string `json:"id"`
 		} `json:"recent"`
 	}
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
 		t.Fatalf("parse summarise_domain response: %v\nbody: %s", err, body)
 	}
 
-	// Every node entry must have a non-empty ID.
-	for _, n := range resp.Nodes {
+	// Every recent entry must have a non-empty ID.
+	for _, n := range resp.Recent {
 		if n.ID == "" {
-			t.Errorf("node %q has empty id in summarise_domain response", n.Label)
+			t.Errorf("recent entry %q has empty id in orient response", n.Label)
 		}
 	}
 
-	// Specifically, both filed IDs must appear.
+	// Both filed IDs must appear in recent (freshly filed, no edges).
 	var gotIDs []string
-	for _, n := range resp.Nodes {
+	for _, n := range resp.Recent {
 		gotIDs = append(gotIDs, n.ID)
 	}
 	if !contains(gotIDs, id1) {
-		t.Errorf("id1 (%s) not found in summarise_domain nodes; got %v", id1, gotIDs)
+		t.Errorf("id1 (%s) not found in orient recent; got %v", id1, gotIDs)
 	}
 	if !contains(gotIDs, id2) {
-		t.Errorf("id2 (%s) not found in summarise_domain nodes; got %v", id2, gotIDs)
+		t.Errorf("id2 (%s) not found in orient recent; got %v", id2, gotIDs)
 	}
 }
 
