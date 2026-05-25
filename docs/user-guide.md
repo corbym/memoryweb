@@ -193,6 +193,8 @@ After saving, you can verify what was stored:
 | Save a bug or fix | `"Remember this bug and its fix. Link it to the affected component."` |
 | Link two memories | `"Link those two — they're related because <reason>."` |
 | Review stale knowledge | `"Look through memory for <project> and flag anything that looks outdated."` |
+| See what's most important | `"What's most significant in memory for <project>? Show me the top decisions and most-referenced concepts."` |
+| Visualise connections | `"Draw a map of the connections in the <project> domain."` |
 | End-of-session saving (Desktop) | `"Before we finish — save anything significant from this session to memory."` |
 
 ---
@@ -261,6 +263,61 @@ If something was added to the timeline with the wrong date:
 If something was added to the timeline that shouldn't have been at all, the best option is to archive it and re-save it without placing it on the timeline:
 
 > "Archive `<memory label>` — it shouldn't be on the timeline. I'll tell you what to save instead."
+
+---
+
+## Significance — what matters most in a domain
+
+### What significance analysis does
+
+The `significance` tool gives you a dual-signal view of what is most important in a domain:
+
+- **Declared** — decisions you (or the agent) have explicitly marked as significant by placing them on the timeline. These are curated.
+- **Structural** — nodes that other nodes link to most frequently, weighted by how recently those links were created. High structural score = many current threads depend on this concept.
+- **Uncurated** — structurally important nodes that haven't been declared significant yet. These are curation candidates: the graph thinks they matter, but they haven't been formally acknowledged.
+- **Potentially stale** — nodes that were declared significant but now have low structural score. Declared important once, but nothing current seems to depend on them anymore.
+
+The most actionable gap is between uncurated and potentially stale: things the graph thinks are important but you haven't curated, and things you once curated but the graph has moved on from.
+
+### When to use it
+
+- When starting a new phase of a project: find out what the current graph thinks is central before diving in
+- When curating the timeline: use uncurated results to find missed significant decisions
+- When cleaning up: use potentially_stale to find decisions that may no longer be relevant
+
+### How to ask for it
+
+> "What's most significant in memory for `<project>`? Give me the top decisions and the most-referenced concepts."
+
+> "Which memories in `<project>` are structurally important but haven't been marked as significant yet?"
+
+> "Are there any decisions marked as important that seem to have become irrelevant? Check memory for `<project>`."
+
+---
+
+## Visualising the graph
+
+### Domain map
+
+To see all the connections in a project as a diagram:
+
+> "Draw a map of the connections in the `<project>` domain."
+
+> "Show me the graph for `<project>` as a diagram."
+
+The agent will output a Mermaid flowchart. In Claude Code and Copilot, this renders as a visual diagram in the response. In Claude Desktop it appears as a code block you can copy into a Mermaid viewer.
+
+If the domain is large, the diagram will be truncated to the most recent nodes. The response includes the total node and edge count so you know how much is visible.
+
+### Neighbourhood view
+
+To see how a specific concept connects to everything around it:
+
+> "Show me a diagram of everything connected to `<concept>`."
+
+> "Draw the neighbourhood of `<memory label>` — what links to and from it."
+
+This gives a focused view of one node and its immediate connections, regardless of domain size.
 
 ---
 
