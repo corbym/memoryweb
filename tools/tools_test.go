@@ -15,6 +15,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/corbym/memoryweb/db"
+	"github.com/corbym/memoryweb/stats"
 	"github.com/corbym/memoryweb/tools"
 )
 
@@ -339,6 +340,33 @@ func TestListTools_NoStaleToolReferences(t *testing.T) {
 				t.Errorf("tool %q: description references removed tool %q (use %s instead)",
 					td.Name, removed.name, removed.replacedBy)
 			}
+		}
+	}
+}
+
+// TestListTools_AllToolsHaveExplicitStatsKind asserts that every tool returned
+// by ListTools has an explicit entry in the stats toolKinds table. Tools absent
+// from that table silently fall through as kindRetrieval via zero-value map
+// lookup, producing incorrect WKD scores. Add new tools to stats.toolKinds
+// (and confirm the kind with the test) whenever this test fails.
+func TestListTools_AllToolsHaveExplicitStatsKind(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if !stats.HasKind(td.Name) {
+			t.Errorf("tool %q has no explicit entry in stats.toolKinds — add it with the correct kind", td.Name)
 		}
 	}
 }

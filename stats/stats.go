@@ -36,15 +36,27 @@ var toolKinds = map[string]toolKind{
 	"search": kindRetrieval, "recall": kindRetrieval, "recent": kindRetrieval,
 	"orient": kindRetrieval, "why_connected": kindRetrieval, "trace": kindRetrieval,
 	"history": kindRetrieval, "disconnected": kindRetrieval,
-	"remember": kindWrite, "remember_all": kindWrite,
+	"significance": kindRetrieval,
+	"remember":     kindWrite, "remember_all": kindWrite,
 	"connect": kindWrite, "connect_all": kindWrite,
 	"revise": kindWrite, "revise_all": kindWrite,
 	"forget": kindWrite, "restore": kindWrite, "merge": kindWrite,
+	"forget_all":          kindWrite,
 	"suggest_connections": kindMaint, "list_domains": kindMaint,
 	"alias_domain": kindMaint, "list_aliases": kindMaint,
 	"remove_alias": kindMaint, "resolve_domain": kindMaint,
 	"forgotten": kindMaint, "whats_stale": kindMaint,
 	"disconnect": kindMaint, "visualise": kindMaint,
+	"audit": kindMaint, "rename_domain": kindMaint,
+	"alias": kindMaint, "domains": kindMaint,
+}
+
+// HasKind reports whether tool has an explicit entry in the WKD kind table.
+// Tools absent from the table silently fall through as kindRetrieval via
+// zero-value map lookup. Use this in tests to catch that case.
+func HasKind(tool string) bool {
+	_, ok := toolKinds[tool]
+	return ok
 }
 
 // stale type indices for byType field.
