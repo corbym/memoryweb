@@ -197,6 +197,13 @@ func (r *Recorder) Record(tool string, argsRaw json.RawMessage, resultText strin
 			cr.edgesFiled = 1
 		case "whats_stale":
 			cr.staleTotal, cr.staleByType, cr.dupEdges = parseWhatsStaleResult(resultText)
+		case "audit":
+			var a struct {
+				Mode string `json:"mode"`
+			}
+			if json.Unmarshal(argsRaw, &a) == nil && a.Mode == "stale" {
+				cr.staleTotal, cr.staleByType, cr.dupEdges = parseWhatsStaleResult(resultText)
+			}
 		}
 	}
 	r.calls = append(r.calls, cr)

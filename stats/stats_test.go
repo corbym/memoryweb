@@ -246,3 +246,52 @@ func TestRecord_WhatsStale_ParsesCandidates(t *testing.T) {
 		t.Errorf("dup_edge_3_5 should be 1, got %v", sd["dup_edge_3_5"])
 	}
 }
+
+func TestRecord_AuditStaleMode_ParsesCandidates(t *testing.T) {
+	dir := t.TempDir()
+	r := stats.New(filepath.Join(dir, "stats.log"), filepath.Join(dir, "stats.jsonl"))
+
+	// audit(mode=stale) returns the same DriftCandidate JSON as whats_stale did.
+	result := `[
+		{"node":{"id":"a"},"reason":"possible duplicate of newer node","edge_count":3},
+		{"node":{"id":"b"},"reason":"transient node older than 7 days","edge_count":0},
+		{"node":{"id":"c"},"reason":"explicitly marked as contradicting each other","edge_count":7}
+	]`
+	call(r, "audit", map[string]any{"mode": "stale"}, result, false)
+
+	summary, err := r.Flush()
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	if !strings.Contains(summary, "Stale checks") {
+		t.Errorf("summary should contain Stale checks line; got:\n%s", summary)
+	}
+	if !strings.Contains(summary, "3 candidate") {
+		t.Errorf("summary should report 3 candidates; got:\n%s", summary)
+	}
+	if !strings.Contains(summary, "1 duplicate") {
+		t.Errorf("summary should break down type 'duplicate'; got:\n%s", summary)
+	}
+	if !strings.Contains(summary, "Dup edges") {
+		t.Errorf("summary should contain Dup edges line; got:\n%s", summary)
+	}
+	if !strings.Contains(summary, "1x(3-5)") {
+		t.Errorf("summary should show dup candidate with 3-5 edges; got:\n%s", summary)
+	}
+
+	jsonContent, _ := os.ReadFile(filepath.Join(dir, "stats.jsonl"))
+	var sd map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(jsonContent), &sd); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	if sc, ok := sd["stale_checks"].(float64); !ok || int(sc) != 1 {
+		t.Errorf("stale_checks should be 1, got %v", sd["stale_checks"])
+	}
+	if sc, ok := sd["stale_candidates"].(float64); !ok || int(sc) != 3 {
+		t.Errorf("stale_candidates should be 3, got %v", sd["stale_candidates"])
+	}
+	if v, ok := sd["dup_edge_3_5"].(float64); !ok || int(v) != 1 {
+		t.Errorf("dup_edge_3_5 should be 1, got %v", sd["dup_edge_3_5"])
+	}
+}
