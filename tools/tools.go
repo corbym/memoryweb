@@ -123,13 +123,14 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "search",
-			Description: "Search memories by text across label, description, why_matters, and tags. Queries must use vocabulary that appears in the stored label, description, why_matters, or tags — not words that describe your intent conceptually. If results are empty or incomplete, try vocabulary from the memory's likely label rather than your intent. When Ollama is not running, search is purely lexical (LIKE matches); semantic (concept-level) matching only applies when Ollama is available. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. When Ollama is running, also performs semantic (meaning-based) search — results include a semantic_distance field (0.0–1.0, lower = closer match). Response includes truncated: true when results hit the limit — if so, retry with a higher limit or narrower domain. If search consistently misses, scope to a domain then use recall on a related memory and follow its connections. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
+			Description: "Search memories by text across label, description, why_matters, and tags. Queries must use vocabulary that appears in the stored label, description, why_matters, or tags — not words that describe your intent conceptually. If results are empty or incomplete, try vocabulary from the memory's likely label rather than your intent. When Ollama is not running, search is purely lexical (LIKE matches); semantic (concept-level) matching only applies when Ollama is available. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. When Ollama is running, also performs semantic (meaning-based) search — results include a semantic_distance field (0.0–1.0, lower = closer match). Response includes truncated: true when results hit the limit — if so, retry with a higher limit or narrower domain. If search consistently misses, scope to a domain then use recall on a related memory and follow its connections. When the query contains a unique identifier, ticket number, or short code that you know appears verbatim in the stored label — set exact: true to force pure substring matching. Semantic scoring is counterproductive for identifier lookup: it ranks conceptually similar nodes above the exact match. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"query":  {Type: "string", Description: "Terms to search for. Must use vocabulary that appears in the stored label, description, why_matters, or tags. Conceptual paraphrases that don't share vocabulary with the stored content will not match."},
+					"query":  {Type: "string", Description: "Terms to search for. Must use vocabulary that appears in the stored label, description, why_matters, or tags. Conceptual paraphrases that don't share vocabulary with the stored content will not match. For unique identifiers or ticket numbers known to appear verbatim, also set exact: true."},
 					"domain": {Type: "string", Description: "Optional domain to scope search"},
 					"limit":  {Type: "integer", Description: "Max results (default 10). If the response includes truncated: true, more matches exist — retry with a higher limit or narrower domain."},
+					"exact":  {Type: "boolean", Description: "When true, bypass semantic ranking and use pure substring (LIKE) matching only. Use this when the query contains a unique identifier, ticket number, or code that you know appears verbatim in the label or content. Results will not include a semantic_distance field."},
 				},
 				Required: []string{"query"},
 			},
@@ -546,6 +547,7 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		Query  string `json:"query"`
 		Domain string `json:"domain"`
 		Limit  int    `json:"limit"`
+		Exact  bool   `json:"exact"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -556,7 +558,13 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 	if a.Limit > 500 {
 		a.Limit = 500
 	}
-	nodes, err := h.store.SearchNodes(a.Query, a.Domain, a.Limit)
+	var nodes *db.SearchResult
+	var err error
+	if a.Exact {
+		nodes, err = h.store.SearchNodesExact(a.Query, a.Domain, a.Limit)
+	} else {
+		nodes, err = h.store.SearchNodes(a.Query, a.Domain, a.Limit)
+	}
 	if err != nil {
 		return nil, err
 	}

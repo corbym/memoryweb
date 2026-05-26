@@ -740,6 +740,16 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 	return s.searchNodesLike(query, domain, limit)
 }
 
+// SearchNodesExact performs a pure substring (LIKE) search, bypassing semantic
+// ranking entirely. Use this when the query contains a unique identifier, ticket
+// number, or short code that is known to appear verbatim in the stored content.
+// Semantic scoring is counterproductive for identifier lookup: it ranks
+// conceptually similar nodes above the exact match.
+func (s *Store) SearchNodesExact(query, domain string, limit int) (*SearchResult, error) {
+	domain = s.ResolveAlias(domain)
+	return s.searchNodesLike(query, domain, limit)
+}
+
 // semanticDistanceThreshold is the maximum cosine distance for a node to be
 // considered a semantic match. vec_distance_cosine returns values in [0, 2];
 // 0 = identical, 2 = opposite. Results beyond this threshold are discarded

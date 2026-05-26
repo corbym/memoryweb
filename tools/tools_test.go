@@ -3836,6 +3836,111 @@ func TestSearchNodes_MultiWordFallback_NoSpuriousResults(t *testing.T) {
 	}
 }
 
+// ── exact search (LIKE bypass) ────────────────────────────────────────────────
+
+// TestSearch_ExactTrue_FindsByLabel: exact:true finds a node whose label
+// contains the query as a verbatim substring.
+func TestSearch_ExactTrue_FindsByLabel(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "PROJ-231 conflict minerals compliance", "sedex", nil)
+	// Add a second node in the same semantic neighbourhood to confirm it is NOT
+	// returned ahead of the exact match.
+	addNode(t, h, "PROJ-228 supply chain audit", "sedex", nil)
+
+	tr := call(t, h, "search", map[string]any{
+		"query":  "PROJ-231",
+		"domain": "sedex",
+		"exact":  true,
+	})
+	mustNotError(t, tr)
+	ids := searchIDs(t, tr)
+	if !contains(ids, id) {
+		t.Errorf("exact search did not return the matching node; got %v", ids)
+	}
+	if len(ids) != 1 {
+		t.Errorf("exact search returned extra nodes; got %d: %v", len(ids), ids)
+	}
+}
+
+// TestSearch_ExactTrue_NoSemanticDistance: results from exact:true must not
+// carry a semantic_distance field (they come from the LIKE path, not the
+// embedding path).
+func TestSearch_ExactTrue_NoSemanticDistance(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "PROJ-231 conflict minerals compliance", "sedex", nil)
+
+	tr := call(t, h, "search", map[string]any{
+		"query": "PROJ-231",
+		"exact": true,
+	})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if strings.Contains(body, "semantic_distance") {
+		t.Error("exact:true results must not include semantic_distance field")
+	}
+}
+
+// TestSearch_ExactFalse_BehavesLikeDefault: explicit exact:false is identical
+// to omitting the field.
+func TestSearch_ExactFalse_BehavesLikeDefault(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "PROJ-231 conflict minerals compliance", "sedex", nil)
+
+	tr := call(t, h, "search", map[string]any{
+		"query":  "PROJ-231",
+		"domain": "sedex",
+		"exact":  false,
+	})
+	mustNotError(t, tr)
+	if !contains(searchIDs(t, tr), id) {
+		t.Error("exact:false should still find the node via LIKE")
+	}
+}
+
+// TestSearch_ExactTrue_DescriptionHasGuidance: the search tool description must
+// mention exact and its purpose so agents know when to use it.
+func TestSearch_ExactTrue_DescriptionHasGuidance(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "search" {
+			continue
+		}
+		for _, phrase := range []string{"exact: true", "identifier", "ticket"} {
+			if !strings.Contains(td.Description, phrase) {
+				t.Errorf("search tool description missing expected phrase %q", phrase)
+			}
+		}
+		exactDesc := td.InputSchema.Properties["exact"].Description
+		if exactDesc == "" {
+			t.Error("search tool missing exact property in schema")
+		}
+		return
+	}
+	t.Fatal("search tool not found in ListTools")
+}
+
 // ── semantic search tests (require Ollama + snowflake-arctic-embed) ───────────
 //
 // These tests skip automatically when Ollama is not running. They verify that
