@@ -261,7 +261,7 @@ func TestListTools_DescriptionsPresent(t *testing.T) {
 		"forget":              "Always provide a reason",
 		"restore":             "Restore an archived memory so it surfaces in search again. This reverses forget.",
 		"audit":               "Inspect the health of knowledge",
-		"forget_all":          "Archive multiple memories in a single atomic transaction",
+		"forget_all":          "Batch archive",
 		"orient":              "Call this at the start of every session",
 		"revise":              "Update one or more existing live memories",
 		"suggest_connections": "Given a memory ID, return up to 5 candidate connections",
@@ -5614,4 +5614,99 @@ func TestSignificance_DefaultsApplied(t *testing.T) {
 	if len(resp.Structural) > 10 {
 		t.Errorf("default limit=10: structural should have at most 10 entries, got %d", len(resp.Structural))
 	}
+}
+
+// ── forget / forget_all discoverability ──────────────────────────────────────
+
+// TestListTools_ForgetAllLeadsWithUseCase: forget_all description must open with
+// "Batch archive" so agents reach for it when archiving multiple nodes.
+func TestListTools_ForgetAllLeadsWithUseCase(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "forget_all" {
+			if !strings.HasPrefix(td.Description, "Batch archive") {
+				t.Errorf("forget_all description must start with \"Batch archive\", got: %.60s", td.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("forget_all tool not found in ListTools")
+}
+
+// TestListTools_ForgetCrossReferencesForgetAll: forget description must mention
+// forget_all so agents discover the batch path when archiving multiple nodes.
+func TestListTools_ForgetCrossReferencesForgetAll(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "forget" {
+			if !strings.Contains(td.Description, "forget_all") {
+				t.Error("forget description must contain a cross-reference to forget_all")
+			}
+			return
+		}
+	}
+	t.Fatal("forget tool not found in ListTools")
+}
+
+// ── remember domain inference ─────────────────────────────────────────────────
+
+// TestListTools_RememberDescriptionContainsDomainInference: remember description
+// must instruct agents to infer domain from search results and prefer existing
+// domains over creating new ones.
+func TestListTools_RememberDescriptionContainsDomainInference(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "remember" {
+			if !strings.Contains(td.Description, "infer the domain") {
+				t.Error(`remember description missing "infer the domain" guidance`)
+			}
+			if !strings.Contains(td.Description, "Prefer existing domains") {
+				t.Error(`remember description missing "Prefer existing domains" guidance`)
+			}
+			return
+		}
+	}
+	t.Fatal("remember tool not found in ListTools")
 }
