@@ -1,5 +1,7 @@
 # significance: tags filter
 
+**Status: COMPLETE**
+
 **Memoryweb-meta node:** `significance-tags-filter-deferre-6838a8be`
 
 **Prior art:** `history` tool tags filter — same WHERE clause pattern, same property

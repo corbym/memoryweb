@@ -3044,23 +3044,29 @@ type SignificanceResult struct {
 //   - uncurated:         structural top-N nodes that have no occurred_at.
 //   - potentially_stale: declared nodes whose ID does not appear in structural top-N.
 //
+// When tags is non-empty, only nodes matching at least one tag (whole-word match)
+// are included in each section. Callers that pass nil or []string{} get full domain behaviour.
+//
 // Every call writes rows to significance_log (one per returned node in
 // structural, uncurated, potentially_stale) so the decay function can be
 // validated over time.
-func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int) (SignificanceResult, error) {
+func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int, tags []string) (SignificanceResult, error) {
 	callID := shortID()
 	var res SignificanceResult
 	res.CallID = callID
 
 	// ── declared ─────────────────────────────────────────────────────────────
-	declaredRows, err := s.db.Query(`
-		SELECT id, label, description, why_matters, tags, domain,
+	declaredConds := []string{"domain = ?", "occurred_at IS NOT NULL", "archived_at IS NULL"}
+	declaredArgs := []interface{}{domain}
+	for _, tag := range tags {
+		declaredConds = append(declaredConds,
+			"(tags = ? OR tags LIKE ? || ' %' OR tags LIKE '% ' || ? OR tags LIKE '% ' || ? || ' %')")
+		declaredArgs = append(declaredArgs, tag, tag, tag, tag)
+	}
+	declaredQ := `SELECT id, label, description, why_matters, tags, domain,
 		       created_at, updated_at, occurred_at, archived_at, transient
-		FROM nodes
-		WHERE domain = ?
-		  AND occurred_at IS NOT NULL
-		  AND archived_at IS NULL
-		ORDER BY occurred_at ASC`, domain)
+		FROM nodes WHERE ` + strings.Join(declaredConds, " AND ") + ` ORDER BY occurred_at ASC`
+	declaredRows, err := s.db.Query(declaredQ, declaredArgs...)
 	if err != nil {
 		return res, fmt.Errorf("GetSignificance declared: %w", err)
 	}
@@ -3080,20 +3086,30 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int)
 	}
 
 	// ── structural ────────────────────────────────────────────────────────────
-	structRows, err := s.db.Query(`
-		SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
+	structConds := []string{
+		"n.domain = ?",
+		"n.archived_at IS NULL",
+		"n2.archived_at IS NULL",
+		"(julianday('now') - julianday(n2.updated_at)) <= ?",
+	}
+	structArgs := []interface{}{domain, recencyWindowDays}
+	for _, tag := range tags {
+		structConds = append(structConds,
+			"(n.tags = ? OR n.tags LIKE ? || ' %' OR n.tags LIKE '% ' || ? OR n.tags LIKE '% ' || ? || ' %')")
+		structArgs = append(structArgs, tag, tag, tag, tag)
+	}
+	structArgs = append(structArgs, limit)
+	structQ := `SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
 		       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.transient,
 		       SUM(1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS importance_score
 		FROM edges e
 		JOIN nodes n  ON e.to_node   = n.id
 		JOIN nodes n2 ON e.from_node = n2.id
-		WHERE n.domain = ?
-		  AND n.archived_at IS NULL
-		  AND n2.archived_at IS NULL
-		  AND (julianday('now') - julianday(n2.updated_at)) <= ?
+		WHERE ` + strings.Join(structConds, " AND ") + `
 		GROUP BY n.id
 		ORDER BY importance_score DESC
-		LIMIT ?`, domain, recencyWindowDays, limit)
+		LIMIT ?`
+	structRows, err := s.db.Query(structQ, structArgs...)
 	if err != nil {
 		return res, fmt.Errorf("GetSignificance structural: %w", err)
 	}

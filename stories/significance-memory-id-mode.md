@@ -1,5 +1,7 @@
 # significance: memory_id mode — neighbourhood-scoped importance analysis
 
+**Status:** COMPLETE — commit `a31e9fb`
+
 **Shared-surface node:** `significance-tool-memory-id-mode-2dbc5fbc`
 
 **Design decisions node (memoryweb-meta):** `significance-memory-id-mode-desi-124a42fe`

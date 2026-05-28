@@ -1343,7 +1343,7 @@ func TestMergeDomains_TargetNoNodes_Error(t *testing.T) {
 
 func TestGetSignificance_Empty(t *testing.T) {
 	s := newStore(t)
-	res, err := s.GetSignificance("empty-domain", 10, 90)
+	res, err := s.GetSignificance("empty-domain", 10, 90, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -1370,7 +1370,7 @@ func TestGetSignificance_Declared(t *testing.T) {
 	n2, _ := s.AddNode("Late decision", "d", "w", "proj", ptr(late), "", false)
 	mustAddNode(t, s, "Undated node", "proj") // no occurred_at — should not appear in Declared
 
-	res, err := s.GetSignificance("proj", 10, 90)
+	res, err := s.GetSignificance("proj", 10, 90, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -1404,7 +1404,7 @@ func TestGetSignificance_Structural(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetSignificance("proj", 10, 90)
+	res, err := s.GetSignificance("proj", 10, 90, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -1445,7 +1445,7 @@ func TestGetSignificance_RecencyWindow(t *testing.T) {
 	}
 	rawDB.Close()
 
-	res, err := s.GetSignificance("proj", 10, 90)
+	res, err := s.GetSignificance("proj", 10, 90, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -1465,7 +1465,7 @@ func TestGetSignificance_Uncurated(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetSignificance("proj", 10, 90)
+	res, err := s.GetSignificance("proj", 10, 90, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -1497,7 +1497,7 @@ func TestGetSignificance_PotentiallyStale(t *testing.T) {
 	// Node with occurred_at but no inbound edges — structurally irrelevant.
 	isolated, _ := s.AddNode("Isolated declared node", "d", "w", "proj", ptr(ts), "", false)
 
-	res, err := s.GetSignificance("proj", 10, 90)
+	res, err := s.GetSignificance("proj", 10, 90, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -1544,7 +1544,7 @@ func TestGetSignificance_Logging(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetSignificance("proj", 10, 90)
+	res, err := s.GetSignificance("proj", 10, 90, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -1603,7 +1603,7 @@ func TestGetSignificance_ArchivedExcluded(t *testing.T) {
 	}
 	s.ArchiveNode(n2.ID, "testing")
 
-	res, err := s.GetSignificance("proj", 10, 90)
+	res, err := s.GetSignificance("proj", 10, 90, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}

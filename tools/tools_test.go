@@ -6163,3 +6163,187 @@ func TestSignificance_MemoryIDMode_InSchemaWithDepth(t *testing.T) {
 	}
 	t.Fatal("significance tool not found in ListTools")
 }
+
+// ── significance: tags filter ─────────────────────────────────────────────────
+
+// TestSignificance_TagsFilter_IncludesMatchingNodes: when tags="mytag", only
+// nodes whose tags field contains "mytag" appear in structural.
+func TestSignificance_TagsFilter_IncludesMatchingNodes(t *testing.T) {
+	_, h := newEnv(t)
+
+	tagged := addNode(t, h, "Tagged node", "proj", map[string]interface{}{"tags": "mytag"})
+	untagged := addNode(t, h, "Untagged node", "proj", nil)
+	linker1 := addNode(t, h, "Linker for tagged", "proj", nil)
+	linker2 := addNode(t, h, "Linker for untagged", "proj", nil)
+
+	call(t, h, "connect", map[string]interface{}{"from_id": linker1, "to_id": tagged, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_id": linker2, "to_id": untagged, "relationship": "connects_to", "because": "link"})
+
+	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "mytag"})
+	mustNotError(t, tr)
+
+	var res struct {
+		Structural []struct {
+			ID string `json:"id"`
+		} `json:"structural"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &res); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	for _, sn := range res.Structural {
+		if sn.ID == untagged {
+			t.Error("structural contains untagged node; expected only tagged nodes")
+		}
+	}
+	found := false
+	for _, sn := range res.Structural {
+		if sn.ID == tagged {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("structural does not contain tagged node")
+	}
+}
+
+// TestSignificance_TagsFilter_MultiTag_OR: tags="foo,bar" includes nodes
+// matching either tag.
+func TestSignificance_TagsFilter_MultiTag_OR(t *testing.T) {
+	_, h := newEnv(t)
+
+	fooNode := addNode(t, h, "Foo node", "proj", map[string]interface{}{"tags": "foo"})
+	barNode := addNode(t, h, "Bar node", "proj", map[string]interface{}{"tags": "bar"})
+	neither := addNode(t, h, "Neither node", "proj", nil)
+	linker1 := addNode(t, h, "Linker foo", "proj", nil)
+	linker2 := addNode(t, h, "Linker bar", "proj", nil)
+	linker3 := addNode(t, h, "Linker neither", "proj", nil)
+
+	call(t, h, "connect", map[string]interface{}{"from_id": linker1, "to_id": fooNode, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_id": linker2, "to_id": barNode, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_id": linker3, "to_id": neither, "relationship": "connects_to", "because": "link"})
+
+	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "foo,bar"})
+	mustNotError(t, tr)
+
+	var res struct {
+		Structural []struct {
+			ID string `json:"id"`
+		} `json:"structural"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &res); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, sn := range res.Structural {
+		ids[sn.ID] = true
+	}
+	if !ids[fooNode] {
+		t.Error("structural missing foo node")
+	}
+	if !ids[barNode] {
+		t.Error("structural missing bar node")
+	}
+	if ids[neither] {
+		t.Error("structural contains neither node; expected only foo and bar")
+	}
+}
+
+// TestSignificance_TagsFilter_NoMatch_EmptyStructural: when the tag matches
+// no nodes, structural is empty and the call does not error.
+func TestSignificance_TagsFilter_NoMatch_EmptyStructural(t *testing.T) {
+	_, h := newEnv(t)
+
+	node := addNode(t, h, "Some node", "proj", nil)
+	linker := addNode(t, h, "Linker", "proj", nil)
+	call(t, h, "connect", map[string]interface{}{"from_id": linker, "to_id": node, "relationship": "connects_to", "because": "link"})
+
+	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "nonexistent-tag"})
+	mustNotError(t, tr)
+
+	var res struct {
+		Structural []struct {
+			ID string `json:"id"`
+		} `json:"structural"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &res); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if len(res.Structural) != 0 {
+		t.Errorf("structural: want 0 entries, got %d", len(res.Structural))
+	}
+}
+
+// TestSignificance_TagsFilter_WholeWordMatch: a node tagged "foobar" must not
+// appear when filtering by tags="foo" (partial match must not fire).
+func TestSignificance_TagsFilter_WholeWordMatch(t *testing.T) {
+	_, h := newEnv(t)
+
+	foobar := addNode(t, h, "Foobar node", "proj", map[string]interface{}{"tags": "foobar"})
+	linker := addNode(t, h, "Linker", "proj", nil)
+	call(t, h, "connect", map[string]interface{}{"from_id": linker, "to_id": foobar, "relationship": "connects_to", "because": "link"})
+
+	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "foo"})
+	mustNotError(t, tr)
+
+	var res struct {
+		Structural []struct {
+			ID string `json:"id"`
+		} `json:"structural"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &res); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	for _, sn := range res.Structural {
+		if sn.ID == foobar {
+			t.Error("structural contains foobar node on partial tag match 'foo'; whole-word match required")
+		}
+	}
+}
+
+// TestSignificance_TagsFilter_DeclaredRespected: a node with occurred_at and a
+// matching tag must appear in declared when filtering by that tag.
+func TestSignificance_TagsFilter_DeclaredRespected(t *testing.T) {
+	_, h := newEnv(t)
+
+	tr := call(t, h, "remember", map[string]interface{}{
+		"label":       "Declared tagged node",
+		"description": "has occurred_at and tag",
+		"why_matters": "test",
+		"domain":      "proj",
+		"occurred_at": "2024-01-15",
+		"tags":        "release",
+	})
+	mustNotError(t, tr)
+	ids := searchIDs(t, tr)
+	if len(ids) == 0 {
+		t.Fatal("remember returned no ID")
+	}
+	declaredID := ids[0]
+
+	other := addNode(t, h, "Untagged declared", "proj", nil)
+	call(t, h, "revise", map[string]interface{}{"id": other, "occurred_at": "2024-02-01"})
+
+	result := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "release"})
+	mustNotError(t, result)
+
+	var res struct {
+		Declared []struct {
+			ID string `json:"id"`
+		} `json:"declared"`
+	}
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &res); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	found := false
+	for _, n := range res.Declared {
+		if n.ID == declaredID {
+			found = true
+		}
+		if n.ID == other {
+			t.Errorf("declared contains untagged node %q; expected only release-tagged nodes", other)
+		}
+	}
+	if !found {
+		t.Errorf("declared does not contain node %q with tag 'release'", declaredID)
+	}
+}
