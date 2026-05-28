@@ -177,15 +177,17 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "significance",
-			Description: "Dual-signal importance analysis for a domain. Returns four sections:\n- declared: nodes explicitly marked as significant (occurred_at set), in chronological order.\n- structural: nodes ranked by recency-weighted inbound degree. High score means many recently active nodes depend on this node right now.\n- uncurated: nodes in structural top-N with no occurred_at — significance candidates you haven't curated yet.\n- potentially_stale: nodes with occurred_at but low structural score — declared important but nothing current depends on them anymore.\n\nThe gap between uncurated and potentially_stale is the most actionable output: use it to promote missed decisions onto the timeline and archive claims that no longer hold.\n\nDo not use this tool to list all nodes chronologically — use history for that. For age-based staleness or orphan detection, use audit. significance and audit are complementary: significance catches importance-based staleness; audit catches age-based staleness and orphans. A full domain health check runs both.\n\nThis tool only returns live nodes. Archived nodes are hidden. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
+			Description: "Dual-signal importance analysis. Returns four sections:\n- declared: memories explicitly marked as significant (occurred_at set), in chronological order.\n- structural: memories ranked by recency-weighted inbound degree. High score means many recently active memories depend on this memory right now.\n- uncurated: memories in structural top-N with no occurred_at — significance candidates you haven't curated yet.\n- potentially_stale: memories with occurred_at but low structural score — declared important but nothing current depends on them anymore.\n\nThe gap between uncurated and potentially_stale is the most actionable output: use it to promote missed decisions onto the timeline and archive claims that no longer hold.\n\nPass memory_id to scope significance to a single memory's neighbourhood (depth 2 by default, domain-clipped) — useful for workstream health checks when you already know the anchor. Pass domain for a full domain scan. memory_id takes precedence if both are supplied.\n\nDo not use this tool to list all memories chronologically — use history for that. For age-based staleness or orphan detection, use audit. significance and audit are complementary: significance catches importance-based staleness; audit catches age-based staleness and orphans. A full domain health check runs both.\n\nThis tool only returns live memories. Archived memories are hidden. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain":         {Type: "string", Description: "Domain to analyse. Required."},
-					"limit":          {Type: "integer", Description: "Top-N for structural ranking (default 10)."},
+					"domain":         {Type: "string", Description: "Domain to analyse. Required unless memory_id is supplied."},
+					"memory_id":      {Type: "string", Description: "Optional — scope significance to a memory's neighbourhood (depth 2 by default, domain-clipped). Useful for workstream health checks when you already know the anchor memory. Takes precedence over domain if both are supplied."},
+					"depth":          {Type: "integer", Description: "Neighbourhood depth when using memory_id (default 2). Depth 1 produces near-uniform low scores and must not be used as default."},
+					"limit":          {Type: "integer", Description: "Top-N for structural ranking in domain mode (default 10). Ignored in memory_id mode — the neighbourhood is naturally bounded."},
 					"recency_window": {Type: "integer", Description: "Days. Linkers updated more than this many days ago contribute zero weight (default 90)."},
 				},
-				Required: []string{"domain"},
+				Required: []string{},
 			},
 		},
 		{
@@ -1724,14 +1726,16 @@ func (h *Handler) forgetAll(args json.RawMessage) (*ToolResult, error) {
 func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain        string `json:"domain"`
+		MemoryID      string `json:"memory_id"`
+		Depth         int    `json:"depth"`
 		Limit         int    `json:"limit"`
 		RecencyWindow int    `json:"recency_window"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
 	}
-	if a.Domain == "" {
-		return errorResult("domain is required"), nil
+	if a.Domain == "" && a.MemoryID == "" {
+		return errorResult("domain or memory_id is required"), nil
 	}
 	if a.Limit <= 0 {
 		a.Limit = 10
@@ -1740,7 +1744,16 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		a.RecencyWindow = 90
 	}
 
-	res, err := h.store.GetSignificance(a.Domain, a.Limit, a.RecencyWindow)
+	var res db.SignificanceResult
+	var err error
+	if a.MemoryID != "" {
+		if a.Depth <= 0 {
+			a.Depth = 2
+		}
+		res, err = h.store.GetSignificanceForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow)
+	} else {
+		res, err = h.store.GetSignificance(a.Domain, a.Limit, a.RecencyWindow)
+	}
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}

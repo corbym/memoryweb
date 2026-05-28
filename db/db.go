@@ -3182,6 +3182,245 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int)
 	return res, nil
 }
 
+// ── significance: memory_id mode ─────────────────────────────────────────────
+
+// neighbourhoodIDs performs a BFS from nodeID for depth hops, clipping at the
+// anchor node's domain boundary (cross-domain edges are not followed). Returns
+// all visited IDs (including the anchor) and the anchor's domain.
+func (s *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, error) {
+	var anchorDomain string
+	err := s.db.QueryRow(
+		`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, nodeID,
+	).Scan(&anchorDomain)
+	if err == sql.ErrNoRows {
+		return nil, "", fmt.Errorf("memory not found: %s", nodeID)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+
+	visited := map[string]bool{nodeID: true}
+	frontier := []string{nodeID}
+
+	for d := 0; d < depth && len(frontier) > 0; d++ {
+		ph := strings.Repeat("?,", len(frontier))
+		ph = ph[:len(ph)-1]
+		// args: frontier IDs (for from_node IN), frontier IDs again (for to_node IN), domain
+		args := make([]interface{}, len(frontier)*2+1)
+		for i, id := range frontier {
+			args[i] = id
+			args[len(frontier)+i] = id
+		}
+		args[len(frontier)*2] = anchorDomain
+
+		rows, err := s.db.Query(
+			`SELECT DISTINCT n.id
+			 FROM edges e
+			 JOIN nodes n ON (
+			     (e.from_node IN (`+ph+`) AND n.id = e.to_node)
+			     OR
+			     (e.to_node IN (`+ph+`) AND n.id = e.from_node)
+			 )
+			 WHERE n.domain = ?
+			   AND n.archived_at IS NULL`, args...)
+		if err != nil {
+			return nil, "", err
+		}
+		var next []string
+		for rows.Next() {
+			var id string
+			if scanErr := rows.Scan(&id); scanErr != nil {
+				rows.Close()
+				return nil, "", scanErr
+			}
+			if !visited[id] {
+				visited[id] = true
+				next = append(next, id)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, "", err
+		}
+		frontier = next
+	}
+
+	ids := make([]string, 0, len(visited))
+	for id := range visited {
+		ids = append(ids, id)
+	}
+	return ids, anchorDomain, nil
+}
+
+// getSignificanceByNodeIDs runs dual-signal importance analysis scoped to a
+// specific set of node IDs (e.g. a neighbourhood). domain is used only for
+// logging; it does not further filter the node set.
+func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int) (SignificanceResult, error) {
+	callID := shortID()
+	var res SignificanceResult
+	res.CallID = callID
+
+	if len(nodeIDs) == 0 {
+		res.Declared = []Node{}
+		res.Structural = []ScoredNode{}
+		res.Uncurated = []ScoredNode{}
+		res.PotentiallyStale = []Node{}
+		return res, nil
+	}
+
+	ph := strings.Repeat("?,", len(nodeIDs))
+	ph = ph[:len(ph)-1]
+	nodeArgs := make([]interface{}, len(nodeIDs))
+	for i, id := range nodeIDs {
+		nodeArgs[i] = id
+	}
+
+	// ── declared ─────────────────────────────────────────────────────────────
+	declaredRows, err := s.db.Query(
+		`SELECT id, label, description, why_matters, tags, domain,
+		        created_at, updated_at, occurred_at, archived_at, transient
+		 FROM nodes
+		 WHERE id IN (`+ph+`)
+		   AND occurred_at IS NOT NULL
+		   AND archived_at IS NULL
+		 ORDER BY occurred_at ASC`, nodeArgs...)
+	if err != nil {
+		return res, fmt.Errorf("getSignificanceByNodeIDs declared: %w", err)
+	}
+	defer declaredRows.Close()
+	for declaredRows.Next() {
+		n, err := scanNode(declaredRows)
+		if err != nil {
+			return res, fmt.Errorf("getSignificanceByNodeIDs scan declared: %w", err)
+		}
+		res.Declared = append(res.Declared, n)
+	}
+	if err := declaredRows.Err(); err != nil {
+		return res, fmt.Errorf("getSignificanceByNodeIDs declared rows: %w", err)
+	}
+	if res.Declared == nil {
+		res.Declared = []Node{}
+	}
+
+	// ── structural ────────────────────────────────────────────────────────────
+	structArgs := make([]interface{}, len(nodeIDs)+1)
+	for i, id := range nodeIDs {
+		structArgs[i] = id
+	}
+	structArgs[len(nodeIDs)] = recencyWindowDays
+
+	structRows, err := s.db.Query(
+		`SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
+		        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.transient,
+		        SUM(1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS importance_score
+		 FROM edges e
+		 JOIN nodes n  ON e.to_node   = n.id
+		 JOIN nodes n2 ON e.from_node = n2.id
+		 WHERE n.id IN (`+ph+`)
+		   AND n.archived_at IS NULL
+		   AND n2.archived_at IS NULL
+		   AND (julianday('now') - julianday(n2.updated_at)) <= ?
+		 GROUP BY n.id
+		 ORDER BY importance_score DESC`, structArgs...)
+	if err != nil {
+		return res, fmt.Errorf("getSignificanceByNodeIDs structural: %w", err)
+	}
+	defer structRows.Close()
+	structIDs := map[string]bool{}
+	for structRows.Next() {
+		var sn ScoredNode
+		var tags, desc, why sql.NullString
+		var occurredAt, archivedAt sql.NullTime
+		var transient int
+		if err := structRows.Scan(
+			&sn.ID, &sn.Label, &desc, &why, &tags, &sn.Domain,
+			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &transient,
+			&sn.ImportanceScore,
+		); err != nil {
+			return res, fmt.Errorf("getSignificanceByNodeIDs scan structural: %w", err)
+		}
+		sn.Description = desc.String
+		sn.WhyMatters = why.String
+		sn.Tags = tags.String
+		if occurredAt.Valid {
+			sn.OccurredAt = &occurredAt.Time
+		}
+		if archivedAt.Valid {
+			sn.ArchivedAt = &archivedAt.Time
+		}
+		sn.Transient = transient != 0
+		res.Structural = append(res.Structural, sn)
+		structIDs[sn.ID] = true
+	}
+	if err := structRows.Err(); err != nil {
+		return res, fmt.Errorf("getSignificanceByNodeIDs structural rows: %w", err)
+	}
+	if res.Structural == nil {
+		res.Structural = []ScoredNode{}
+	}
+
+	// ── uncurated ─────────────────────────────────────────────────────────────
+	for _, sn := range res.Structural {
+		if sn.OccurredAt == nil {
+			res.Uncurated = append(res.Uncurated, sn)
+		}
+	}
+	if res.Uncurated == nil {
+		res.Uncurated = []ScoredNode{}
+	}
+
+	// ── potentially_stale ─────────────────────────────────────────────────────
+	for _, n := range res.Declared {
+		if !structIDs[n.ID] {
+			res.PotentiallyStale = append(res.PotentiallyStale, n)
+		}
+	}
+	if res.PotentiallyStale == nil {
+		res.PotentiallyStale = []Node{}
+	}
+
+	// ── log ───────────────────────────────────────────────────────────────────
+	calledAt := time.Now().UTC()
+	logged := map[string]bool{}
+	for _, sn := range res.Structural {
+		if !logged[sn.ID] {
+			if err := s.logSignificance(callID, calledAt, domain, len(nodeIDs), sn.ID, sn.Label, "structural", &sn.ImportanceScore); err != nil {
+				return res, fmt.Errorf("getSignificanceByNodeIDs log structural: %w", err)
+			}
+			logged[sn.ID] = true
+		}
+	}
+	for _, sn := range res.Uncurated {
+		if !logged[sn.ID] {
+			if err := s.logSignificance(callID, calledAt, domain, len(nodeIDs), sn.ID, sn.Label, "uncurated", nil); err != nil {
+				return res, fmt.Errorf("getSignificanceByNodeIDs log uncurated: %w", err)
+			}
+			logged[sn.ID] = true
+		}
+	}
+	for _, n := range res.PotentiallyStale {
+		if !logged[n.ID] {
+			if err := s.logSignificance(callID, calledAt, domain, len(nodeIDs), n.ID, n.Label, "potentially_stale", nil); err != nil {
+				return res, fmt.Errorf("getSignificanceByNodeIDs log potentially_stale: %w", err)
+			}
+			logged[n.ID] = true
+		}
+	}
+
+	return res, nil
+}
+
+// GetSignificanceForMemoryID returns dual-signal importance analysis scoped to
+// the depth-hop neighbourhood of the given memory ID, clipped to the anchor's
+// domain. Depth 2 is recommended; depth 1 produces near-uniform low scores.
+func (s *Store) GetSignificanceForMemoryID(nodeID string, depth int, recencyWindowDays int) (SignificanceResult, error) {
+	ids, anchorDomain, err := s.neighbourhoodIDs(nodeID, depth)
+	if err != nil {
+		return SignificanceResult{}, err
+	}
+	return s.getSignificanceByNodeIDs(ids, anchorDomain, recencyWindowDays)
+}
+
 // logSignificance inserts one row into significance_log.
 func (s *Store) logSignificance(callID string, calledAt time.Time, domain string, limitN int, nodeID, nodeLabel, rankType string, score *float64) error {
 	id := shortID()

@@ -5508,7 +5508,7 @@ func TestSignificance_ReturnsAllFourSections(t *testing.T) {
 	}
 }
 
-func TestSignificance_IsErrorOnMissingDomain(t *testing.T) {
+func TestSignificance_IsErrorWhenNeitherDomainNorMemoryIDProvided(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "significance", map[string]any{})
 	mustError(t, tr)
@@ -5972,4 +5972,194 @@ func TestOrient_DescriptionContainsHistoryFallback(t *testing.T) {
 		}
 	}
 	t.Fatal("orient tool not found in ListTools")
+}
+
+// ── significance: memory_id mode ─────────────────────────────────────────────
+
+// TestSignificance_MemoryIDMode_ReturnsAllFourSections: calling significance
+// with a memory_id must return all four sections without error.
+func TestSignificance_MemoryIDMode_ReturnsAllFourSections(t *testing.T) {
+	_, h := newEnv(t)
+	anchor := addNode(t, h, "anchor memory", "proj", nil)
+	neighbour := addNode(t, h, "neighbour memory", "proj", nil)
+	linker := addNode(t, h, "linker memory", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": anchor, "to_memory": neighbour,
+		"relationship": "connects_to", "narrative": "linked",
+	}))
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": linker, "to_memory": neighbour,
+		"relationship": "connects_to", "narrative": "linker points to neighbour",
+	}))
+
+	tr := call(t, h, "significance", map[string]any{"memory_id": anchor})
+	mustNotError(t, tr)
+	out := text(t, tr)
+	for _, section := range []string{"declared", "structural", "uncurated", "potentially_stale"} {
+		if !strings.Contains(out, section) {
+			t.Errorf("expected section %q in significance response; got: %s", section, out)
+		}
+	}
+}
+
+// TestSignificance_MemoryIDMode_DomainClipped: cross-domain nodes connected to
+// the anchor must NOT appear in the neighbourhood result.
+func TestSignificance_MemoryIDMode_DomainClipped(t *testing.T) {
+	_, h := newEnv(t)
+	anchor := addNode(t, h, "anchor proj", "proj", nil)
+	crossDomain := addNode(t, h, "foreign memory", "other-domain", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": anchor, "to_memory": crossDomain,
+		"relationship": "connects_to", "narrative": "cross-domain edge",
+	}))
+	linker := addNode(t, h, "linker for foreign", "other-domain", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": linker, "to_memory": crossDomain,
+		"relationship": "connects_to", "narrative": "linker",
+	}))
+
+	tr := call(t, h, "significance", map[string]any{"memory_id": anchor})
+	mustNotError(t, tr)
+	out := text(t, tr)
+	if strings.Contains(out, crossDomain) {
+		t.Errorf("cross-domain memory %q must not appear in neighbourhood significance", crossDomain)
+	}
+}
+
+// TestSignificance_MemoryIDMode_Depth2Included: a node two hops from the
+// anchor (anchor→A→B) must appear in the result when depth=2.
+func TestSignificance_MemoryIDMode_Depth2Included(t *testing.T) {
+	_, h := newEnv(t)
+	anchor := addNode(t, h, "anchor node d2", "proj", nil)
+	nodeA := addNode(t, h, "depth1 node d2", "proj", nil)
+	nodeB := addNode(t, h, "depth2 node d2", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": anchor, "to_memory": nodeA,
+		"relationship": "connects_to", "narrative": "a1",
+	}))
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": nodeA, "to_memory": nodeB,
+		"relationship": "connects_to", "narrative": "a2",
+	}))
+	linker := addNode(t, h, "linker for b d2", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": linker, "to_memory": nodeB,
+		"relationship": "connects_to", "narrative": "linker b",
+	}))
+
+	tr := call(t, h, "significance", map[string]any{"memory_id": anchor, "depth": 2})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), nodeB) {
+		t.Errorf("depth-2 memory %q must appear in result with depth=2", nodeB)
+	}
+}
+
+// TestSignificance_MemoryIDMode_Depth1Excluded: a node two hops from the
+// anchor must NOT appear when depth=1.
+func TestSignificance_MemoryIDMode_Depth1Excluded(t *testing.T) {
+	_, h := newEnv(t)
+	anchor := addNode(t, h, "anchor node d1", "proj", nil)
+	nodeA := addNode(t, h, "depth1 node d1", "proj", nil)
+	nodeB := addNode(t, h, "depth2 node d1", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": anchor, "to_memory": nodeA,
+		"relationship": "connects_to", "narrative": "a1",
+	}))
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": nodeA, "to_memory": nodeB,
+		"relationship": "connects_to", "narrative": "a2",
+	}))
+	linker := addNode(t, h, "linker for b d1", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": linker, "to_memory": nodeB,
+		"relationship": "connects_to", "narrative": "linker b",
+	}))
+
+	tr := call(t, h, "significance", map[string]any{"memory_id": anchor, "depth": 1})
+	mustNotError(t, tr)
+	if strings.Contains(text(t, tr), nodeB) {
+		t.Errorf("depth-2 memory %q must NOT appear in result when depth=1", nodeB)
+	}
+}
+
+// TestSignificance_MemoryIDMode_TakesPrecedenceOverDomain: when both domain
+// and memory_id are supplied, memory_id mode runs (neighbourhood is smaller
+// than the full domain).
+func TestSignificance_MemoryIDMode_TakesPrecedenceOverDomain(t *testing.T) {
+	_, h := newEnv(t)
+	for i := 0; i < 4; i++ {
+		popular := addNode(t, h, fmt.Sprintf("popular domain node %d", i), "proj", nil)
+		for j := 0; j < 3; j++ {
+			lnk := addNode(t, h, fmt.Sprintf("domain linker %d-%d", i, j), "proj", nil)
+			mustNotError(t, call(t, h, "connect", map[string]any{
+				"from_memory": lnk, "to_memory": popular,
+				"relationship": "connects_to", "narrative": "link",
+			}))
+		}
+	}
+	anchor := addNode(t, h, "isolated anchor prec", "proj", nil)
+	neighbour := addNode(t, h, "only neighbour prec", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": anchor, "to_memory": neighbour,
+		"relationship": "connects_to", "narrative": "sole link",
+	}))
+
+	memoryTR := call(t, h, "significance", map[string]any{"domain": "proj", "memory_id": anchor})
+	mustNotError(t, memoryTR)
+
+	for i := 0; i < 4; i++ {
+		if strings.Contains(text(t, memoryTR), fmt.Sprintf("popular domain node %d", i)) {
+			t.Errorf("popular domain node %d must not appear in memory_id mode result", i)
+		}
+	}
+}
+
+// TestSignificance_MemoryIDMode_IsErrorOnUnknownMemoryID: passing a
+// non-existent memory_id must return an error.
+func TestSignificance_MemoryIDMode_IsErrorOnUnknownMemoryID(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "significance", map[string]any{"memory_id": "nonexistent-memory-id-xyz"})
+	mustError(t, tr)
+}
+
+// TestSignificance_MemoryIDMode_InSchemaWithDepth: the significance schema
+// must expose memory_id and depth properties, and domain must not be in the
+// Required array.
+func TestSignificance_MemoryIDMode_InSchemaWithDepth(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+				Required   []string                   `json:"required"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "significance" {
+			continue
+		}
+		if _, ok := td.InputSchema.Properties["memory_id"]; !ok {
+			t.Error("significance schema missing 'memory_id' property")
+		}
+		if _, ok := td.InputSchema.Properties["depth"]; !ok {
+			t.Error("significance schema missing 'depth' property")
+		}
+		for _, req := range td.InputSchema.Required {
+			if req == "domain" {
+				t.Error("'domain' must not be in significance Required array")
+			}
+		}
+		return
+	}
+	t.Fatal("significance tool not found in ListTools")
 }
