@@ -5678,6 +5678,73 @@ func TestListTools_ForgetCrossReferencesForgetAll(t *testing.T) {
 
 // ── remember domain inference ─────────────────────────────────────────────────
 
+// ── orient: optional domain ───────────────────────────────────────────────────
+
+// TestOrient_NoDomain_ReturnsCrossDomainSnapshot: calling orient with no domain
+// must return mode="cross_domain_snapshot" with a domains array containing at
+// least one entry that has domain and recent fields.
+func TestOrient_NoDomain_ReturnsCrossDomainSnapshot(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Alpha", "domain-a", nil)
+	addNode(t, h, "Beta", "domain-b", nil)
+
+	tr := call(t, h, "orient", map[string]any{})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Mode    string `json:"mode"`
+		Domains []struct {
+			Domain string        `json:"domain"`
+			Recent []interface{} `json:"recent"`
+		} `json:"domains"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse cross-domain snapshot: %v", err)
+	}
+	if resp.Mode != "cross_domain_snapshot" {
+		t.Errorf("expected mode=cross_domain_snapshot; got %q", resp.Mode)
+	}
+	if len(resp.Domains) == 0 {
+		t.Fatal("expected at least one domain in snapshot; got none")
+	}
+	for _, d := range resp.Domains {
+		if d.Domain == "" {
+			t.Error("domain entry has empty domain field")
+		}
+		if d.Recent == nil {
+			t.Errorf("domain %q has nil recent array", d.Domain)
+		}
+	}
+}
+
+// TestOrient_WithDomain_Unchanged: orient with a domain must still return the
+// three-section response (declared_spine, significant, recent) unchanged.
+func TestOrient_WithDomain_Unchanged(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Existing node", "orient-regression-domain", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-regression-domain"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		DeclaredSpine interface{} `json:"declared_spine"`
+		Significant   interface{} `json:"significant"`
+		Recent        interface{} `json:"recent"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.DeclaredSpine == nil {
+		t.Error("orient with domain missing declared_spine")
+	}
+	if resp.Significant == nil {
+		t.Error("orient with domain missing significant")
+	}
+	if resp.Recent == nil {
+		t.Error("orient with domain missing recent")
+	}
+}
+
 // TestListTools_RememberDescriptionContainsDomainInference: remember description
 // must instruct agents to infer domain from search results and prefer existing
 // domains over creating new ones.

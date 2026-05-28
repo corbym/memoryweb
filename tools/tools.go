@@ -255,13 +255,12 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query.",
+			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain": {Type: "string", Description: "The domain to summarise"},
+					"domain": {Type: "string", Description: "Optional — omit for a cross-domain snapshot to find where work was last happening. Provide to get the full three-section orient for a specific domain."},
 				},
-				Required: []string{"domain"},
 			},
 		},
 		{
@@ -829,12 +828,66 @@ func (h *Handler) drift(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
+func (h *Handler) orientCrossDomain() (*ToolResult, error) {
+	// Fetch a broad slice of recent nodes across all domains then group,
+	// reusing the same logic as recentChanges(group_by_domain=true).
+	all, err := h.store.RecentChanges("", 1000)
+	if err != nil {
+		return nil, err
+	}
+
+	type recentEntry struct {
+		ID        string `json:"id"`
+		Label     string `json:"label"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	type domainEntry struct {
+		Domain string        `json:"domain"`
+		Recent []recentEntry `json:"recent"`
+	}
+
+	const perDomain = 5
+	grouped := make(map[string][]recentEntry)
+	domainOrder := []string{}
+	for _, n := range all {
+		if _, seen := grouped[n.Domain]; !seen {
+			domainOrder = append(domainOrder, n.Domain)
+		}
+		if len(grouped[n.Domain]) < perDomain {
+			grouped[n.Domain] = append(grouped[n.Domain], recentEntry{
+				ID:        n.ID,
+				Label:     n.Label,
+				UpdatedAt: n.UpdatedAt.Format(time.RFC3339),
+			})
+		}
+	}
+
+	domains := make([]domainEntry, 0, len(domainOrder))
+	for _, d := range domainOrder {
+		domains = append(domains, domainEntry{Domain: d, Recent: grouped[d]})
+	}
+
+	resp := struct {
+		Mode    string        `json:"mode"`
+		Domains []domainEntry `json:"domains"`
+	}{
+		Mode:    "cross_domain_snapshot",
+		Domains: domains,
+	}
+	b, _ := json.MarshalIndent(resp, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
 func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain string `json:"domain"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
+	}
+
+	if a.Domain == "" {
+		return h.orientCrossDomain()
 	}
 
 	// Step 1: count live nodes for the domain (for the total_nodes field and empty check).

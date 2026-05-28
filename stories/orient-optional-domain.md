@@ -3,6 +3,8 @@
 **Shared-surface nodes:** `orient-optional-domain-arg-cross-4ba5f377` (memoryweb-meta),
 `orient-optional-domain-arg-cross-1b54474c` (memoryweb-shared-surface)
 
+**Status:** COMPLETE (implemented 2026-05-28)
+
 ---
 
 ## Why
