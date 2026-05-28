@@ -2102,7 +2102,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 // Writes an audit_log entry recording which fields changed and their old values.
 // Returns the full updated node. Returns an error if the node does not exist or
 // has been archived.
-func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time) (*Node, error) {
+func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time, transient *bool) (*Node, error) {
 	// Fetch current values for comparison and audit trail.
 	var cur Node
 	var curOA, curAA sql.NullTime
@@ -2163,6 +2163,17 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 			oldVal = cur.OccurredAt.UTC().Format("2006-01-02T15:04:05Z")
 		}
 		changes = append(changes, fmt.Sprintf("occurred_at (was %s)", oldVal))
+	}
+	if transient != nil {
+		sets = append(sets, "transient = ?")
+		val := 0
+		if *transient {
+			val = 1
+		}
+		args = append(args, val)
+		if *transient != cur.Transient {
+			changes = append(changes, fmt.Sprintf("transient (was %v)", cur.Transient))
+		}
 	}
 	args = append(args, id)
 
@@ -2225,6 +2236,7 @@ type NodeUpdateInput struct {
 	WhyMatters  *string
 	Tags        *string
 	OccurredAt  *time.Time
+	Transient   *bool
 }
 
 // UpdateNodesBatch updates multiple nodes in a single transaction.
@@ -2298,6 +2310,17 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 				oldVal = cur.OccurredAt.UTC().Format("2006-01-02T15:04:05Z")
 			}
 			changes = append(changes, fmt.Sprintf("occurred_at (was %s)", oldVal))
+		}
+		if inp.Transient != nil {
+			sets = append(sets, "transient = ?")
+			val := 0
+			if *inp.Transient {
+				val = 1
+			}
+			args = append(args, val)
+			if *inp.Transient != cur.Transient {
+				changes = append(changes, fmt.Sprintf("transient (was %v)", cur.Transient))
+			}
 		}
 		args = append(args, inp.ID)
 

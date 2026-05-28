@@ -275,10 +275,11 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
 					"tags":        {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
 					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. (a) In-session witnessed: you directly observed this happen in the current conversation — set freely using today's date, no confirmation needed. (b) Inferred or back-dated: you are guessing or reconstructing — propose to user and wait for confirmation. Never guess. Never infer silently. Single mode only."},
+					"transient":   {Type: "boolean", Description: "Set to true for short-lived knowledge; set to false to promote a transient memory to permanent. Omit to leave the current value unchanged."},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"}},"required":["id"]}`),
+						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), transient (boolean — true for short-lived, false to promote to permanent).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["id"]}`),
 					},
 				},
 			},
@@ -1238,6 +1239,7 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 		WhyMatters  *string `json:"why_matters"`
 		Tags        *string `json:"tags"`
 		OccurredAt  *string `json:"occurred_at"`
+		Transient   *bool   `json:"transient"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -1268,7 +1270,7 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 			}
 		}
 	}
-	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt)
+	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt, a.Transient)
 	if err != nil {
 		return nil, err
 	}
@@ -1285,6 +1287,7 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		WhyMatters  *string `json:"why_matters"`
 		Tags        *string `json:"tags"`
 		OccurredAt  *string `json:"occurred_at"`
+		Transient   *bool   `json:"transient"`
 	}
 	if err := json.Unmarshal(items, &updateList); err != nil {
 		return nil, err
@@ -1324,6 +1327,7 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 			WhyMatters:  u.WhyMatters,
 			Tags:        u.Tags,
 			OccurredAt:  occurredAt,
+			Transient:   u.Transient,
 		}
 	}
 	nodes, err := h.store.UpdateNodesBatch(inputs)

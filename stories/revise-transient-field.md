@@ -1,5 +1,7 @@
 # revise: add transient field
 
+**Status:** COMPLETE (implemented 2025-05-28)
+
 **Shared-surface node:** `revise-tool-transient-field-miss-ae1c95cc`
 
 ---

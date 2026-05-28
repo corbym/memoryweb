@@ -5777,3 +5777,139 @@ func TestListTools_RememberDescriptionContainsDomainInference(t *testing.T) {
 	}
 	t.Fatal("remember tool not found in ListTools")
 }
+
+// ── revise: transient field ───────────────────────────────────────────────────
+
+// TestRevise_TransientUpdatable covers all transient field scenarios via revise:
+// clearing the flag, setting it, leaving it unchanged, batch mode, and edge preservation.
+func TestRevise_TransientUpdatable(t *testing.T) {
+	t.Run("clear transient (true to false)", func(t *testing.T) {
+		_, h := newEnv(t)
+		id := addNode(t, h, "Transient node", "transient-test", map[string]any{"transient": true})
+
+		tr := call(t, h, "revise", map[string]any{"id": id, "transient": false})
+		mustNotError(t, tr)
+
+		got := call(t, h, "recall", map[string]any{"id": id})
+		mustNotError(t, got)
+		if strings.Contains(text(t, got), `"transient": true`) {
+			t.Error("expected transient to be cleared to false")
+		}
+	})
+
+	t.Run("set transient (false to true)", func(t *testing.T) {
+		_, h := newEnv(t)
+		id := addNode(t, h, "Permanent node", "transient-test", nil)
+
+		tr := call(t, h, "revise", map[string]any{"id": id, "transient": true})
+		mustNotError(t, tr)
+
+		got := call(t, h, "recall", map[string]any{"id": id})
+		mustNotError(t, got)
+		if !strings.Contains(text(t, got), `"transient": true`) {
+			t.Error("expected transient to be set to true")
+		}
+	})
+
+	t.Run("omit transient - unchanged", func(t *testing.T) {
+		_, h := newEnv(t)
+		id := addNode(t, h, "Transient node", "transient-test", map[string]any{"transient": true})
+
+		tr := call(t, h, "revise", map[string]any{"id": id, "label": "Updated label"})
+		mustNotError(t, tr)
+
+		got := call(t, h, "recall", map[string]any{"id": id})
+		mustNotError(t, got)
+		if !strings.Contains(text(t, got), `"transient": true`) {
+			t.Error("expected transient to remain true when omitted from revise")
+		}
+	})
+
+	t.Run("batch mode sets transient", func(t *testing.T) {
+		_, h := newEnv(t)
+		id1 := addNode(t, h, "Batch node A", "transient-test", nil)
+		id2 := addNode(t, h, "Batch node B", "transient-test", map[string]any{"transient": true})
+
+		items := []map[string]any{
+			{"id": id1, "transient": true},
+			{"id": id2, "transient": false},
+		}
+		tr := call(t, h, "revise", map[string]any{"items": items})
+		mustNotError(t, tr)
+
+		got1 := call(t, h, "recall", map[string]any{"id": id1})
+		mustNotError(t, got1)
+		if !strings.Contains(text(t, got1), `"transient": true`) {
+			t.Error("batch: expected id1 transient=true")
+		}
+
+		got2 := call(t, h, "recall", map[string]any{"id": id2})
+		mustNotError(t, got2)
+		if strings.Contains(text(t, got2), `"transient": true`) {
+			t.Error("batch: expected id2 transient to be cleared to false")
+		}
+	})
+
+	t.Run("preserves edges when transient changes", func(t *testing.T) {
+		_, h := newEnv(t)
+		id1 := addNode(t, h, "Node with edge", "transient-test", nil)
+		id2 := addNode(t, h, "Connected node", "transient-test", nil)
+		mustNotError(t, call(t, h, "connect", map[string]any{
+			"from_memory": id1, "to_memory": id2, "relationship": "connects_to", "because": "test edge",
+		}))
+
+		mustNotError(t, call(t, h, "revise", map[string]any{"id": id1, "transient": true}))
+
+		got := call(t, h, "recall", map[string]any{"id": id1})
+		mustNotError(t, got)
+		if !strings.Contains(text(t, got), id2) {
+			t.Error("expected edge to id2 to be preserved after transient change")
+		}
+	})
+}
+
+// TestRevise_TransientInSchema verifies the revise tool schema exposes transient as
+// a boolean property in both single mode and the items array.
+func TestRevise_TransientInSchema(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Type  string `json:"type"`
+					Items struct {
+						Properties map[string]struct {
+							Type string `json:"type"`
+						} `json:"properties"`
+					} `json:"items"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "revise" {
+			continue
+		}
+		if _, ok := td.InputSchema.Properties["transient"]; !ok {
+			t.Error("revise schema missing top-level transient property")
+		}
+		items, ok := td.InputSchema.Properties["items"]
+		if !ok {
+			t.Fatal("revise schema missing items property")
+		}
+		if _, ok := items.Items.Properties["transient"]; !ok {
+			t.Error("revise items schema missing transient property")
+		}
+		return
+	}
+	t.Fatal("revise tool not found in ListTools")
+}

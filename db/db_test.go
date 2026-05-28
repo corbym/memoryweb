@@ -750,7 +750,7 @@ func TestUpdateNode_UpdatesDescription(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "update target", "proj")
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -767,7 +767,7 @@ func TestUpdateNode_UpdatesLabel(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "old label", "proj")
 
-	updated, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -780,7 +780,7 @@ func TestUpdateNode_UpdatesTags(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "tagged node", "proj")
 
-	updated, err := s.UpdateNode(n.ID, nil, nil, nil, ptrStr("kotlin gradle testing"), nil)
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, ptrStr("kotlin gradle testing"), nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -793,7 +793,7 @@ func TestUpdateNode_OnlyUpdatesProvidedFields(t *testing.T) {
 	s := newStore(t)
 	n, _ := s.AddNode("stable label", "original desc", "original why", "proj", nil, "original tags", false)
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -819,7 +819,7 @@ func TestUpdateNode_BumpsUpdatedAt(t *testing.T) {
 	// Sleep briefly to ensure time advances.
 	time.Sleep(2 * time.Millisecond)
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("changed"), nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("changed"), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -831,7 +831,7 @@ func TestUpdateNode_BumpsUpdatedAt(t *testing.T) {
 func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
 	s := newStore(t)
 
-	_, err := s.UpdateNode("nonexistent-id-xxxx", ptrStr("x"), nil, nil, nil, nil)
+	_, err := s.UpdateNode("nonexistent-id-xxxx", ptrStr("x"), nil, nil, nil, nil, nil)
 	if err == nil {
 		t.Error("expected error for missing node, got nil")
 	}
@@ -842,7 +842,7 @@ func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
 	n := mustAddNode(t, s, "soon archived", "proj")
 	s.ArchiveNode(n.ID, "test")
 
-	_, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil)
+	_, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil, nil)
 	if err == nil {
 		t.Error("expected error updating archived node, got nil")
 	}
@@ -884,7 +884,7 @@ func TestUpdateNode_WritesAuditLog(t *testing.T) {
 
 	n := mustAddNode(t, s, "audit target", "proj")
 
-	_, err = s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil)
+	_, err = s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
