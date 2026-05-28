@@ -5913,3 +5913,63 @@ func TestRevise_TransientInSchema(t *testing.T) {
 	}
 	t.Fatal("revise tool not found in ListTools")
 }
+
+// ── orient sufficiency-bias constraint ───────────────────────────────────────
+
+// TestOrient_DescriptionContainsCausalSequenceConstraint: orient description must
+// prohibit answering causal/chronological-sequence questions from orient alone.
+func TestOrient_DescriptionContainsCausalSequenceConstraint(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "orient" {
+			if !strings.Contains(td.Description, "causal or chronological sequence") {
+				t.Error("orient description missing prohibition on answering causal/chronological-sequence questions from orient alone")
+			}
+			return
+		}
+	}
+	t.Fatal("orient tool not found in ListTools")
+}
+
+// TestOrient_DescriptionContainsHistoryFallback: orient description must direct
+// agents to history(important_only=true) for sequence-dependent questions.
+func TestOrient_DescriptionContainsHistoryFallback(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "orient" {
+			if !strings.Contains(td.Description, "history(important_only=true)") {
+				t.Error("orient description must reference history(important_only=true) as the required tool for sequence-dependent questions")
+			}
+			return
+		}
+	}
+	t.Fatal("orient tool not found in ListTools")
+}
