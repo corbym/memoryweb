@@ -162,11 +162,13 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "history",
-			Description: "Returns memories in a domain in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL memories — the complete chronological view of everything filed in the domain. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only memories where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nUse from/to to scope by effective date. Use tags to further filter results in either mode (comma-separated).\n\nThe two modes are complementary:\n  - Default: 'what happened in this domain, and in what order?'\n  - important_only=true: 'what were the important decisions and events?'\n\nFor importance analysis beyond the timeline — which nodes are structurally load-bearing right now — use significance. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
+			Description: "Returns memories in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL memories in the domain — the complete chronological view of everything filed. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only memories where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nPass memory_id to scope the timeline to a single memory's neighbourhood (depth 2 by default, domain-clipped) — answers 'how did this workstream evolve?' from a known anchor. Combines with important_only=true for the decision spine of the workstream. memory_id takes precedence over domain if both are supplied.\n\nUse from/to to scope by effective date. Use tags to further filter results (comma-separated). All filters apply in both domain mode and memory_id mode.\n\nFor importance analysis beyond the timeline — which nodes are structurally load-bearing right now — use significance. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain":         {Type: "string", Description: "Optional domain to scope"},
+					"domain":         {Type: "string", Description: "Optional domain to scope. Not required when memory_id is supplied."},
+					"memory_id":      {Type: "string", Description: "Optional — scope the timeline to the neighbourhood of this memory (depth 2 by default, domain-clipped). Returns the workstream's chronological evolution from a known anchor. Takes precedence over domain if both are supplied."},
+					"depth":          {Type: "integer", Description: "Neighbourhood depth when using memory_id (default 2)."},
 					"important_only": {Type: "boolean", Description: "When true, return only memories with occurred_at explicitly set (significant decisions and events). When false or absent, return all memories ordered by effective date."},
 					"tags":           {Type: "string", Description: "Optional comma-separated list of tags to filter by. Only memories matching at least one tag are returned. Applies in both modes."},
 					"from":           {Type: "string", Description: "ISO8601 date or datetime. Filter to nodes whose effective date (COALESCE(occurred_at, created_at)) is on or after this value."},
@@ -656,6 +658,8 @@ func (h *Handler) findConnections(args json.RawMessage) (*ToolResult, error) {
 func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain        string `json:"domain"`
+		MemoryID      string `json:"memory_id"`
+		Depth         int    `json:"depth"`
 		ImportantOnly bool   `json:"important_only"`
 		Tags          string `json:"tags"`
 		From          string `json:"from"`
@@ -699,9 +703,17 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 			tags = append(tags, tag)
 		}
 	}
-	nodes, err := h.store.Timeline(a.Domain, a.ImportantOnly, tags, from, to, a.Limit)
+	var nodes []db.Node
+	if a.MemoryID != "" {
+		if a.Depth <= 0 {
+			a.Depth = 2
+		}
+		nodes, err = h.store.GetHistoryForMemoryID(a.MemoryID, a.Depth, a.ImportantOnly, tags, from, to, a.Limit)
+	} else {
+		nodes, err = h.store.Timeline(a.Domain, a.ImportantOnly, tags, from, to, a.Limit)
+	}
 	if err != nil {
-		return nil, err
+		return errorResult(err.Error()), nil
 	}
 	b, _ := json.MarshalIndent(nodes, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil

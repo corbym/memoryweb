@@ -1323,11 +1323,7 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from,
 		conds = append(conds, "COALESCE(occurred_at, created_at) <= ?")
 		args = append(args, to)
 	}
-	for _, tag := range tags {
-		conds = append(conds,
-			"(tags = ? OR tags LIKE ? || ' %' OR tags LIKE '% ' || ? OR tags LIKE '% ' || ? || ' %')")
-		args = append(args, tag, tag, tag, tag)
-	}
+	conds, args = tagFilter("tags", tags, conds, args)
 	args = append(args, limit)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes WHERE " +
@@ -3058,11 +3054,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	// ── declared ─────────────────────────────────────────────────────────────
 	declaredConds := []string{"domain = ?", "occurred_at IS NOT NULL", "archived_at IS NULL"}
 	declaredArgs := []interface{}{domain}
-	for _, tag := range tags {
-		declaredConds = append(declaredConds,
-			"(tags = ? OR tags LIKE ? || ' %' OR tags LIKE '% ' || ? OR tags LIKE '% ' || ? || ' %')")
-		declaredArgs = append(declaredArgs, tag, tag, tag, tag)
-	}
+	declaredConds, declaredArgs = tagFilter("tags", tags, declaredConds, declaredArgs)
 	declaredQ := `SELECT id, label, description, why_matters, tags, domain,
 		       created_at, updated_at, occurred_at, archived_at, transient
 		FROM nodes WHERE ` + strings.Join(declaredConds, " AND ") + ` ORDER BY occurred_at ASC`
@@ -3093,11 +3085,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 		"(julianday('now') - julianday(n2.updated_at)) <= ?",
 	}
 	structArgs := []interface{}{domain, recencyWindowDays}
-	for _, tag := range tags {
-		structConds = append(structConds,
-			"(n.tags = ? OR n.tags LIKE ? || ' %' OR n.tags LIKE '% ' || ? OR n.tags LIKE '% ' || ? || ' %')")
-		structArgs = append(structArgs, tag, tag, tag, tag)
-	}
+	structConds, structArgs = tagFilter("n.tags", tags, structConds, structArgs)
 	structArgs = append(structArgs, limit)
 	structQ := `SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
 		       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.transient,
@@ -3266,6 +3254,73 @@ func (s *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, er
 		ids = append(ids, id)
 	}
 	return ids, anchorDomain, nil
+}
+
+// GetHistoryForMemoryID returns the chronological timeline of a memory's
+// neighbourhood (depth hops from nodeID, domain-clipped). Applies the same
+// filters as Timeline: importantOnly, tags, from/to date range.
+func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bool, tags []string, from, to *time.Time, limit int) ([]Node, error) {
+	ids, _, err := s.neighbourhoodIDs(nodeID, depth)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []Node{}, nil
+	}
+
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+
+	conds := []string{"archived_at IS NULL", "id IN (" + ph + ")"}
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+
+	if importantOnly {
+		conds = append(conds, "occurred_at IS NOT NULL")
+	}
+	if from != nil {
+		conds = append(conds, "COALESCE(occurred_at, created_at) >= ?")
+		args = append(args, from)
+	}
+	if to != nil {
+		conds = append(conds, "COALESCE(occurred_at, created_at) <= ?")
+		args = append(args, to)
+	}
+	conds, args = tagFilter("tags", tags, conds, args)
+	if limit <= 0 {
+		limit = 20
+	}
+	args = append(args, limit)
+
+	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes WHERE " +
+		strings.Join(conds, " AND ") + " ORDER BY COALESCE(occurred_at, created_at) ASC LIMIT ?"
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("GetHistoryForMemoryID: %w", err)
+	}
+	defer rows.Close()
+
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		var oa sql.NullTime
+		var aa sql.NullTime
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient)
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		nodes = append(nodes, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetHistoryForMemoryID rows: %w", err)
+	}
+	return nodes, nil
 }
 
 // getSignificanceByNodeIDs runs dual-signal importance analysis scoped to a

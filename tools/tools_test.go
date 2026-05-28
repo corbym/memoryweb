@@ -184,6 +184,15 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
+func indexOf(haystack []string, needle string) int {
+	for i, s := range haystack {
+		if s == needle {
+			return i
+		}
+	}
+	return -1
+}
+
 // ── Instructions ──────────────────────────────────────────────────────────────
 
 func TestInstructions_NonEmpty(t *testing.T) {
@@ -255,7 +264,7 @@ func TestListTools_DescriptionsPresent(t *testing.T) {
 		"search":              "Search memories by text",
 		"recent":              "List the most recently added or updated memories",
 		"why_connected":       "Find how two concepts are related",
-		"history":             "Returns memories in a domain in chronological order",
+		"history":             "Returns memories in chronological order by effective date",
 		"significance":        "Dual-signal importance analysis",
 		"alias":               "Manage domain aliases",
 		"forget":              "Always provide a reason",
@@ -4800,6 +4809,164 @@ func TestHistory_TagFilter_WholeWordMatch(t *testing.T) {
 	}
 }
 
+// ── history: memory_id mode ───────────────────────────────────────────────────
+
+// TestHistory_MemoryIDMode_ReturnsChronological: nodes in the anchor's
+// neighbourhood are returned in COALESCE(occurred_at, created_at) ASC order.
+func TestHistory_MemoryIDMode_ReturnsChronological(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchor := addNode(t, h, "Anchor", "hmid", map[string]any{"occurred_at": "2026-01-01", "why_matters": "anchor node"})
+	n1 := addNode(t, h, "March node", "hmid", map[string]any{"occurred_at": "2026-03-01", "why_matters": "march event"})
+	n2 := addNode(t, h, "June node", "hmid", map[string]any{"occurred_at": "2026-06-01", "why_matters": "june event"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": n1, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": n2, "relationship": "connects_to", "because": "link"})
+
+	tr := call(t, h, "history", map[string]any{"memory_id": anchor})
+	mustNotError(t, tr)
+	ids := historyIDs(t, tr)
+	if !contains(ids, anchor) || !contains(ids, n1) || !contains(ids, n2) {
+		t.Fatalf("expected all three nodes, got %v", ids)
+	}
+	anchorIdx, n1Idx, n2Idx := indexOf(ids, anchor), indexOf(ids, n1), indexOf(ids, n2)
+	if !(anchorIdx < n1Idx && n1Idx < n2Idx) {
+		t.Errorf("wrong order: anchor=%d n1=%d n2=%d in %v", anchorIdx, n1Idx, n2Idx, ids)
+	}
+}
+
+// TestHistory_MemoryIDMode_DomainClipped: a node in a different domain
+// connected to the anchor must not appear.
+func TestHistory_MemoryIDMode_DomainClipped(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchor := addNode(t, h, "Anchor", "hmid2", nil)
+	foreign := addNode(t, h, "Foreign", "other-domain", nil)
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": foreign, "relationship": "connects_to", "because": "cross"})
+
+	tr := call(t, h, "history", map[string]any{"memory_id": anchor})
+	mustNotError(t, tr)
+	ids := historyIDs(t, tr)
+	if contains(ids, foreign) {
+		t.Error("foreign-domain node should not appear in memory_id history")
+	}
+}
+
+// TestHistory_MemoryIDMode_ImportantOnly: important_only=true filters to nodes
+// with occurred_at even in memory_id mode.
+func TestHistory_MemoryIDMode_ImportantOnly(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchor := addNode(t, h, "Anchor", "hmid3", nil)
+	dated := addNode(t, h, "Dated", "hmid3", map[string]any{"occurred_at": "2026-04-01", "why_matters": "dated decision"})
+	undated := addNode(t, h, "Undated", "hmid3", nil)
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": dated, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": undated, "relationship": "connects_to", "because": "link"})
+
+	tr := call(t, h, "history", map[string]any{"memory_id": anchor, "important_only": true})
+	mustNotError(t, tr)
+	ids := historyIDs(t, tr)
+	if contains(ids, undated) {
+		t.Error("important_only: undated node should not appear")
+	}
+	if contains(ids, anchor) {
+		t.Error("important_only: anchor (no occurred_at) should not appear")
+	}
+	if !contains(ids, dated) {
+		t.Error("important_only: dated node should appear")
+	}
+}
+
+// TestHistory_MemoryIDMode_TagsFilter: tags filter applies in memory_id mode.
+func TestHistory_MemoryIDMode_TagsFilter(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchor := addNode(t, h, "Anchor", "hmid4", nil)
+	tagged := addNode(t, h, "Tagged", "hmid4", map[string]any{"tags": "release"})
+	untagged := addNode(t, h, "Untagged", "hmid4", nil)
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": tagged, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": untagged, "relationship": "connects_to", "because": "link"})
+
+	tr := call(t, h, "history", map[string]any{"memory_id": anchor, "tags": "release"})
+	mustNotError(t, tr)
+	ids := historyIDs(t, tr)
+	if contains(ids, untagged) {
+		t.Error("tag filter: untagged node should not appear")
+	}
+	if !contains(ids, tagged) {
+		t.Error("tag filter: tagged node should appear")
+	}
+}
+
+// TestHistory_MemoryIDMode_TakesPrecedenceOverDomain: when both memory_id and
+// domain are supplied, the result is scoped to the neighbourhood, not the full domain.
+func TestHistory_MemoryIDMode_TakesPrecedenceOverDomain(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchor := addNode(t, h, "Anchor", "hmid5", nil)
+	connected := addNode(t, h, "Connected", "hmid5", nil)
+	notConnected := addNode(t, h, "NotConnected", "hmid5", nil)
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": connected, "relationship": "connects_to", "because": "link"})
+
+	tr := call(t, h, "history", map[string]any{"memory_id": anchor, "domain": "hmid5"})
+	mustNotError(t, tr)
+	ids := historyIDs(t, tr)
+	if contains(ids, notConnected) {
+		t.Error("memory_id takes precedence: unconnected domain node should not appear")
+	}
+	if !contains(ids, connected) {
+		t.Error("connected node should appear")
+	}
+}
+
+// TestHistory_MemoryIDMode_UnknownMemoryID: passing an unknown memory_id
+// must return an error, not an empty list.
+func TestHistory_MemoryIDMode_UnknownMemoryID(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	tr := call(t, h, "history", map[string]any{"memory_id": "no-such-id-00000000"})
+	mustError(t, tr)
+}
+
+// TestHistory_MemoryIDMode_InSchema: the history schema must expose memory_id
+// and depth properties.
+func TestHistory_MemoryIDMode_InSchema(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "history" {
+			continue
+		}
+		if _, ok := td.InputSchema.Properties["memory_id"]; !ok {
+			t.Error("history schema missing 'memory_id' property")
+		}
+		if _, ok := td.InputSchema.Properties["depth"]; !ok {
+			t.Error("history schema missing 'depth' property")
+		}
+		return
+	}
+	t.Fatal("history tool not found in ListTools")
+}
+
 func TestRemember_OrphanWarning_PresentWhenNoConnections(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "remember", map[string]any{
@@ -6176,8 +6343,8 @@ func TestSignificance_TagsFilter_IncludesMatchingNodes(t *testing.T) {
 	linker1 := addNode(t, h, "Linker for tagged", "proj", nil)
 	linker2 := addNode(t, h, "Linker for untagged", "proj", nil)
 
-	call(t, h, "connect", map[string]interface{}{"from_id": linker1, "to_id": tagged, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]interface{}{"from_id": linker2, "to_id": untagged, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker1, "to_memory": tagged, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker2, "to_memory": untagged, "relationship": "connects_to", "because": "link"})
 
 	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "mytag"})
 	mustNotError(t, tr)
@@ -6218,9 +6385,9 @@ func TestSignificance_TagsFilter_MultiTag_OR(t *testing.T) {
 	linker2 := addNode(t, h, "Linker bar", "proj", nil)
 	linker3 := addNode(t, h, "Linker neither", "proj", nil)
 
-	call(t, h, "connect", map[string]interface{}{"from_id": linker1, "to_id": fooNode, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]interface{}{"from_id": linker2, "to_id": barNode, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]interface{}{"from_id": linker3, "to_id": neither, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker1, "to_memory": fooNode, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker2, "to_memory": barNode, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker3, "to_memory": neither, "relationship": "connects_to", "because": "link"})
 
 	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "foo,bar"})
 	mustNotError(t, tr)
@@ -6255,7 +6422,7 @@ func TestSignificance_TagsFilter_NoMatch_EmptyStructural(t *testing.T) {
 
 	node := addNode(t, h, "Some node", "proj", nil)
 	linker := addNode(t, h, "Linker", "proj", nil)
-	call(t, h, "connect", map[string]interface{}{"from_id": linker, "to_id": node, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker, "to_memory": node, "relationship": "connects_to", "because": "link"})
 
 	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "nonexistent-tag"})
 	mustNotError(t, tr)
@@ -6280,7 +6447,7 @@ func TestSignificance_TagsFilter_WholeWordMatch(t *testing.T) {
 
 	foobar := addNode(t, h, "Foobar node", "proj", map[string]interface{}{"tags": "foobar"})
 	linker := addNode(t, h, "Linker", "proj", nil)
-	call(t, h, "connect", map[string]interface{}{"from_id": linker, "to_id": foobar, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker, "to_memory": foobar, "relationship": "connects_to", "because": "link"})
 
 	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "foo"})
 	mustNotError(t, tr)
@@ -6305,23 +6472,15 @@ func TestSignificance_TagsFilter_WholeWordMatch(t *testing.T) {
 func TestSignificance_TagsFilter_DeclaredRespected(t *testing.T) {
 	_, h := newEnv(t)
 
-	tr := call(t, h, "remember", map[string]interface{}{
-		"label":       "Declared tagged node",
+	declaredID := addNode(t, h, "Declared tagged node", "proj", map[string]interface{}{
 		"description": "has occurred_at and tag",
 		"why_matters": "test",
-		"domain":      "proj",
 		"occurred_at": "2024-01-15",
 		"tags":        "release",
 	})
-	mustNotError(t, tr)
-	ids := searchIDs(t, tr)
-	if len(ids) == 0 {
-		t.Fatal("remember returned no ID")
-	}
-	declaredID := ids[0]
 
-	other := addNode(t, h, "Untagged declared", "proj", nil)
-	call(t, h, "revise", map[string]interface{}{"id": other, "occurred_at": "2024-02-01"})
+	other := addNode(t, h, "Untagged declared", "proj", map[string]interface{}{"why_matters": "other"})
+	call(t, h, "revise", map[string]interface{}{"id": other, "occurred_at": "2024-02-01", "why_matters": "other"})
 
 	result := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "release"})
 	mustNotError(t, result)

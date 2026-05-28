@@ -458,6 +458,139 @@ func TestTimeline_TagFilter_WholeWordMatch(t *testing.T) {
 	}
 }
 
+// ── GetHistoryForMemoryID ─────────────────────────────────────────────────────
+
+func TestGetHistoryForMemoryID_ReturnsChronological(t *testing.T) {
+	s := newStore(t)
+	jan := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mar := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	jun := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	anchor, _ := s.AddNode("Anchor", "d", "w", "proj", ptr(jan), "", false)
+	n1, _ := s.AddNode("March", "d", "w", "proj", ptr(mar), "", false)
+	n2, _ := s.AddNode("June", "d", "w", "proj", ptr(jun), "", false)
+	s.AddEdge(anchor.ID, n1.ID, "connects_to", "")
+	s.AddEdge(anchor.ID, n2.ID, "connects_to", "")
+
+	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("GetHistoryForMemoryID: %v", err)
+	}
+	if len(nodes) < 3 {
+		t.Fatalf("expected at least 3 nodes, got %d", len(nodes))
+	}
+	// Verify anchor comes first (jan), then n1 (mar), then n2 (jun).
+	ids := make([]string, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	anchorIdx, n1Idx, n2Idx := -1, -1, -1
+	for i, id := range ids {
+		switch id {
+		case anchor.ID:
+			anchorIdx = i
+		case n1.ID:
+			n1Idx = i
+		case n2.ID:
+			n2Idx = i
+		}
+	}
+	if anchorIdx < 0 || n1Idx < 0 || n2Idx < 0 {
+		t.Fatalf("not all expected nodes in result: %v", ids)
+	}
+	if !(anchorIdx < n1Idx && n1Idx < n2Idx) {
+		t.Errorf("wrong order: anchor=%d n1=%d n2=%d in %v", anchorIdx, n1Idx, n2Idx, ids)
+	}
+}
+
+func TestGetHistoryForMemoryID_DomainClipped(t *testing.T) {
+	s := newStore(t)
+	anchor := mustAddNode(t, s, "Anchor", "proj")
+	foreign := mustAddNode(t, s, "Foreign", "other")
+	s.AddEdge(anchor.ID, foreign.ID, "connects_to", "")
+
+	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("GetHistoryForMemoryID: %v", err)
+	}
+	for _, n := range nodes {
+		if n.ID == foreign.ID {
+			t.Error("foreign-domain node should not appear in memory_id history")
+		}
+	}
+}
+
+func TestGetHistoryForMemoryID_ImportantOnly(t *testing.T) {
+	s := newStore(t)
+	ts := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	anchor := mustAddNode(t, s, "Anchor", "proj")
+	dated, _ := s.AddNode("Dated", "d", "w", "proj", ptr(ts), "", false)
+	undated := mustAddNode(t, s, "Undated", "proj")
+	s.AddEdge(anchor.ID, dated.ID, "connects_to", "")
+	s.AddEdge(anchor.ID, undated.ID, "connects_to", "")
+
+	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, true, nil, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("GetHistoryForMemoryID: %v", err)
+	}
+	for _, n := range nodes {
+		if n.ID == undated.ID {
+			t.Error("important_only: undated node should not appear")
+		}
+		if n.ID == anchor.ID {
+			t.Error("important_only: anchor (no occurred_at) should not appear")
+		}
+	}
+	found := false
+	for _, n := range nodes {
+		if n.ID == dated.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("important_only: dated node should appear")
+	}
+}
+
+func TestGetHistoryForMemoryID_TagsFilter(t *testing.T) {
+	s := newStore(t)
+	anchor := mustAddNode(t, s, "Anchor", "proj")
+	tagged, _ := s.AddNode("Tagged", "d", "w", "proj", nil, "mytag", false)
+	untagged := mustAddNode(t, s, "Untagged", "proj")
+	s.AddEdge(anchor.ID, tagged.ID, "connects_to", "")
+	s.AddEdge(anchor.ID, untagged.ID, "connects_to", "")
+
+	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, []string{"mytag"}, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("GetHistoryForMemoryID: %v", err)
+	}
+	for _, n := range nodes {
+		if n.ID == untagged.ID {
+			t.Error("tag filter: untagged node should not appear")
+		}
+		if n.ID == anchor.ID {
+			t.Error("tag filter: anchor (no tag) should not appear")
+		}
+	}
+	found := false
+	for _, n := range nodes {
+		if n.ID == tagged.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("tag filter: tagged node should appear")
+	}
+}
+
+func TestGetHistoryForMemoryID_UnknownMemoryID(t *testing.T) {
+	s := newStore(t)
+	_, err := s.GetHistoryForMemoryID("nonexistent-id", 2, false, nil, nil, nil, 10)
+	if err == nil {
+		t.Error("expected error for unknown memory_id, got nil")
+	}
+}
+
 // ── FindConnections ───────────────────────────────────────────────────────────
 
 func TestFindConnections_ReturnsBidirectionalEdge(t *testing.T) {
