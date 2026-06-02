@@ -894,12 +894,25 @@ func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func truncateWhy(s string) string {
+func truncateWhy(s string) (string, bool) {
 	const limit = 150
 	if len(s) <= limit {
-		return s
+		return s, false
 	}
-	return s[:limit] + "..."
+	sub := s[:limit]
+	lastBoundary := -1
+	for i := 0; i < len(sub); i++ {
+		if sub[i] == '.' || sub[i] == '!' || sub[i] == '?' {
+			next := i + 1
+			if next >= len(sub) || sub[next] == ' ' || sub[next] == '\n' || sub[next] == '\t' {
+				lastBoundary = next
+			}
+		}
+	}
+	if lastBoundary > 0 {
+		return strings.TrimRight(s[:lastBoundary], " \t\n"), true
+	}
+	return sub + "...", true
 }
 
 func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
@@ -946,13 +959,16 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		ID         string  `json:"id"`
 		Label      string  `json:"label"`
 		WhyMatters string  `json:"why_matters,omitempty"`
+		Truncated  bool    `json:"truncated,omitempty"`
 		OccurredAt *string `json:"occurred_at,omitempty"`
 	}
 	toLean := func(n db.Node) leanEntry {
+		why, truncated := truncateWhy(n.WhyMatters)
 		e := leanEntry{
 			ID:         n.ID,
 			Label:      n.Label,
-			WhyMatters: truncateWhy(n.WhyMatters),
+			WhyMatters: why,
+			Truncated:  truncated,
 		}
 		if n.OccurredAt != nil {
 			s := n.OccurredAt.Format("2006-01-02")

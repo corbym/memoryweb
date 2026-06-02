@@ -2722,7 +2722,7 @@ func TestOrient_LeanFormat_NoDescription(t *testing.T) {
 }
 
 // TestOrient_LeanFormat_WhyMattersTruncated: a why_matters longer than 150 chars
-// must be truncated to 150 chars + "..." in orient output.
+// with no sentence boundary must be hard-cut at 150 chars + "..." and truncated:true.
 func TestOrient_LeanFormat_WhyMattersTruncated(t *testing.T) {
 	_, h := newEnv(t)
 	longWhy := strings.Repeat("x", 200)
@@ -2736,6 +2736,7 @@ func TestOrient_LeanFormat_WhyMattersTruncated(t *testing.T) {
 	var resp struct {
 		Recent []struct {
 			WhyMatters string `json:"why_matters"`
+			Truncated  bool   `json:"truncated"`
 		} `json:"recent"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
@@ -2744,13 +2745,85 @@ func TestOrient_LeanFormat_WhyMattersTruncated(t *testing.T) {
 	if len(resp.Recent) == 0 {
 		t.Fatal("recent section is empty")
 	}
-	wm := resp.Recent[0].WhyMatters
+	entry := resp.Recent[0]
 	const maxLen = 153 // 150 + len("...")
-	if len(wm) > maxLen {
-		t.Errorf("why_matters: got %d chars, want at most %d", len(wm), maxLen)
+	if len(entry.WhyMatters) > maxLen {
+		t.Errorf("why_matters: got %d chars, want at most %d", len(entry.WhyMatters), maxLen)
 	}
-	if !strings.HasSuffix(wm, "...") {
-		t.Errorf("why_matters must end with '...', got %q", wm)
+	if !strings.HasSuffix(entry.WhyMatters, "...") {
+		t.Errorf("why_matters must end with '...', got %q", entry.WhyMatters)
+	}
+	if !entry.Truncated {
+		t.Error("truncated must be true when why_matters was hard-cut")
+	}
+}
+
+// TestOrient_LeanFormat_SentenceBoundary: a why_matters with a sentence ending
+// within the 150-char budget must be cut at the sentence boundary (no "..."),
+// with truncated:true.
+func TestOrient_LeanFormat_SentenceBoundary(t *testing.T) {
+	_, h := newEnv(t)
+	// First sentence ends at ~30 chars; total is well over 150.
+	why := "This is the short first sentence. " + strings.Repeat("more content ", 20)
+	addNode(t, h, "Node sentence boundary", "orient-lean-sentence", map[string]any{
+		"why_matters": why,
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-lean-sentence"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Recent []struct {
+			WhyMatters string `json:"why_matters"`
+			Truncated  bool   `json:"truncated"`
+		} `json:"recent"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.Recent) == 0 {
+		t.Fatal("recent section is empty")
+	}
+	entry := resp.Recent[0]
+	if strings.HasSuffix(entry.WhyMatters, "...") {
+		t.Errorf("sentence-boundary cut must not append '...', got %q", entry.WhyMatters)
+	}
+	if !strings.HasSuffix(entry.WhyMatters, ".") {
+		t.Errorf("sentence-boundary cut must end with '.', got %q", entry.WhyMatters)
+	}
+	if !entry.Truncated {
+		t.Error("truncated must be true when why_matters was cut at a sentence boundary")
+	}
+}
+
+// TestOrient_LeanFormat_TruncatedFalseWhenFits: a short why_matters that fits
+// within 150 chars must not include truncated:true in the orient entry.
+func TestOrient_LeanFormat_TruncatedFalseWhenFits(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Node short why", "orient-lean-fits", map[string]any{
+		"why_matters": "Short enough.",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-lean-fits"})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	recentRaw, ok := raw["recent"]
+	if !ok {
+		t.Fatal("recent section missing")
+	}
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(recentRaw, &entries); err != nil {
+		t.Fatalf("parse recent entries: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("recent section is empty")
+	}
+	if _, hasTruncated := entries[0]["truncated"]; hasTruncated {
+		t.Error("truncated must be omitted when why_matters fits within budget")
 	}
 }
 
