@@ -1,5 +1,7 @@
 # orient: query-weighted mode via optional topic parameter
 
+**Status:** COMPLETE — v1.26.0 (commit 8031e6d)
+
 **Shared-surface node:** `orient-query-weighted-mode-via-o-a01c1ece`
 
 ---

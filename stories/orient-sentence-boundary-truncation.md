@@ -1,5 +1,7 @@
 # orient: sentence-boundary truncation + truncated flag
 
+**Status:** COMPLETE — v1.24.0 (commit f65c02a)
+
 **Shared-surface node:** `orient-sentence-boundary-truncat-5bd5717b`
 **Depends on:** orient-lean-format.md (COMPLETE — v1.23.0)
 

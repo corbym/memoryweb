@@ -1,5 +1,7 @@
 # Tool descriptions housekeeping: credentials advisory + agent-first guard
 
+**Status:** COMPLETE — v1.26.1 (commit c671965)
+
 **Shared-surface nodes:**
 - `instructions-advisory-never-file-ff8f628c` — credentials advisory (memoryweb: not yet applied)
 - `tool-descriptions-biased-toward--7ea205da` — agent-first test guard (recordari: done, memoryweb: pending)

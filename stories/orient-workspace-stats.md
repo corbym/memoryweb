@@ -1,5 +1,7 @@
 # orient: node counts — live_nodes + archived_nodes
 
+**Status:** COMPLETE — v1.25.0 (commit 07b15de)
+
 **Shared-surface node:** `design-gap-orient-should-return--5cee6e75`
 **Meta story placeholder:** `story-add-workspace-stats-to-ori-3fa2e3a4`
 
