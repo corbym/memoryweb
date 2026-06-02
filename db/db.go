@@ -1255,6 +1255,17 @@ func (s *Store) CountNodes(domain string) (int, error) {
 	return count, err
 }
 
+// CountArchived returns the number of archived nodes in a domain.
+func (s *Store) CountArchived(domain string) (int, error) {
+	domain = s.ResolveAlias(domain)
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NOT NULL`,
+		domain,
+	).Scan(&count)
+	return count, err
+}
+
 func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 	var rows *sql.Rows

@@ -260,7 +260,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain.",
+			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain. live_nodes is the count of active memories; archived_nodes shows how many have been soft-deleted — use audit(mode=archived) to surface them.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -927,13 +927,17 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return h.orientCrossDomain()
 	}
 
-	// Step 1: count live nodes for the domain (for the total_nodes field and empty check).
-	totalNodes, err := h.store.CountNodes(a.Domain)
+	// Step 1: count live and archived nodes for the domain.
+	liveNodes, err := h.store.CountNodes(a.Domain)
 	if err != nil {
 		return nil, err
 	}
-	if totalNodes == 0 {
+	if liveNodes == 0 {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "Nothing has been filed for this domain yet."}}}, nil
+	}
+	archivedNodes, err := h.store.CountArchived(a.Domain)
+	if err != nil {
+		return nil, err
 	}
 
 	// Step 2: fetch significant nodes (structurally load-bearing, recency-weighted inbound degree).
@@ -1001,14 +1005,16 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	resp := struct {
 		SummaryHint   string      `json:"summary_hint"`
 		ServerVersion string      `json:"server_version"`
-		TotalNodes    int         `json:"total_nodes"`
+		LiveNodes     int         `json:"live_nodes"`
+		ArchivedNodes int         `json:"archived_nodes"`
 		DeclaredSpine interface{} `json:"declared_spine"`
 		Significant   interface{} `json:"significant"`
 		Recent        interface{} `json:"recent"`
 	}{
 		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. significant lists structurally load-bearing memories right now. recent shows where work was last happening. Plain prose, no bullet points.",
 		ServerVersion: h.version,
-		TotalNodes:    totalNodes,
+		LiveNodes:     liveNodes,
+		ArchivedNodes: archivedNodes,
 		DeclaredSpine: spineEntries,
 		Significant:   sigEntries,
 		Recent:        recentEntries,

@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1749,5 +1750,40 @@ func TestGetSignificance_ArchivedExcluded(t *testing.T) {
 		if sn.ID == n2.ID {
 			t.Error("archived node should not appear in structural")
 		}
+	}
+}
+
+// ── CountArchived ─────────────────────────────────────────────────────────────
+
+func TestCountArchived_Empty(t *testing.T) {
+	s := newStore(t)
+	count, err := s.CountArchived("no-such-domain")
+	if err != nil {
+		t.Fatalf("CountArchived: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("want 0, got %d", count)
+	}
+}
+
+func TestCountArchived_AfterArchive(t *testing.T) {
+	s := newStore(t)
+	nodes := make([]*db.Node, 5)
+	for i := 0; i < 5; i++ {
+		nodes[i] = mustAddNode(t, s, fmt.Sprintf("Node %d", i), "arch-count")
+	}
+	if err := s.ArchiveNode(nodes[0].ID, "test"); err != nil {
+		t.Fatalf("ArchiveNode 0: %v", err)
+	}
+	if err := s.ArchiveNode(nodes[1].ID, "test"); err != nil {
+		t.Fatalf("ArchiveNode 1: %v", err)
+	}
+
+	count, err := s.CountArchived("arch-count")
+	if err != nil {
+		t.Fatalf("CountArchived: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("want 2, got %d", count)
 	}
 }

@@ -2360,24 +2360,70 @@ func TestSummariseDomain_IncludesRecentChanges(t *testing.T) {
 	}
 }
 
-// TestOrient_IncludesTotalNodes: orient response must include total_nodes count.
-func TestOrient_IncludesTotalNodes(t *testing.T) {
+// TestOrient_LiveNodesCount: orient response must include live_nodes reflecting
+// only non-archived nodes.
+func TestOrient_LiveNodesCount(t *testing.T) {
 	_, h := newEnv(t)
-	addNode(t, h, "Alpha orient", "orient-total", nil)
-	addNode(t, h, "Beta orient", "orient-total", nil)
-	addNode(t, h, "Gamma orient", "orient-total", nil)
+	addNode(t, h, "Alpha orient", "orient-counts", nil)
+	addNode(t, h, "Beta orient", "orient-counts", nil)
+	addNode(t, h, "Gamma orient", "orient-counts", nil)
 
-	tr := call(t, h, "orient", map[string]any{"domain": "orient-total"})
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-counts"})
 	mustNotError(t, tr)
 
 	var resp struct {
-		TotalNodes int `json:"total_nodes"`
+		LiveNodes int `json:"live_nodes"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse orient response: %v", err)
 	}
-	if resp.TotalNodes != 3 {
-		t.Errorf("total_nodes: got %d, want 3", resp.TotalNodes)
+	if resp.LiveNodes != 3 {
+		t.Errorf("live_nodes: got %d, want 3", resp.LiveNodes)
+	}
+}
+
+// TestOrient_ArchivedNodesCount: orient response must include archived_nodes
+// reflecting soft-deleted nodes; live_nodes must exclude them.
+func TestOrient_ArchivedNodesCount(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Keep A", "orient-arch-count", nil)
+	addNode(t, h, "Keep B", "orient-arch-count", nil)
+	archiveID := addNode(t, h, "Archive me", "orient-arch-count", nil)
+
+	call(t, h, "forget", map[string]any{"id": archiveID, "reason": "test"})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-arch-count"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		LiveNodes     int `json:"live_nodes"`
+		ArchivedNodes int `json:"archived_nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.LiveNodes != 2 {
+		t.Errorf("live_nodes: got %d, want 2", resp.LiveNodes)
+	}
+	if resp.ArchivedNodes != 1 {
+		t.Errorf("archived_nodes: got %d, want 1", resp.ArchivedNodes)
+	}
+}
+
+// TestOrient_NoTotalNodes: orient response must NOT contain a total_nodes field.
+func TestOrient_NoTotalNodes(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Some node", "orient-no-total", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-no-total"})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if _, ok := raw["total_nodes"]; ok {
+		t.Error("orient response must not contain total_nodes — superseded by live_nodes")
 	}
 }
 
