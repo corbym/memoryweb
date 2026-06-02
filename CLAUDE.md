@@ -217,7 +217,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.17.0)
+## What's implemented (v1.26.1)
 
 All 21 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
@@ -226,15 +226,17 @@ Key implemented features:
 - Soft delete: archived_at, audit_log with provenance column, ArchiveNode, RestoreNode
 - Semantic search via sqlite-vec and Ollama (snowflake-arctic-embed)
 - Batch operations: remember/revise/connect all accept `items` arrays
-- orient: declared_spine (nodes with occurred_at, chronological, limit 20)
-- significance: dual-signal importance (declared + structural recency-weighted)
-- visualise: domain graph and single-node neighbourhood as Mermaid
+- orient: lean field format (id + label + why_matters ≤150 chars, sentence-boundary truncated, truncated flag); significant=10/recent=5/spine=20; live_nodes + archived_nodes; optional topic parameter returns relevant section instead of significant
+- significance: dual-signal importance (declared + structural recency-weighted); memory_id + tags filter modes
+- history: memory_id mode (neighbourhood-scoped); tags filter
+- visualise: domain graph and single-node neighbourhood as Mermaid with truncation metadata
 - audit: stale/orphans/archived modes replacing whats_stale/disconnected/forgotten
 - forget_all: batch archive in a single atomic call
 - rename_domain + merge-domains CLI
 - Stats: WKD session scoring logged to MEMORYWEB_STATS_FILE
 - Hooks: Stop (save) and PreCompact with orphan nudge and dream digest
 - Schema staleness defence: legacy key rejection, server_version in orient, tools/list_changed notification
+- Instructions: credentials advisory (never file credentials/API keys/tokens in memories)
 
 ---
 
