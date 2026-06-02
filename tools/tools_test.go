@@ -2636,11 +2636,11 @@ func TestOrient_DescriptionImperativeFirst(t *testing.T) {
 	t.Error("orient tool not found in ListTools response")
 }
 
-// TestOrient_RecentCappedAtTen: the recent section must contain at most 10 entries
-// even when more than 10 live nodes exist in the domain.
-func TestOrient_RecentCappedAtTen(t *testing.T) {
+// TestOrient_RecentCappedAtFive: the recent section must contain at most 5 entries
+// even when more than 5 live nodes exist in the domain.
+func TestOrient_RecentCappedAtFive(t *testing.T) {
 	_, h := newEnv(t)
-	for i := 0; i < 15; i++ {
+	for i := 0; i < 10; i++ {
 		addNode(t, h, fmt.Sprintf("Node %02d", i), "orient-recent-cap", nil)
 	}
 
@@ -2653,9 +2653,163 @@ func TestOrient_RecentCappedAtTen(t *testing.T) {
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse orient response: %v", err)
 	}
-	if len(resp.Recent) > 10 {
-		t.Errorf("recent: got %d entries, want at most 10", len(resp.Recent))
+	if len(resp.Recent) > 5 {
+		t.Errorf("recent: got %d entries, want at most 5", len(resp.Recent))
 	}
+}
+
+// TestOrient_SignificantCappedAtTen: significant must contain at most 10 entries
+// even when more than 10 nodes have inbound edges in the domain.
+func TestOrient_SignificantCappedAtTen(t *testing.T) {
+	_, h := newEnv(t)
+	// 12 hub nodes each with one inbound linker → all qualify for significant.
+	for i := 0; i < 12; i++ {
+		hubID := addNode(t, h, fmt.Sprintf("Hub %02d", i), "orient-sig-cap", nil)
+		linkerID := addNode(t, h, fmt.Sprintf("Linker %02d", i), "orient-sig-cap", nil)
+		call(t, h, "connect", map[string]any{
+			"from_memory":  linkerID,
+			"to_memory":    hubID,
+			"relationship": "connects_to",
+			"narrative":    "links to hub",
+		})
+	}
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-sig-cap"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Significant []json.RawMessage `json:"significant"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.Significant) > 10 {
+		t.Errorf("significant: got %d entries, want at most 10", len(resp.Significant))
+	}
+}
+
+// TestOrient_LeanFormat_NoDescription: orient must not include a description field
+// in any section entry — lean format returns id, label, why_matters only.
+func TestOrient_LeanFormat_NoDescription(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Node with description", "orient-lean-nodesc", map[string]any{
+		"description": "This description must not appear in orient output.",
+		"why_matters": "It matters because of X.",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-lean-nodesc"})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	for _, section := range []string{"declared_spine", "significant", "recent"} {
+		sectionRaw, ok := raw[section]
+		if !ok {
+			continue
+		}
+		var entries []map[string]json.RawMessage
+		if err := json.Unmarshal(sectionRaw, &entries); err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if _, hasDesc := entry["description"]; hasDesc {
+				t.Errorf("section %q: entry contains 'description' field — orient must use lean format", section)
+			}
+		}
+	}
+}
+
+// TestOrient_LeanFormat_WhyMattersTruncated: a why_matters longer than 150 chars
+// must be truncated to 150 chars + "..." in orient output.
+func TestOrient_LeanFormat_WhyMattersTruncated(t *testing.T) {
+	_, h := newEnv(t)
+	longWhy := strings.Repeat("x", 200)
+	addNode(t, h, "Node long why", "orient-lean-trunc", map[string]any{
+		"why_matters": longWhy,
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-lean-trunc"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Recent []struct {
+			WhyMatters string `json:"why_matters"`
+		} `json:"recent"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.Recent) == 0 {
+		t.Fatal("recent section is empty")
+	}
+	wm := resp.Recent[0].WhyMatters
+	const maxLen = 153 // 150 + len("...")
+	if len(wm) > maxLen {
+		t.Errorf("why_matters: got %d chars, want at most %d", len(wm), maxLen)
+	}
+	if !strings.HasSuffix(wm, "...") {
+		t.Errorf("why_matters must end with '...', got %q", wm)
+	}
+}
+
+// TestOrient_LeanFormat_WhyMattersOmitted: a node with no why_matters must not
+// include a why_matters key in the orient entry (omitempty, not empty string).
+func TestOrient_LeanFormat_WhyMattersOmitted(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Node no why", "orient-lean-omit", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-lean-omit"})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	recentRaw, ok := raw["recent"]
+	if !ok {
+		t.Fatal("recent section missing from orient response")
+	}
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(recentRaw, &entries); err != nil {
+		t.Fatalf("parse recent entries: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("recent section is empty")
+	}
+	if _, hasWhy := entries[0]["why_matters"]; hasWhy {
+		t.Error("why_matters must be omitted when empty — lean format uses omitempty")
+	}
+}
+
+// TestListTools_OrientDescriptionTruncationDisclosure: orient description must
+// tell agents that full content requires recall(id), not orient alone.
+func TestListTools_OrientDescriptionTruncationDisclosure(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "orient" {
+			if !strings.Contains(td.Description, "recall(id)") {
+				t.Error(`orient description must contain "recall(id)" — truncation disclosure is missing`)
+			}
+			return
+		}
+	}
+	t.Error("orient tool not found in ListTools response")
 }
 
 // ── add_node tags ─────────────────────────────────────────────────────────────

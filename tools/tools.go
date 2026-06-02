@@ -260,7 +260,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query.",
+			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -894,6 +894,14 @@ func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
+func truncateWhy(s string) string {
+	const limit = 150
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "..."
+}
+
 func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain string `json:"domain"`
@@ -916,13 +924,13 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	// Step 2: fetch significant nodes (structurally load-bearing, recency-weighted inbound degree).
-	sigResult, err := h.store.GetSignificance(a.Domain, 15, 90, nil)
+	sigResult, err := h.store.GetSignificance(a.Domain, 10, 90, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 3: fetch recent changes — capped at 10.
-	recent, err := h.store.RecentChanges(a.Domain, 10)
+	// Step 3: fetch recent changes — capped at 5.
+	recent, err := h.store.RecentChanges(a.Domain, 5)
 	if err != nil {
 		return nil, err
 	}
@@ -933,20 +941,18 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	// Step 5: build structured response for the model to synthesise.
-	type nodeEntry struct {
-		ID          string  `json:"id"`
-		Label       string  `json:"label"`
-		Description string  `json:"description,omitempty"`
-		WhyMatters  string  `json:"why_matters,omitempty"`
-		OccurredAt  *string `json:"occurred_at,omitempty"`
+	// Step 5: build lean response — id, label, truncated why_matters only; no description.
+	type leanEntry struct {
+		ID         string  `json:"id"`
+		Label      string  `json:"label"`
+		WhyMatters string  `json:"why_matters,omitempty"`
+		OccurredAt *string `json:"occurred_at,omitempty"`
 	}
-	toEntry := func(n db.Node) nodeEntry {
-		e := nodeEntry{
-			ID:          n.ID,
-			Label:       n.Label,
-			Description: n.Description,
-			WhyMatters:  n.WhyMatters,
+	toLean := func(n db.Node) leanEntry {
+		e := leanEntry{
+			ID:         n.ID,
+			Label:      n.Label,
+			WhyMatters: truncateWhy(n.WhyMatters),
 		}
 		if n.OccurredAt != nil {
 			s := n.OccurredAt.Format("2006-01-02")
@@ -956,22 +962,22 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	type scoredEntry struct {
-		nodeEntry
+		leanEntry
 		ImportanceScore float64 `json:"importance_score"`
 	}
 
-	recentEntries := make([]nodeEntry, len(recent))
+	recentEntries := make([]leanEntry, len(recent))
 	for i, n := range recent {
-		recentEntries[i] = toEntry(n)
+		recentEntries[i] = toLean(n)
 	}
-	spineEntries := make([]nodeEntry, len(spineNodes))
+	spineEntries := make([]leanEntry, len(spineNodes))
 	for i, n := range spineNodes {
-		spineEntries[i] = toEntry(n)
+		spineEntries[i] = toLean(n)
 	}
 	sigEntries := make([]scoredEntry, len(sigResult.Structural))
 	for i, sn := range sigResult.Structural {
 		sigEntries[i] = scoredEntry{
-			nodeEntry:       toEntry(sn.Node),
+			leanEntry:       toLean(sn.Node),
 			ImportanceScore: sn.ImportanceScore,
 		}
 	}
