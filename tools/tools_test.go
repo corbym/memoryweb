@@ -2931,6 +2931,149 @@ func TestListTools_OrientDescriptionTruncationDisclosure(t *testing.T) {
 	t.Error("orient tool not found in ListTools response")
 }
 
+// ── orient topic ──────────────────────────────────────────────────────────────
+
+// TestOrient_Topic_ReturnsRelevantSection: orient with topic must return a
+// relevant section and must not return significant.
+func TestOrient_Topic_ReturnsRelevantSection(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "Authentication design decision", "orient-topic-dom", map[string]any{
+		"description": "We chose JWT over sessions.",
+		"why_matters": "Stateless tokens simplify horizontal scaling.",
+	})
+
+	tr := call(t, h, "orient", map[string]any{
+		"domain": "orient-topic-dom",
+		"topic":  "authentication",
+	})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if _, ok := raw["relevant"]; !ok {
+		t.Error("orient with topic must return a relevant section")
+	}
+	if _, ok := raw["significant"]; ok {
+		t.Error("orient with topic must not return significant — relevant replaces it")
+	}
+}
+
+// TestOrient_Topic_RelevantIsLean: relevant entries must use lean format —
+// no description field, why_matters present.
+func TestOrient_Topic_RelevantIsLean(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "Caching strategy", "orient-topic-lean", map[string]any{
+		"description": "This must not appear in orient output.",
+		"why_matters": "Cache hits reduce DB load.",
+	})
+
+	tr := call(t, h, "orient", map[string]any{
+		"domain": "orient-topic-lean",
+		"topic":  "caching",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Relevant []map[string]json.RawMessage `json:"relevant"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if len(resp.Relevant) == 0 {
+		t.Fatal("relevant section is empty")
+	}
+	entry := resp.Relevant[0]
+	if _, hasDesc := entry["description"]; hasDesc {
+		t.Error("relevant entry must not contain description field — lean format")
+	}
+	if _, hasWhy := entry["why_matters"]; !hasWhy {
+		t.Error("relevant entry must contain why_matters when node has one")
+	}
+}
+
+// TestOrient_Topic_SpineAndRecentUnchanged: topic mode must still return
+// declared_spine and recent unchanged.
+func TestOrient_Topic_SpineAndRecentUnchanged(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "Database migration", "orient-topic-spine", map[string]any{
+		"occurred_at": "2026-01-01",
+		"why_matters": "Sets DB schema baseline.",
+	})
+	addNode(t, h, "Recent work item", "orient-topic-spine", nil)
+
+	tr := call(t, h, "orient", map[string]any{
+		"domain": "orient-topic-spine",
+		"topic":  "migration",
+	})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if _, ok := raw["declared_spine"]; !ok {
+		t.Error("orient with topic must still return declared_spine")
+	}
+	if _, ok := raw["recent"]; !ok {
+		t.Error("orient with topic must still return recent")
+	}
+}
+
+// TestOrient_NoTopic_SignificantPresent: orient without topic must return
+// significant and must not return relevant (no regression).
+func TestOrient_NoTopic_SignificantPresent(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Some node", "orient-notopic", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-notopic"})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if _, ok := raw["significant"]; !ok {
+		t.Error("orient without topic must return significant section")
+	}
+	if _, ok := raw["relevant"]; ok {
+		t.Error("orient without topic must not return relevant section")
+	}
+}
+
+// TestListTools_OrientDescriptionMentionsTopic: orient description must
+// mention the topic parameter so agents know to use it.
+func TestListTools_OrientDescriptionMentionsTopic(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "orient" {
+			if !strings.Contains(td.Description, "pass topic") {
+				t.Error(`orient description must contain "pass topic" — agents must know to use the parameter`)
+			}
+			return
+		}
+	}
+	t.Error("orient tool not found in ListTools response")
+}
+
 // ── add_node tags ─────────────────────────────────────────────────────────────
 
 func TestAddNode_WithTags_SearchableByTag(t *testing.T) {

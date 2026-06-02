@@ -260,11 +260,12 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain. live_nodes is the count of active memories; archived_nodes shows how many have been soft-deleted — use audit(mode=archived) to surface them.",
+			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain. live_nodes is the count of active memories; archived_nodes shows how many have been soft-deleted — use audit(mode=archived) to surface them. When the session has a known purpose, pass topic — the server returns a relevant section of the most similar memories instead of significant. declared_spine and recent are always returned.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
 					"domain": {Type: "string", Description: "Optional — omit for a cross-domain snapshot to find where work was last happening. Provide to get the full three-section orient for a specific domain."},
+					"topic":  {Type: "string", Description: "Optional — the user's current question or task. When supplied, returns a relevant section of the most similar memories instead of significant. Pass topic when the session has a known purpose."},
 				},
 			},
 		},
@@ -894,6 +895,83 @@ func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
+func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
+	liveNodes, err := h.store.CountNodes(domain)
+	if err != nil {
+		return nil, err
+	}
+	archivedNodes, err := h.store.CountArchived(domain)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := h.store.SearchNodes(topic, domain, 5)
+	if err != nil {
+		return nil, err
+	}
+
+	type leanEntry struct {
+		ID         string  `json:"id"`
+		Label      string  `json:"label"`
+		WhyMatters string  `json:"why_matters,omitempty"`
+		Truncated  bool    `json:"truncated,omitempty"`
+		OccurredAt *string `json:"occurred_at,omitempty"`
+	}
+	toLean := func(n db.Node) leanEntry {
+		why, truncated := truncateWhy(n.WhyMatters)
+		e := leanEntry{ID: n.ID, Label: n.Label, WhyMatters: why, Truncated: truncated}
+		if n.OccurredAt != nil {
+			s := n.OccurredAt.Format("2006-01-02")
+			e.OccurredAt = &s
+		}
+		return e
+	}
+
+	relevant := make([]leanEntry, len(result.Nodes))
+	for i, nr := range result.Nodes {
+		relevant[i] = toLean(nr.Node)
+	}
+
+	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, 20)
+	if err != nil {
+		return nil, err
+	}
+	spineEntries := make([]leanEntry, len(spineNodes))
+	for i, n := range spineNodes {
+		spineEntries[i] = toLean(n)
+	}
+
+	recent, err := h.store.RecentChanges(domain, 5)
+	if err != nil {
+		return nil, err
+	}
+	recentEntries := make([]leanEntry, len(recent))
+	for i, n := range recent {
+		recentEntries[i] = toLean(n)
+	}
+
+	resp := struct {
+		SummaryHint   string      `json:"summary_hint"`
+		ServerVersion string      `json:"server_version"`
+		LiveNodes     int         `json:"live_nodes"`
+		ArchivedNodes int         `json:"archived_nodes"`
+		DeclaredSpine interface{} `json:"declared_spine"`
+		Relevant      interface{} `json:"relevant"`
+		Recent        interface{} `json:"recent"`
+	}{
+		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. relevant lists memories most similar to the supplied topic. declared_spine lists key decisions chronologically. recent shows where work was last happening. Plain prose, no bullet points.",
+		ServerVersion: h.version,
+		LiveNodes:     liveNodes,
+		ArchivedNodes: archivedNodes,
+		DeclaredSpine: spineEntries,
+		Relevant:      relevant,
+		Recent:        recentEntries,
+	}
+
+	b, _ := json.MarshalIndent(resp, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
 func truncateWhy(s string) (string, bool) {
 	const limit = 150
 	if len(s) <= limit {
@@ -918,6 +996,7 @@ func truncateWhy(s string) (string, bool) {
 func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain string `json:"domain"`
+		Topic  string `json:"topic"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -925,6 +1004,10 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 
 	if a.Domain == "" {
 		return h.orientCrossDomain()
+	}
+
+	if a.Topic != "" {
+		return h.orientWithTopic(a.Domain, a.Topic)
 	}
 
 	// Step 1: count live and archived nodes for the domain.
