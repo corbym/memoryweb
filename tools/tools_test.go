@@ -201,7 +201,41 @@ func TestInstructions_NonEmpty(t *testing.T) {
 	}
 }
 
+// TestInstructions_CredentialsAdvisory: Instructions must tell agents never to
+// file credentials or API keys in memories.
+func TestInstructions_CredentialsAdvisory(t *testing.T) {
+	if !strings.Contains(tools.Instructions, "credentials") {
+		t.Error(`Instructions must contain credentials advisory — agents must be told never to file credentials or API keys`)
+	}
+}
+
 // ── ListTools ─────────────────────────────────────────────────────────────────
+
+// TestListTools_DescriptionsAgentFirst: every tool description must open with
+// an imperative verb — not "The " or "This ". Permanent regression guard.
+func TestListTools_DescriptionsAgentFirst(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if strings.HasPrefix(td.Description, "The ") || strings.HasPrefix(td.Description, "This ") {
+			t.Errorf("tool %q description starts with %q — must open with an imperative verb, not 'The' or 'This'",
+				td.Name, td.Description[:min(len(td.Description), 10)])
+		}
+	}
+}
 
 func TestListTools_ReturnsExpectedTools(t *testing.T) {
 	_, h := newEnv(t)

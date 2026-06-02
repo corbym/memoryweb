@@ -17,7 +17,8 @@ const Instructions = "This tool is called memoryweb. Always refer to it as memor
 	"'memoryweb-meta' for memoryweb development. Treat memoryweb as the source " +
 	"of truth for decisions, open questions, and context. File significant " +
 	"findings, decisions, and bugs using remember with a clear why_matters " +
-	"field before the session ends."
+	"field before the session ends.\n\n" +
+	"Never file operational credentials, connection strings, API keys, or tokens in memories."
 
 type Handler struct {
 	store       *db.Store
