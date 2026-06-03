@@ -35,6 +35,32 @@ func mustAddNode(t *testing.T, s *db.Store, label, domain string) *db.Node {
 	return n
 }
 
+func mustAddNodeWithTags(t *testing.T, s *db.Store, label, domain, tags string) *db.Node {
+	t.Helper()
+	n, err := s.AddNode(label, "desc", "why", domain, nil, tags, "")
+	if err != nil {
+		t.Fatalf("AddNode(%q): %v", label, err)
+	}
+	return n
+}
+
+func nodeIDs(nodes []db.Node) []string {
+	ids := make([]string, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	return ids
+}
+
+func contains(ids []string, id string) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
+}
+
 func ptr(t time.Time) *time.Time { return &t }
 
 // ── AddNode ───────────────────────────────────────────────────────────────────
@@ -1931,5 +1957,72 @@ func TestSearchNodes_MemoryID_EmptyFallsBackToNormal(t *testing.T) {
 	}
 	if len(res.Nodes) != 2 {
 		t.Errorf("expected 2 results with no memory_id filter, got %d", len(res.Nodes))
+	}
+}
+
+// ── RecentChangesScoped ───────────────────────────────────────────────────────
+
+func TestRecentChangesByTags_MatchesOneTag(t *testing.T) {
+	s := newStore(t)
+	tagged := mustAddNodeWithTags(t, s, "TDD story", "proj", "TDD testing")
+	mustAddNode(t, s, "untagged story", "proj")
+
+	nodes, err := s.RecentChangesScoped("", 2, "proj", []string{"TDD"}, 10)
+	if err != nil {
+		t.Fatalf("RecentChangesScoped: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].ID != tagged.ID {
+		t.Errorf("expected only tagged node, got %+v", nodes)
+	}
+}
+
+func TestRecentChangesByTags_OR_Semantics(t *testing.T) {
+	s := newStore(t)
+	a := mustAddNodeWithTags(t, s, "alpha", "proj", "TDD")
+	b := mustAddNodeWithTags(t, s, "beta", "proj", "refactor")
+
+	nodes, err := s.RecentChangesScoped("", 2, "proj", []string{"TDD", "refactor"}, 10)
+	if err != nil {
+		t.Fatalf("RecentChangesScoped: %v", err)
+	}
+	ids := nodeIDs(nodes)
+	if !contains(ids, a.ID) || !contains(ids, b.ID) {
+		t.Errorf("expected both nodes, got IDs %v", ids)
+	}
+}
+
+func TestRecentChangesByTags_DomainScoped(t *testing.T) {
+	s := newStore(t)
+	inDomain := mustAddNodeWithTags(t, s, "in domain", "proj-a", "TDD")
+	mustAddNodeWithTags(t, s, "other domain", "proj-b", "TDD")
+
+	nodes, err := s.RecentChangesScoped("", 2, "proj-a", []string{"TDD"}, 10)
+	if err != nil {
+		t.Fatalf("RecentChangesScoped: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].ID != inDomain.ID {
+		t.Errorf("expected only proj-a node, got %+v", nodes)
+	}
+}
+
+func TestRecentChangesForMemoryID_NeighbourhoodOnly(t *testing.T) {
+	s := newStore(t)
+	anchor := mustAddNode(t, s, "anchor", "proj")
+	neighbour := mustAddNode(t, s, "neighbour", "proj")
+	unrelated := mustAddNode(t, s, "unrelated", "proj")
+	s.AddEdge(anchor.ID, neighbour.ID, "connects_to", "")
+
+	nodes, err := s.RecentChangesScoped(anchor.ID, 2, "", nil, 10)
+	if err != nil {
+		t.Fatalf("RecentChangesScoped: %v", err)
+	}
+	ids := nodeIDs(nodes)
+	for _, id := range ids {
+		if id == unrelated.ID {
+			t.Error("unrelated node should be excluded")
+		}
+	}
+	if !contains(ids, anchor.ID) || !contains(ids, neighbour.ID) {
+		t.Errorf("anchor and neighbour should be included, got %v", ids)
 	}
 }

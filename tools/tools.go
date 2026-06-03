@@ -140,13 +140,15 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "recent",
-			Description: "List the most recently added or updated memories, optionally filtered by domain. Good for session orientation. Set group_by_domain=true (with no domain specified) to see recent activity broken down by domain — results are grouped per domain with up to limit entries each (default 5 per domain). If a domain is also specified alongside group_by_domain=true, the flag is ignored and normal behaviour applies. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live entries. Archived entries are hidden. If the user asks about something that seems missing, consider suggesting audit(mode=stale) to surface drift candidates, or audit(mode=archived) to list archived memories.",
+			Description: "List the most recently added or updated memories, optionally filtered by domain. Good for session orientation. Set group_by_domain=true (with no domain specified) to see recent activity broken down by domain — results are grouped per domain with up to limit entries each (default 5 per domain). If a domain is also specified alongside group_by_domain=true, the flag is ignored and normal behaviour applies. Supply tags (comma-separated) to scope to a workstream or topic. Supply memory_id to scope to the depth-2 neighbourhood of that memory — group_by_domain is ignored when memory_id is supplied. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live entries. Archived entries are hidden. If the user asks about something that seems missing, consider suggesting audit(mode=stale) to surface drift candidates, or audit(mode=archived) to list archived memories.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
 					"domain":          {Type: "string", Description: "Optional domain to scope"},
 					"limit":           {Type: "integer", Description: "Max results (default 10, or 5 per domain when group_by_domain=true)"},
 					"group_by_domain": {Type: "boolean", Description: "When true and no domain is specified, group results by domain (up to limit entries per domain)"},
+					"tags":            {Type: "string", Description: "Comma-separated tag filter. Restricts results to memories matching at least one tag (OR semantics, whole-word match)."},
+					"memory_id":       {Type: "string", Description: "Anchor memory ID. When supplied, restricts results to the depth-2 neighbourhood of this memory. group_by_domain is ignored when this is set."},
 				},
 			},
 		},
@@ -596,17 +598,52 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		Domain        string `json:"domain"`
 		Limit         int    `json:"limit"`
 		GroupByDomain bool   `json:"group_by_domain"`
+		Tags          string `json:"tags"`
+		MemoryID      string `json:"memory_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
 	}
 
+	if a.Limit <= 0 {
+		a.Limit = 10
+	}
+	if a.Limit > 500 {
+		a.Limit = 500
+	}
+
+	var tags []string
+	if a.Tags != "" {
+		for _, t := range strings.Split(a.Tags, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				tags = append(tags, t)
+			}
+		}
+	}
+
+	// memory_id scoping: neighbourhood-restricted, group_by_domain ignored.
+	if a.MemoryID != "" {
+		nodes, err := h.store.RecentChangesScoped(a.MemoryID, 2, "", tags, a.Limit)
+		if err != nil {
+			return nil, err
+		}
+		b, _ := json.MarshalIndent(nodes, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	}
+
+	// Tags only (no memory_id): domain-scoped with tag filter.
+	if len(tags) > 0 {
+		nodes, err := h.store.RecentChangesScoped("", 2, a.Domain, tags, a.Limit)
+		if err != nil {
+			return nil, err
+		}
+		b, _ := json.MarshalIndent(nodes, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	}
+
 	// group_by_domain only makes sense when no domain is specified.
 	if a.GroupByDomain && a.Domain == "" {
 		perDomain := a.Limit
-		if perDomain <= 0 {
-			perDomain = 5
-		}
 		// Fetch a broad slice of recent nodes across all domains, then group.
 		// 1000 is a generous upper bound; real deployments are unlikely to exceed it.
 		all, err := h.store.RecentChanges("", 1000)
@@ -638,12 +675,6 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	// Normal (non-grouped) behaviour.
-	if a.Limit <= 0 {
-		a.Limit = 10
-	}
-	if a.Limit > 500 {
-		a.Limit = 500
-	}
 	nodes, err := h.store.RecentChanges(a.Domain, a.Limit)
 	if err != nil {
 		return nil, err

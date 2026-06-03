@@ -1382,6 +1382,66 @@ func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 	return nodes, nil
 }
 
+// RecentChangesScoped is a composable variant of RecentChanges that supports
+// tag filtering and neighbourhood scoping via a memory_id.
+//
+// When memoryID is non-empty the query is restricted to the depth-hop
+// neighbourhood of that memory; domain is ignored in that case.
+// When tags is non-nil and non-empty, only nodes whose tags column contains
+// at least one of the supplied tags (whole-word OR match) are returned.
+func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, tags []string, limit int) ([]Node, error) {
+	domain = s.ResolveAlias(domain)
+	conds := []string{"archived_at IS NULL"}
+	args := []interface{}{}
+
+	if memoryID != "" {
+		ids, _, err := s.neighbourhoodIDs(memoryID, depth)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		placeholders := make([]string, len(ids))
+		for i, id := range ids {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		conds = append(conds, "id IN ("+strings.Join(placeholders, ",")+")")
+	} else if domain != "" {
+		conds = append(conds, "domain = ?")
+		args = append(args, domain)
+	}
+
+	conds, args = tagFilter("tags", tags, conds, args)
+	args = append(args, limit)
+
+	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes WHERE " +
+		strings.Join(conds, " AND ") + " ORDER BY updated_at DESC LIMIT ?"
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		var oa sql.NullTime
+		var aa sql.NullTime
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, nil
+}
+
 // Timeline returns nodes ordered by COALESCE(occurred_at, created_at) ASC.
 // When importantOnly is true, only nodes with occurred_at explicitly set are returned.
 // tags filters to nodes matching at least one tag (whole-word match).

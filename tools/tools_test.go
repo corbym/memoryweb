@@ -7221,3 +7221,170 @@ func TestSearch_MemoryID_SchemaHasProperty(t *testing.T) {
 	}
 	t.Fatal("search tool not found in ListTools")
 }
+
+// ── recent tags + memory_id scoping ──────────────────────────────────────────
+
+func TestRecent_TagsFilter(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	taggedID := addNode(t, h, "TDD story", "proj", map[string]any{"tags": "TDD testing"})
+	addNode(t, h, "untagged story", "proj", nil)
+
+	tr := call(t, h, "recent", map[string]any{
+		"domain": "proj",
+		"tags":   "TDD",
+	})
+	mustNotError(t, tr)
+
+	var nodes []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+		t.Fatalf("parse recent result: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Errorf("expected 1 result, got %d", len(nodes))
+	}
+	if len(nodes) > 0 && nodes[0]["id"] != taggedID {
+		t.Errorf("expected tagged node %q, got %q", taggedID, nodes[0]["id"])
+	}
+}
+
+func TestRecent_MemoryID_ScopesNeighbourhood(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchorID := addNode(t, h, "anchor", "proj", nil)
+	neighbourID := addNode(t, h, "neighbour", "proj", nil)
+	unrelatedID := addNode(t, h, "unrelated", "proj", nil)
+
+	call(t, h, "connect", map[string]any{
+		"from_memory":  anchorID,
+		"to_memory":    neighbourID,
+		"relationship": "connects_to",
+	})
+
+	tr := call(t, h, "recent", map[string]any{
+		"memory_id": anchorID,
+	})
+	mustNotError(t, tr)
+
+	var nodes []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+		t.Fatalf("parse recent result: %v", err)
+	}
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if id, ok := n["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	for _, id := range ids {
+		if id == unrelatedID {
+			t.Error("unrelated node should be excluded when memory_id is set")
+		}
+	}
+	if !contains(ids, anchorID) || !contains(ids, neighbourID) {
+		t.Errorf("anchor and neighbour should be included, got %v", ids)
+	}
+}
+
+func TestRecent_TagsAndMemoryID_Combined(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchorID := addNode(t, h, "anchor", "proj", nil)
+	taggedNeighbourID := addNode(t, h, "tagged neighbour", "proj", map[string]any{"tags": "TDD"})
+	untaggedNeighbourID := addNode(t, h, "untagged neighbour", "proj", nil)
+
+	call(t, h, "connect", map[string]any{"from_memory": anchorID, "to_memory": taggedNeighbourID, "relationship": "connects_to"})
+	call(t, h, "connect", map[string]any{"from_memory": anchorID, "to_memory": untaggedNeighbourID, "relationship": "connects_to"})
+
+	tr := call(t, h, "recent", map[string]any{
+		"memory_id": anchorID,
+		"tags":      "TDD",
+	})
+	mustNotError(t, tr)
+
+	var nodes []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+		t.Fatalf("parse recent result: %v", err)
+	}
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if id, ok := n["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	if contains(ids, untaggedNeighbourID) {
+		t.Error("untagged neighbour should be excluded when tags filter is applied")
+	}
+	if !contains(ids, taggedNeighbourID) {
+		t.Error("tagged neighbour should be included")
+	}
+}
+
+func TestRecent_ExistingBehaviourUnchanged(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	id1 := addNode(t, h, "alpha recent", "proj", nil)
+	id2 := addNode(t, h, "beta recent", "proj", nil)
+
+	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
+	mustNotError(t, tr)
+
+	var nodes []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+		t.Fatalf("parse recent result: %v", err)
+	}
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if id, ok := n["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	if !contains(ids, id1) || !contains(ids, id2) {
+		t.Errorf("both nodes should appear with no scoping, got %v", ids)
+	}
+}
+
+// TestRecent_SchemaHasTagsAndMemoryID: the recent tool must expose both new
+// properties in its input schema.
+func TestRecent_SchemaHasTagsAndMemoryID(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "recent" {
+			continue
+		}
+		for _, prop := range []string{"tags", "memory_id"} {
+			p, ok := td.InputSchema.Properties[prop]
+			if !ok {
+				t.Errorf("recent tool missing %q property in schema", prop)
+				continue
+			}
+			if p.Description == "" {
+				t.Errorf("recent tool %q property must have a description", prop)
+			}
+		}
+		return
+	}
+	t.Fatal("recent tool not found in ListTools")
+}
