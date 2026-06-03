@@ -676,7 +676,7 @@ func TestArchiveNode_SetsArchivedAt(t *testing.T) {
 	}
 
 	// ListArchived should now include this node
-	archived, err := s.ListArchived("")
+	archived, err := s.ListArchived("", nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -751,7 +751,7 @@ func TestRestoreNode_RemovedFromListArchived(t *testing.T) {
 	s.ArchiveNode(n.ID, "reason")
 	s.RestoreNode(n.ID)
 
-	archived, err := s.ListArchived("")
+	archived, err := s.ListArchived("", nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -779,7 +779,7 @@ func TestListArchived_DomainFilter(t *testing.T) {
 	s.ArchiveNode(nA.ID, "")
 	s.ArchiveNode(nB.ID, "")
 
-	archived, err := s.ListArchived("domain-a")
+	archived, err := s.ListArchived("domain-a", nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -792,7 +792,7 @@ func TestListArchived_Empty(t *testing.T) {
 	s := newStore(t)
 	mustAddNode(t, s, "live node", "proj")
 
-	archived, err := s.ListArchived("")
+	archived, err := s.ListArchived("", nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -808,7 +808,7 @@ func TestListArchived_NoDomainReturnsAll(t *testing.T) {
 	s.ArchiveNode(nA.ID, "")
 	s.ArchiveNode(nB.ID, "")
 
-	archived, err := s.ListArchived("")
+	archived, err := s.ListArchived("", nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -823,7 +823,7 @@ func TestListArchived_LiveNodesNotIncluded(t *testing.T) {
 	archived := mustAddNode(t, s, "archived", "proj")
 	s.ArchiveNode(archived.ID, "reason")
 
-	listed, err := s.ListArchived("")
+	listed, err := s.ListArchived("", nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -1222,7 +1222,7 @@ func TestFindDrift_TransientOlderThan7Days_IsDriftCandidate(t *testing.T) {
 	}
 	rawDB.Close()
 
-	candidates, err := s.FindDrift("transient-drift", 10)
+	candidates, err := s.FindDrift("transient-drift", 10, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
@@ -1247,7 +1247,7 @@ func TestFindDrift_TransientNewerThan7Days_NotDriftCandidate(t *testing.T) {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	candidates, err := s.FindDrift("transient-new", 10)
+	candidates, err := s.FindDrift("transient-new", 10, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
@@ -2024,5 +2024,94 @@ func TestRecentChangesForMemoryID_NeighbourhoodOnly(t *testing.T) {
 	}
 	if !contains(ids, anchor.ID) || !contains(ids, neighbour.ID) {
 		t.Errorf("anchor and neighbour should be included, got %v", ids)
+	}
+}
+
+// ── FindDrift / FindDisconnected / ListArchived scoping ───────────────────────
+
+func TestFindDrift_TagsFilter(t *testing.T) {
+	s := newStore(t)
+	// "old" in label triggers Rule 2 (superseded label) — instant stale candidate.
+	mustAddNodeWithTags(t, s, "old plan TDD", "proj", "TDD")
+	mustAddNodeWithTags(t, s, "old approach other", "proj", "other")
+
+	candidates, err := s.FindDrift("proj", 10, []string{"TDD"}, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift with tags: %v", err)
+	}
+	for _, c := range candidates {
+		if c.Node.Tags != "TDD" {
+			t.Errorf("expected only TDD-tagged candidate, got tag %q (label %q)", c.Node.Tags, c.Node.Label)
+		}
+	}
+	if len(candidates) == 0 {
+		t.Error("expected at least one TDD-tagged candidate")
+	}
+}
+
+func TestFindDrift_MemoryID_NeighbourhoodOnly(t *testing.T) {
+	s := newStore(t)
+	anchor := mustAddNode(t, s, "anchor", "proj")
+	inNeighbour := mustAddNode(t, s, "old neighbour plan", "proj")
+	unrelated := mustAddNode(t, s, "old unrelated plan", "proj")
+	s.AddEdge(anchor.ID, inNeighbour.ID, "connects_to", "")
+
+	candidates, err := s.FindDrift("", 10, nil, anchor.ID, 2)
+	if err != nil {
+		t.Fatalf("FindDrift with memory_id: %v", err)
+	}
+	for _, c := range candidates {
+		if c.Node.ID == unrelated.ID {
+			t.Errorf("unrelated node %q should be excluded when memory_id is set", c.Node.Label)
+		}
+	}
+	found := false
+	for _, c := range candidates {
+		if c.Node.ID == inNeighbour.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("neighbour node should be included in memory_id-scoped drift results")
+	}
+}
+
+func TestFindDisconnected_TagsFilter(t *testing.T) {
+	s := newStore(t)
+	inResult := mustAddNodeWithTags(t, s, "orphan review", "proj", "review")
+	mustAddNodeWithTags(t, s, "orphan other", "proj", "other")
+
+	nodes, err := s.FindDisconnected("", []string{"review"})
+	if err != nil {
+		t.Fatalf("FindDisconnected with tags: %v", err)
+	}
+	ids := nodeIDs(nodes)
+	if !contains(ids, inResult.ID) {
+		t.Error("review-tagged orphan should be included")
+	}
+	for _, n := range nodes {
+		if n.Tags != "review" {
+			t.Errorf("expected only review-tagged orphan, got tag %q", n.Tags)
+		}
+	}
+}
+
+func TestListArchived_TagsFilter(t *testing.T) {
+	s := newStore(t)
+	n1 := mustAddNodeWithTags(t, s, "spike idea", "proj", "spike")
+	n2 := mustAddNodeWithTags(t, s, "other idea", "proj", "other")
+	s.ArchiveNode(n1.ID, "test archive")
+	s.ArchiveNode(n2.ID, "test archive")
+
+	nodes, err := s.ListArchived("", []string{"spike"})
+	if err != nil {
+		t.Fatalf("ListArchived with tags: %v", err)
+	}
+	ids := nodeIDs(nodes)
+	if !contains(ids, n1.ID) {
+		t.Error("spike-tagged archived node should be included")
+	}
+	if contains(ids, n2.ID) {
+		t.Error("other-tagged archived node should be excluded")
 	}
 }

@@ -7388,3 +7388,205 @@ func TestRecent_SchemaHasTagsAndMemoryID(t *testing.T) {
 	}
 	t.Fatal("recent tool not found in ListTools")
 }
+
+// ── audit tags + memory_id scoping ───────────────────────────────────────────
+
+func TestAudit_Stale_TagsFilter(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	addNode(t, h, "old plan TDD", "proj", map[string]any{"tags": "TDD"})
+	addNode(t, h, "old approach other", "proj", map[string]any{"tags": "other"})
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "stale",
+		"domain": "proj",
+		"tags":   "TDD",
+	})
+	mustNotError(t, tr)
+
+	var candidates []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &candidates); err != nil {
+		t.Fatalf("parse audit stale result: %v", err)
+	}
+	for _, c := range candidates {
+		n, _ := c["node"].(map[string]any)
+		if n == nil {
+			continue
+		}
+		if n["tags"] != "TDD" {
+			t.Errorf("expected only TDD-tagged candidate, got tags=%v label=%v", n["tags"], n["label"])
+		}
+	}
+	if len(candidates) == 0 {
+		t.Error("expected at least one TDD-tagged stale candidate")
+	}
+}
+
+func TestAudit_Orphans_TagsFilter(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	reviewID := addNode(t, h, "orphan review node", "proj", map[string]any{"tags": "review"})
+	addNode(t, h, "orphan other node", "proj", map[string]any{"tags": "other"})
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode": "orphans",
+		"tags": "review",
+	})
+	mustNotError(t, tr)
+
+	var nodes []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+		t.Fatalf("parse audit orphans result: %v", err)
+	}
+	ids := make([]string, 0)
+	for _, n := range nodes {
+		if id, ok := n["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	if !contains(ids, reviewID) {
+		t.Error("review-tagged orphan should be included")
+	}
+	for _, n := range nodes {
+		if n["tags"] != "review" {
+			t.Errorf("expected only review-tagged orphan, got tags=%v", n["tags"])
+		}
+	}
+}
+
+func TestAudit_Archived_TagsFilter(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	spikeID := addNode(t, h, "spike idea", "proj", map[string]any{"tags": "spike"})
+	otherID := addNode(t, h, "other idea", "proj", map[string]any{"tags": "other"})
+
+	call(t, h, "forget", map[string]any{"id": spikeID, "reason": "test"})
+	call(t, h, "forget", map[string]any{"id": otherID, "reason": "test"})
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode": "archived",
+		"tags": "spike",
+	})
+	mustNotError(t, tr)
+
+	var nodes []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+		t.Fatalf("parse audit archived result: %v", err)
+	}
+	ids := make([]string, 0)
+	for _, n := range nodes {
+		if id, ok := n["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	if !contains(ids, spikeID) {
+		t.Error("spike-tagged archived node should be included")
+	}
+	if contains(ids, otherID) {
+		t.Error("other-tagged archived node should be excluded")
+	}
+}
+
+func TestAudit_Stale_MemoryID(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchorID := addNode(t, h, "anchor", "proj", nil)
+	inNeighbourID := addNode(t, h, "old neighbour plan", "proj", nil)
+	outsideID := addNode(t, h, "old outside plan", "proj", nil)
+
+	call(t, h, "connect", map[string]any{"from_memory": anchorID, "to_memory": inNeighbourID, "relationship": "connects_to"})
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode":      "stale",
+		"memory_id": anchorID,
+	})
+	mustNotError(t, tr)
+
+	var candidates []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &candidates); err != nil {
+		t.Fatalf("parse audit stale memory_id result: %v", err)
+	}
+	for _, c := range candidates {
+		n, _ := c["node"].(map[string]any)
+		if n == nil {
+			continue
+		}
+		if n["id"] == outsideID {
+			t.Errorf("outside node %q should be excluded when memory_id is set", n["label"])
+		}
+	}
+	found := false
+	for _, c := range candidates {
+		n, _ := c["node"].(map[string]any)
+		if n != nil && n["id"] == inNeighbourID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("neighbour stale node should be included when memory_id is set")
+	}
+}
+
+func TestAudit_ExistingBehaviourUnchanged(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	addNode(t, h, "old plan alpha", "proj", nil)
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "stale",
+		"domain": "proj",
+	})
+	mustNotError(t, tr)
+
+	var candidates []map[string]any
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &candidates); err != nil {
+		t.Fatalf("parse audit result: %v", err)
+	}
+	if len(candidates) == 0 {
+		t.Error("expected at least one stale candidate without tags/memory_id filter")
+	}
+}
+
+func TestAudit_SchemaHasTagsAndMemoryID(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "audit" {
+			continue
+		}
+		for _, prop := range []string{"tags", "memory_id"} {
+			p, ok := td.InputSchema.Properties[prop]
+			if !ok {
+				t.Errorf("audit tool missing %q property in schema", prop)
+				continue
+			}
+			if p.Description == "" {
+				t.Errorf("audit tool %q property must have a description", prop)
+			}
+		}
+		return
+	}
+	t.Fatal("audit tool not found in ListTools")
+}

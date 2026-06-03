@@ -42,3 +42,20 @@ func tagFilter(col string, tags []string, conds []string, args []interface{}) ([
 	conds = append(conds, "("+strings.Join(clauses, " OR ")+")")
 	return conds, args
 }
+
+// nodeMatchesTags reports whether the space-separated tagString contains at least
+// one of the supplied tags as a whole word (case-sensitive, matching tagFilter semantics).
+func nodeMatchesTags(tagString string, tags []string) bool {
+	if tagString == "" || len(tags) == 0 {
+		return false
+	}
+	parts := strings.Fields(tagString)
+	for _, want := range tags {
+		for _, have := range parts {
+			if have == want {
+				return true
+			}
+		}
+	}
+	return false
+}

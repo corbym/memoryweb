@@ -1687,23 +1687,22 @@ func (s *Store) Purge(domain string, before *time.Time, dryRun bool) (PurgeResul
 }
 
 // ListArchived returns all archived nodes, optionally filtered by domain.
-func (s *Store) ListArchived(domain string) ([]Node, error) {
+func (s *Store) ListArchived(domain string, tags []string) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
-	var rows *sql.Rows
-	var err error
+
+	conds := []string{"archived_at IS NOT NULL"}
+	args := []interface{}{}
 
 	if domain != "" {
-		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
-			 WHERE archived_at IS NOT NULL AND domain = ? ORDER BY archived_at DESC`,
-			domain,
-		)
-	} else {
-		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
-			 WHERE archived_at IS NOT NULL ORDER BY archived_at DESC`,
-		)
+		conds = append(conds, "domain = ?")
+		args = append(args, domain)
 	}
+	conds, args = tagFilter("tags", tags, conds, args)
+
+	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes WHERE " +
+		strings.Join(conds, " AND ") + " ORDER BY archived_at DESC"
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1853,7 +1852,7 @@ func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
 //  3. Stale open question: contains open-question keywords and is older than 30 days.
 //  4. Duplicate label: identical lowercased label in the same domain.
 //  5. Transient node older than 7 days.
-func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
+func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID string, depth int) ([]DriftCandidate, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -2070,6 +2069,36 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	rows5.Close()
 	if err = rows5.Err(); err != nil {
 		return nil, err
+	}
+
+	// Post-filter by neighbourhood (memory_id scoping).
+	if memoryID != "" {
+		allowedIDs, _, err := s.neighbourhoodIDs(memoryID, depth)
+		if err != nil {
+			return nil, err
+		}
+		allowed := make(map[string]bool, len(allowedIDs))
+		for _, id := range allowedIDs {
+			allowed[id] = true
+		}
+		filtered := out[:0]
+		for _, c := range out {
+			if allowed[c.Node.ID] {
+				filtered = append(filtered, c)
+			}
+		}
+		out = filtered
+	}
+
+	// Post-filter by tags (whole-word OR match).
+	if len(tags) > 0 {
+		filtered := out[:0]
+		for _, c := range out {
+			if nodeMatchesTags(c.Node.Tags, tags) {
+				filtered = append(filtered, c)
+			}
+		}
+		out = filtered
 	}
 
 	if len(out) > limit {
@@ -3010,24 +3039,27 @@ func (s *Store) LastAuditEntry() (entry AuditEntry, ok bool, err error) {
 }
 
 // FindDisconnected returns live, non-transient nodes that have no edges// (neither as from_node nor as to_node), optionally scoped to a domain.
-func (s *Store) FindDisconnected(domain string) ([]Node, error) {
+func (s *Store) FindDisconnected(domain string, tags []string) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 
-	const baseQ = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
-		FROM nodes
-		WHERE archived_at IS NULL
-		  AND decision_type != 'transient'
-		  AND id NOT IN (SELECT from_node FROM edges UNION SELECT to_node FROM edges)`
-
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if domain != "" {
-		rows, err = s.db.Query(baseQ+` AND domain = ? ORDER BY created_at DESC LIMIT 50`, domain)
-	} else {
-		rows, err = s.db.Query(baseQ + ` ORDER BY created_at DESC LIMIT 50`)
+	conds := []string{
+		"archived_at IS NULL",
+		"decision_type != 'transient'",
+		"id NOT IN (SELECT from_node FROM edges UNION SELECT to_node FROM edges)",
 	}
+	args := []interface{}{}
+
+	if domain != "" {
+		conds = append(conds, "domain = ?")
+		args = append(args, domain)
+	}
+	conds, args = tagFilter("tags", tags, conds, args)
+	args = append(args, 50)
+
+	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes WHERE " +
+		strings.Join(conds, " AND ") + " ORDER BY created_at DESC LIMIT ?"
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

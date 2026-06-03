@@ -237,13 +237,15 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "audit",
-			Description: "Inspect the health of knowledge in a domain across three modes.\n\nmode=stale: Return memories that may be stale, contradicted, or duplicated. Present each result to the user and ask for individual confirmation before archiving anything. Never archive autonomously.\n\nmode=orphans: Return live, non-transient memories with zero connections. Present findings and suggest either linking them with connect, or archiving with forget if no longer relevant.\n\nmode=archived: List all archived memories. This is the right tool when search returns nothing but you expect content to exist. This tool only returns live nodes (for stale and orphans modes) or explicitly archived nodes (for archived mode).",
+			Description: "Inspect the health of knowledge in a domain across three modes.\n\nmode=stale: Return memories that may be stale, contradicted, or duplicated. Present each result to the user and ask for individual confirmation before archiving anything. Never archive autonomously.\n\nmode=orphans: Return live, non-transient memories with zero connections. Present findings and suggest either linking them with connect, or archiving with forget if no longer relevant.\n\nmode=archived: List all archived memories. This is the right tool when search returns nothing but you expect content to exist. This tool only returns live nodes (for stale and orphans modes) or explicitly archived nodes (for archived mode).\n\nSupply tags to scope to a workstream. Supply memory_id (mode=stale only) to scope to a memory's neighbourhood.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"mode":   {Type: "string", Description: "Required: stale (drift candidates), orphans (isolated memories), or archived (list archived memories)", Enum: []string{"stale", "orphans", "archived"}},
-					"domain": {Type: "string", Description: "Optional domain to scope the audit"},
-					"limit":  {Type: "integer", Description: "Max candidates to return (default 10, applies to stale mode)"},
+					"mode":      {Type: "string", Description: "Required: stale (drift candidates), orphans (isolated memories), or archived (list archived memories)", Enum: []string{"stale", "orphans", "archived"}},
+					"domain":    {Type: "string", Description: "Optional domain to scope the audit"},
+					"limit":     {Type: "integer", Description: "Max candidates to return (default 10, applies to stale mode)"},
+					"tags":      {Type: "string", Description: "Comma-separated tags. Only surfaces candidates carrying at least one of the supplied tags. OR semantics. Applies to all three modes."},
+					"memory_id": {Type: "string", Description: "Anchor memory ID. Scopes stale candidates to the depth-2 BFS neighbourhood of this memory. Applies to mode=stale only; ignored for orphans and archived."},
 				},
 				Required: []string{"mode"},
 			},
@@ -612,14 +614,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		a.Limit = 500
 	}
 
-	var tags []string
-	if a.Tags != "" {
-		for _, t := range strings.Split(a.Tags, ",") {
-			if t = strings.TrimSpace(t); t != "" {
-				tags = append(tags, t)
-			}
-		}
-	}
+	tags := splitTags(a.Tags)
 
 	// memory_id scoping: neighbourhood-restricted, group_by_domain ignored.
 	if a.MemoryID != "" {
@@ -848,11 +843,13 @@ func (h *Handler) restoreNode(args json.RawMessage) (*ToolResult, error) {
 func (h *Handler) listArchived(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain string `json:"domain"`
+		Tags   string `json:"tags"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
 	}
-	nodes, err := h.store.ListArchived(a.Domain)
+	tags := splitTags(a.Tags)
+	nodes, err := h.store.ListArchived(a.Domain, tags)
 	if err != nil {
 		return nil, err
 	}
@@ -867,10 +864,27 @@ func errorResult(msg string) *ToolResult {
 	}
 }
 
+// splitTags splits a comma-separated tags string into trimmed, non-empty tokens.
+func splitTags(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, t := range strings.Split(s, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (h *Handler) drift(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
-		Domain string `json:"domain"`
-		Limit  int    `json:"limit"`
+		Domain   string `json:"domain"`
+		Limit    int    `json:"limit"`
+		Tags     string `json:"tags"`
+		MemoryID string `json:"memory_id"`
+		Depth    int    `json:"depth"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -881,7 +895,11 @@ func (h *Handler) drift(args json.RawMessage) (*ToolResult, error) {
 	if a.Limit > 500 {
 		a.Limit = 500
 	}
-	candidates, err := h.store.FindDrift(a.Domain, a.Limit)
+	if a.Depth <= 0 {
+		a.Depth = 2
+	}
+	tags := splitTags(a.Tags)
+	candidates, err := h.store.FindDrift(a.Domain, a.Limit, tags, a.MemoryID, a.Depth)
 	if err != nil {
 		return nil, err
 	}
@@ -1649,11 +1667,17 @@ func (h *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
 func (h *Handler) findDisconnected(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain string `json:"domain"`
+		Tags   string `json:"tags"`
+		// MemoryID is parsed but intentionally ignored for orphans:
+		// orphans have no connections by definition, so BFS from an anchor
+		// would never reach them.
+		MemoryID string `json:"memory_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
 	}
-	nodes, err := h.store.FindDisconnected(a.Domain)
+	tags := splitTags(a.Tags)
+	nodes, err := h.store.FindDisconnected(a.Domain, tags)
 	if err != nil {
 		return nil, err
 	}
