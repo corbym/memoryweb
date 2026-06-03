@@ -1,6 +1,6 @@
 # audit: tags + memory_id scoping parameters
 
-**Status:** PENDING
+**Status:** COMPLETE — v1.28.0 (commit bf280cd)
 
 **Shared-surface node:** `traversal-tool-scoping-consisten-c691512d`
 
