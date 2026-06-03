@@ -20,6 +20,7 @@ Covered surfaces: **Claude Code**, **GitHub Copilot (VS Code)**, **Claude Deskto
 10. [Significance — what matters most in a domain](#significance--what-matters-most-in-a-domain)
 11. [Visualising the graph](#visualising-the-graph)
 12. [Common beginner mistakes](#common-beginner-mistakes)
+13. [Standing rules →](standing-rules.md)
 
 ---
 
@@ -428,6 +429,16 @@ If you use a domain regularly with a long name, set an alias so you can refer to
 > "Create an alias 'mw' for the 'memoryweb-meta' domain."
 
 After that, searches and orients recognise the short form. Particularly useful for domains you orient in at the start of every session.
+
+### Standing rules — constraints that persist across every session
+
+If you find yourself repeating the same instruction to agents ("write the test first", "don't edit migrations", "always link findings to their source"), that instruction belongs in a standing rule.
+
+Standing rules appear at the top of every `orient` response, before the spine and recent history. An agent that orients at session start will see them without being asked.
+
+> "File a standing rule for this domain: all migrations are append-only. Write the label as a directive and add a self-referencing connect instruction so agents know to feed work back into it."
+
+See the [standing rules guide](standing-rules.md) for templates by role (solo developer, team tech lead, research, product/PM), worked orient examples, and instructions for writing labels agents can act on immediately.
 
 ---
 
