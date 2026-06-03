@@ -1,5 +1,6 @@
 # binary
 memoryweb
+memoryweb.exe
 
 # CGO header shim (machine-specific paths)
 .sqlite3-shim/
