@@ -69,7 +69,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",
-			Description: "After filing, call connect for every suggested_connections entry before ending your session. Orphaned memories lose context immediately.\n\nFile one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate — use the search results to infer the domain: if related memories exist in a domain, file there. Prefer existing domains over creating new ones; only propose a new domain if no related content is found anywhere. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field.\n\nBatch mode (provide items array): file multiple memories in a single transaction. Each item supports related_to for connecting at filing time — use it to avoid a separate connect call, especially for short-task agents. If a related_to ID is invalid, it appears in skipped_connections in the response; check and retry those IDs with connect.\n\nFor occurred_at in either mode: two cases — (a) In-session witnessed: you directly observed this decision or event happen during the current conversation. Set occurred_at freely using today's date. No confirmation needed. (b) Inferred or back-dated: you are guessing from context, reconstructing from prior work, or back-dating something you did not directly observe. Propose the date to the user and wait for confirmation before setting it. Never guess. Never infer it silently from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse transient=true for ticket state, sprint notes, or any memory expected to become stale within days. Transient memories are candidates for archiving once the related work is complete.",
+			Description: "After filing, call connect for every suggested_connections entry before ending your session. Orphaned memories lose context immediately.\n\nFile one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate — use the search results to infer the domain: if related memories exist in a domain, file there. Prefer existing domains over creating new ones; only propose a new domain if no related content is found anywhere. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field.\n\nBatch mode (provide items array): file multiple memories in a single transaction. Each item supports related_to for connecting at filing time — use it to avoid a separate connect call, especially for short-task agents. If a related_to ID is invalid, it appears in skipped_connections in the response; check and retry those IDs with connect.\n\nFor occurred_at in either mode: two cases — (a) In-session witnessed: you directly observed this decision or event happen during the current conversation. Set occurred_at freely using today's date. No confirmation needed. (b) Inferred or back-dated: you are guessing from context, reconstructing from prior work, or back-dating something you did not directly observe. Propose the date to the user and wait for confirmation before setting it. Never guess. Never infer it silently from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse decision_type to classify each memory: 'decision' (default) for facts and findings, 'transient' for short-lived state like ticket notes that will stale within days, 'standing' for durable rules and constraints that govern other memories. Transient memories older than 7 days are surfaced by audit(mode=stale) as archiving candidates. Standing memories appear in the rules section of orient. The legacy transient=true field is accepted for backward compatibility and maps to decision_type='transient'.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -84,24 +84,25 @@ func (h *Handler) ListTools() (interface{}, error) {
 						Description: "Optional list of memories to auto-connect at creation time. Single mode only. Each item is either a plain memory ID string (creates a connects_to connection) or an object with id and relationship fields. Invalid or unknown IDs are silently skipped.",
 						Items:       json.RawMessage(`{"oneOf":[{"type":"string"},{"type":"object","properties":{"id":{"type":"string"},"relationship":{"type":"string"}},"required":["id"],"additionalProperties":false}]}`),
 					},
-					"transient": {Type: "boolean", Description: "Set to true for short-lived knowledge: ticket state, sprint notes, or anything expected to become stale within days. Transient memories older than 7 days are surfaced by audit(mode=stale) as archiving candidates."},
+					"transient":     {Type: "boolean", Description: "Deprecated — use decision_type='transient' instead. Accepted for backward compatibility: if true and decision_type is not set, maps to decision_type='transient'."},
+					"decision_type": {Type: "string", Description: "Classify this memory. 'decision' (default): a fact, finding, or decision. 'transient': short-lived state (ticket notes, sprint state) — surfaced by audit(mode=stale) after 7 days. 'standing': a durable rule or constraint that governs other memories — appears in the rules section of orient.", Enum: []string{"decision", "transient", "standing"}},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), transient (boolean), related_to (string ID, object with id+relationship, or array of either — connects at filing time; invalid IDs appear in skipped_connections).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"},"related_to":{"description":"Connect at filing time. String ID (connects_to), object {id, relationship}, or array of either. Invalid IDs appear in skipped_connections — not silently dropped."}},"required":["label","domain"]}`),
+						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), decision_type (string: decision|transient|standing), transient (boolean, deprecated — maps to decision_type=transient), related_to (string ID, object with id+relationship, or array of either — connects at filing time; invalid IDs appear in skipped_connections).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"decision_type":{"type":"string","enum":["decision","transient","standing"]},"transient":{"type":"boolean"},"related_to":{"description":"Connect at filing time. String ID (connects_to), object {id, relationship}, or array of either. Invalid IDs appear in skipped_connections — not silently dropped."}},"required":["label","domain"]}`),
 					},
 				},
 			},
 		},
 		{
 			Name:        "connect",
-			Description: "Connect memories with typed, narrative relationships. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of — and all memory IDs must already exist before calling this.\n\nSingle mode (omit items): provide from_memory, to_memory, relationship directly.\n\nBatch mode (provide items array): create multiple connections in a single transaction.\n\nRelationship guidance: caused_by / led_to describe the same link from opposite ends (A caused_by B ≡ B led_to A). blocked_by / unblocks describe dependency on resolving an external issue. depends_on is a hard technical or logical prerequisite. contradicts marks a direct conflict. is_example_of marks an illustration. connects_to is the general fallback — use it only when no typed relationship fits.",
+			Description: "Connect memories with typed, narrative relationships. Valid relationship types are: caused_by, led_to, blocked_by, unblocks, connects_to, contradicts, depends_on, is_example_of, governed_by — and all memory IDs must already exist before calling this.\n\nSingle mode (omit items): provide from_memory, to_memory, relationship directly.\n\nBatch mode (provide items array): create multiple connections in a single transaction.\n\nRelationship guidance: caused_by / led_to describe the same link from opposite ends (A caused_by B ≡ B led_to A). blocked_by / unblocks describe dependency on resolving an external issue. depends_on is a hard technical or logical prerequisite. contradicts marks a direct conflict. is_example_of marks an illustration. governed_by links a memory to a standing rule or constraint that it must satisfy. connects_to is the general fallback — use it only when no typed relationship fits.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
 					"from_memory":  {Type: "string", Description: "ID of the source memory. Required in single mode; omit when using items."},
 					"to_memory":    {Type: "string", Description: "ID of the target memory. Required in single mode; omit when using items."},
-					"relationship": {Type: "string", Description: "Type of relationship. Required in single mode.", Enum: []string{"caused_by", "led_to", "blocked_by", "unblocks", "connects_to", "contradicts", "depends_on", "is_example_of"}},
+					"relationship": {Type: "string", Description: "Type of relationship. Required in single mode.", Enum: []string{"caused_by", "led_to", "blocked_by", "unblocks", "connects_to", "contradicts", "depends_on", "is_example_of", "governed_by"}},
 					"narrative":    {Type: "string", Description: "The story of this connection - why these two things are linked"},
 					"items": {
 						Type:        "array",
@@ -261,7 +262,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns three sections: declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain. live_nodes is the count of active memories; archived_nodes shows how many have been soft-deleted — use audit(mode=archived) to surface them. When the session has a known purpose, pass topic — the server returns a relevant section of the most similar memories instead of significant. declared_spine and recent are always returned.",
+			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns four sections: rules (standing constraints and durable decisions that govern the domain — always apply these), declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain. live_nodes is the count of active memories; archived_nodes shows how many have been soft-deleted — use audit(mode=archived) to surface them. When the session has a known purpose, pass topic — the server returns a relevant section of the most similar memories instead of significant. declared_spine and recent are always returned.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -276,17 +277,18 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id":          {Type: "string", Description: "ID of the memory to update. Required in single mode; omit when using items."},
-					"label":       {Type: "string", Description: "New label (optional)"},
-					"description": {Type: "string", Description: "New description (optional)"},
-					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
-					"tags":        {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
-					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. (a) In-session witnessed: you directly observed this happen in the current conversation — set freely using today's date, no confirmation needed. (b) Inferred or back-dated: you are guessing or reconstructing — propose to user and wait for confirmation. Never guess. Never infer silently. Single mode only."},
-					"transient":   {Type: "boolean", Description: "Set to true for short-lived knowledge; set to false to promote a transient memory to permanent. Omit to leave the current value unchanged."},
+					"id":            {Type: "string", Description: "ID of the memory to update. Required in single mode; omit when using items."},
+					"label":         {Type: "string", Description: "New label (optional)"},
+					"description":   {Type: "string", Description: "New description (optional)"},
+					"why_matters":   {Type: "string", Description: "New why_matters text (optional)"},
+					"tags":          {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
+					"occurred_at":   {Type: "string", Description: "ISO8601 date or datetime. (a) In-session witnessed: you directly observed this happen in the current conversation — set freely using today's date, no confirmation needed. (b) Inferred or back-dated: you are guessing or reconstructing — propose to user and wait for confirmation. Never guess. Never infer silently. Single mode only."},
+					"transient":     {Type: "boolean", Description: "Deprecated — use decision_type instead. Accepted for backward compatibility: true maps to decision_type='transient', false maps to decision_type='decision'. Omit to leave unchanged."},
+					"decision_type": {Type: "string", Description: "Classify this memory. 'decision' (default): a fact, finding, or decision. 'transient': short-lived state, surfaced by audit(mode=stale) after 7 days. 'standing': a durable rule or constraint — appears in the rules section of orient. Omit to leave unchanged.", Enum: []string{"decision", "transient", "standing"}},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), transient (boolean — true for short-lived, false to promote to permanent).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"transient":{"type":"boolean"}},"required":["id"]}`),
+						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), decision_type (string: decision|transient|standing), transient (boolean, deprecated — true maps to decision_type=transient, false to decision_type=decision).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"decision_type":{"type":"string","enum":["decision","transient","standing"]},"transient":{"type":"boolean"}},"required":["id"]}`),
 					},
 				},
 			},
@@ -469,14 +471,15 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	var a struct {
-		Label       string            `json:"label"`
-		Description string            `json:"description"`
-		WhyMatters  string            `json:"why_matters"`
-		Domain      string            `json:"domain"`
-		OccurredAt  string            `json:"occurred_at"`
-		Tags        string            `json:"tags"`
-		RelatedTo   []json.RawMessage `json:"related_to"`
-		Transient   bool              `json:"transient"`
+		Label        string            `json:"label"`
+		Description  string            `json:"description"`
+		WhyMatters   string            `json:"why_matters"`
+		Domain       string            `json:"domain"`
+		OccurredAt   string            `json:"occurred_at"`
+		Tags         string            `json:"tags"`
+		RelatedTo    []json.RawMessage `json:"related_to"`
+		Transient    bool              `json:"transient"`
+		DecisionType string            `json:"decision_type"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -495,7 +498,14 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 	if occurredAt != nil && a.WhyMatters == "" {
 		return nil, fmt.Errorf("occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.")
 	}
-	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags, a.Transient)
+	// backcompat: transient=true maps to decision_type=transient
+	if a.Transient && a.DecisionType == "" {
+		a.DecisionType = "transient"
+	}
+	if a.DecisionType == "" {
+		a.DecisionType = "decision"
+	}
+	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags, a.DecisionType)
 	if err != nil {
 		return nil, err
 	}
@@ -951,19 +961,34 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 		recentEntries[i] = toLean(n)
 	}
 
+	rulesNodes, err := h.store.GetStandingNodes(domain)
+	if err != nil {
+		return nil, err
+	}
+	rulesEntries := make([]leanEntry, len(rulesNodes))
+	for i, rn := range rulesNodes {
+		rulesEntries[i] = toLean(rn)
+	}
+	var rulesField interface{}
+	if len(rulesEntries) > 0 {
+		rulesField = rulesEntries
+	}
+
 	resp := struct {
 		SummaryHint   string      `json:"summary_hint"`
 		ServerVersion string      `json:"server_version"`
 		LiveNodes     int         `json:"live_nodes"`
 		ArchivedNodes int         `json:"archived_nodes"`
+		Rules         interface{} `json:"rules,omitempty"`
 		DeclaredSpine interface{} `json:"declared_spine"`
 		Relevant      interface{} `json:"relevant"`
 		Recent        interface{} `json:"recent"`
 	}{
-		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. relevant lists memories most similar to the supplied topic. declared_spine lists key decisions chronologically. recent shows where work was last happening. Plain prose, no bullet points.",
+		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. relevant lists memories most similar to the supplied topic. declared_spine lists key decisions chronologically. rules lists the standing constraints and durable decisions that govern this domain. recent shows where work was last happening. Plain prose, no bullet points.",
 		ServerVersion: h.version,
 		LiveNodes:     liveNodes,
 		ArchivedNodes: archivedNodes,
+		Rules:         rulesField,
 		DeclaredSpine: spineEntries,
 		Relevant:      relevant,
 		Recent:        recentEntries,
@@ -1042,6 +1067,12 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
+	// Step 4b: fetch standing nodes (rules)
+	rulesNodes, err := h.store.GetStandingNodes(a.Domain)
+	if err != nil {
+		return nil, err
+	}
+
 	// Step 5: build lean response — id, label, truncated why_matters only; no description.
 	type leanEntry struct {
 		ID         string  `json:"id"`
@@ -1085,20 +1116,30 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 			ImportanceScore: sn.ImportanceScore,
 		}
 	}
+	rulesEntries := make([]leanEntry, len(rulesNodes))
+	for i, rn := range rulesNodes {
+		rulesEntries[i] = toLean(rn)
+	}
+	var rulesField interface{}
+	if len(rulesEntries) > 0 {
+		rulesField = rulesEntries
+	}
 
 	resp := struct {
 		SummaryHint   string      `json:"summary_hint"`
 		ServerVersion string      `json:"server_version"`
 		LiveNodes     int         `json:"live_nodes"`
 		ArchivedNodes int         `json:"archived_nodes"`
+		Rules         interface{} `json:"rules,omitempty"`
 		DeclaredSpine interface{} `json:"declared_spine"`
 		Significant   interface{} `json:"significant"`
 		Recent        interface{} `json:"recent"`
 	}{
-		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. significant lists structurally load-bearing memories right now. recent shows where work was last happening. Plain prose, no bullet points.",
+		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. rules lists the standing constraints and durable decisions that govern this domain. significant lists structurally load-bearing memories right now. recent shows where work was last happening. Plain prose, no bullet points.",
 		ServerVersion: h.version,
 		LiveNodes:     liveNodes,
 		ArchivedNodes: archivedNodes,
+		Rules:         rulesField,
 		DeclaredSpine: spineEntries,
 		Significant:   sigEntries,
 		Recent:        recentEntries,
@@ -1152,14 +1193,15 @@ func processRelatedTo(h *Handler, fromID string, entries []json.RawMessage) []sk
 // addNodesBatch handles the batch mode of remember: items is the raw JSON array of node objects.
 func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	var nodeList []struct {
-		Label       string            `json:"label"`
-		Description string            `json:"description"`
-		WhyMatters  string            `json:"why_matters"`
-		Tags        string            `json:"tags"`
-		Domain      string            `json:"domain"`
-		OccurredAt  string            `json:"occurred_at"`
-		Transient   bool              `json:"transient"`
-		RelatedTo   []json.RawMessage `json:"related_to"`
+		Label        string            `json:"label"`
+		Description  string            `json:"description"`
+		WhyMatters   string            `json:"why_matters"`
+		Tags         string            `json:"tags"`
+		Domain       string            `json:"domain"`
+		OccurredAt   string            `json:"occurred_at"`
+		Transient    bool              `json:"transient"`
+		DecisionType string            `json:"decision_type"`
+		RelatedTo    []json.RawMessage `json:"related_to"`
 	}
 	if err := json.Unmarshal(items, &nodeList); err != nil {
 		return nil, err
@@ -1180,14 +1222,22 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		if occurredAt != nil && n.WhyMatters == "" {
 			return nil, fmt.Errorf("node %d: occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.", i)
 		}
+		// backcompat: transient=true maps to decision_type=transient
+		decisionType := n.DecisionType
+		if n.Transient && decisionType == "" {
+			decisionType = "transient"
+		}
+		if decisionType == "" {
+			decisionType = "decision"
+		}
 		inputs[i] = db.NodeInput{
-			Label:       n.Label,
-			Description: n.Description,
-			WhyMatters:  n.WhyMatters,
-			Tags:        n.Tags,
-			Domain:      n.Domain,
-			OccurredAt:  occurredAt,
-			Transient:   n.Transient,
+			Label:        n.Label,
+			Description:  n.Description,
+			WhyMatters:   n.WhyMatters,
+			Tags:         n.Tags,
+			Domain:       n.Domain,
+			OccurredAt:   occurredAt,
+			DecisionType: decisionType,
 		}
 	}
 	nodes, err := h.store.AddNodesBatch(inputs)
@@ -1360,13 +1410,14 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	var a struct {
-		ID          string  `json:"id"`
-		Label       *string `json:"label"`
-		Description *string `json:"description"`
-		WhyMatters  *string `json:"why_matters"`
-		Tags        *string `json:"tags"`
-		OccurredAt  *string `json:"occurred_at"`
-		Transient   *bool   `json:"transient"`
+		ID           string  `json:"id"`
+		Label        *string `json:"label"`
+		Description  *string `json:"description"`
+		WhyMatters   *string `json:"why_matters"`
+		Tags         *string `json:"tags"`
+		OccurredAt   *string `json:"occurred_at"`
+		Transient    *bool   `json:"transient"`
+		DecisionType *string `json:"decision_type"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -1397,7 +1448,17 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 			}
 		}
 	}
-	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt, a.Transient)
+	// backcompat: transient=true maps to decision_type=transient
+	if a.Transient != nil && a.DecisionType == nil {
+		if *a.Transient {
+			s := "transient"
+			a.DecisionType = &s
+		} else {
+			s := "decision"
+			a.DecisionType = &s
+		}
+	}
+	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt, a.DecisionType)
 	if err != nil {
 		return nil, err
 	}
@@ -1408,13 +1469,14 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 // updateNodesBatch handles the batch mode of revise: items is the raw JSON array of update objects.
 func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	var updateList []struct {
-		ID          string  `json:"id"`
-		Label       *string `json:"label"`
-		Description *string `json:"description"`
-		WhyMatters  *string `json:"why_matters"`
-		Tags        *string `json:"tags"`
-		OccurredAt  *string `json:"occurred_at"`
-		Transient   *bool   `json:"transient"`
+		ID           string  `json:"id"`
+		Label        *string `json:"label"`
+		Description  *string `json:"description"`
+		WhyMatters   *string `json:"why_matters"`
+		Tags         *string `json:"tags"`
+		OccurredAt   *string `json:"occurred_at"`
+		Transient    *bool   `json:"transient"`
+		DecisionType *string `json:"decision_type"`
 	}
 	if err := json.Unmarshal(items, &updateList); err != nil {
 		return nil, err
@@ -1447,14 +1509,25 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 				}
 			}
 		}
+		// backcompat: transient bool maps to decision_type
+		decisionType := u.DecisionType
+		if u.Transient != nil && decisionType == nil {
+			if *u.Transient {
+				s := "transient"
+				decisionType = &s
+			} else {
+				s := "decision"
+				decisionType = &s
+			}
+		}
 		inputs[i] = db.NodeUpdateInput{
-			ID:          u.ID,
-			Label:       u.Label,
-			Description: u.Description,
-			WhyMatters:  u.WhyMatters,
-			Tags:        u.Tags,
-			OccurredAt:  occurredAt,
-			Transient:   u.Transient,
+			ID:           u.ID,
+			Label:        u.Label,
+			Description:  u.Description,
+			WhyMatters:   u.WhyMatters,
+			Tags:         u.Tags,
+			OccurredAt:   occurredAt,
+			DecisionType: decisionType,
 		}
 	}
 	nodes, err := h.store.UpdateNodesBatch(inputs)

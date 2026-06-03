@@ -138,7 +138,7 @@ func auditLogHasPurge(t *testing.T, dbPath, nodeID string) bool {
 // mustAddNode adds a node and returns its ID, fataling on error.
 func mustAddNode(t *testing.T, store *db.Store, label, domain string) string {
 	t.Helper()
-	n, err := store.AddNode(label, "", "", domain, nil, "", false)
+	n, err := store.AddNode(label, "", "", domain, nil, "", "")
 	if err != nil {
 		t.Fatalf("AddNode(%q): %v", label, err)
 	}

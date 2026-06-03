@@ -168,7 +168,7 @@ func TestRunDoctor_GraphStats_ReflectAddedNode(t *testing.T) {
 	home := t.TempDir()
 
 	// Add a node so the graph stats show something meaningful.
-	if _, err := store.AddNode("test node", "desc", "why", "test-domain", nil, "", false); err != nil {
+	if _, err := store.AddNode("test node", "desc", "why", "test-domain", nil, "", ""); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
 
@@ -189,7 +189,7 @@ func TestRunDoctor_DriftSnapshot_ShowsCandidate(t *testing.T) {
 	home := t.TempDir()
 
 	// Add a node whose label contains "deprecated" so drift detects it.
-	if _, err := store.AddNode("deprecated old feature", "d", "w", "test-domain", nil, "", false); err != nil {
+	if _, err := store.AddNode("deprecated old feature", "d", "w", "test-domain", nil, "", ""); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
 
@@ -206,7 +206,7 @@ func TestRunDoctor_AuditLog_ShowsLastActivity(t *testing.T) {
 	store, dbPath := newTestStore(t)
 	home := t.TempDir()
 
-	n, err := store.AddNode("audit target", "d", "w", "proj", nil, "", false)
+	n, err := store.AddNode("audit target", "d", "w", "proj", nil, "", "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}

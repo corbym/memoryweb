@@ -109,7 +109,7 @@ func TestBackfillExitsZeroWithEmptyDB(t *testing.T) {
 // backfill exits 0 and reports that no nodes were backfilled.
 func TestBackfillReportsZeroWhenOllamaUnavailable(t *testing.T) {
 	dbPath, store := newTestDB(t)
-	if _, err := store.AddNode("test node", "desc", "why", "test", nil, "", false); err != nil {
+	if _, err := store.AddNode("test node", "desc", "why", "test", nil, "", ""); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
 	store.Close()
@@ -144,7 +144,7 @@ func TestBackfillShowsProgressBarWithNodes(t *testing.T) {
 	// Disable Ollama during AddNode so the node has no pre-stored embedding
 	// and backfill has a candidate to process (and fire the progress bar for).
 	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
-	if _, err := store.AddNode("progress test node", "desc", "why", "test", nil, "", false); err != nil {
+	if _, err := store.AddNode("progress test node", "desc", "why", "test", nil, "", ""); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
 	store.Close()
@@ -166,7 +166,7 @@ func TestBackfillShowsProgressBarWithNodes(t *testing.T) {
 // (stderr may still carry log lines from the Go logger; we only check stdout.)
 func TestBackfillQuietSuppressesAllOutput(t *testing.T) {
 	dbPath, store := newTestDB(t)
-	if _, err := store.AddNode("quiet test node", "desc", "why", "test", nil, "", false); err != nil {
+	if _, err := store.AddNode("quiet test node", "desc", "why", "test", nil, "", ""); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
 	store.Close()

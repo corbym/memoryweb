@@ -69,6 +69,7 @@ Current migrations:
 | 9 | Resize node_embeddings to 1024 dimensions (snowflake-arctic-embed default) |
 | 10 | audit_log: add provenance TEXT column |
 | 11 | Add significance_log table |
+| 12 | nodes: add decision_type TEXT column; migrate transient=1 → decision_type='transient'; drop transient column |
 
 ---
 

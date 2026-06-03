@@ -90,7 +90,7 @@ func runDream(t *testing.T, args ...string) (output string, exitCode int) {
 // mustAddNode adds a node and returns its ID, fataling on error.
 func mustAddNode(t *testing.T, store *db.Store, label, domain string) string {
 	t.Helper()
-	n, err := store.AddNode(label, "desc", "why it matters", domain, nil, "", false)
+	n, err := store.AddNode(label, "desc", "why it matters", domain, nil, "", "")
 	if err != nil {
 		t.Fatalf("AddNode(%q): %v", label, err)
 	}

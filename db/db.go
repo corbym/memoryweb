@@ -31,17 +31,17 @@ type Store struct {
 }
 
 type Node struct {
-	ID          string     `json:"id"`
-	Label       string     `json:"label"`
-	Description string     `json:"description"`
-	WhyMatters  string     `json:"why_matters"`
-	Tags        string     `json:"tags,omitempty"`
-	Domain      string     `json:"domain"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	OccurredAt  *time.Time `json:"occurred_at,omitempty"`
-	ArchivedAt  *time.Time `json:"archived_at,omitempty"` // nil = live
-	Transient   bool       `json:"transient,omitempty"`   // true = expected to become stale quickly
+	ID           string     `json:"id"`
+	Label        string     `json:"label"`
+	Description  string     `json:"description"`
+	WhyMatters   string     `json:"why_matters"`
+	Tags         string     `json:"tags,omitempty"`
+	Domain       string     `json:"domain"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	OccurredAt   *time.Time `json:"occurred_at,omitempty"`
+	ArchivedAt   *time.Time `json:"archived_at,omitempty"` // nil = live
+	DecisionType string     `json:"decision_type,omitempty"`
 }
 
 type Edge struct {
@@ -68,13 +68,13 @@ type DriftCandidate struct {
 
 // NodeInput is the input type for AddNodesBatch.
 type NodeInput struct {
-	Label       string
-	Description string
-	WhyMatters  string
-	Tags        string
-	Domain      string
-	OccurredAt  *time.Time
-	Transient   bool
+	Label        string
+	Description  string
+	WhyMatters   string
+	Tags         string
+	Domain       string
+	OccurredAt   *time.Time
+	DecisionType string
 }
 
 // EdgeInput is the input type for AddEdgesBatch.
@@ -460,6 +460,20 @@ CREATE INDEX IF NOT EXISTS idx_significance_log_call_id ON significance_log(call
 			return err
 		},
 	},
+	{
+		version: 12,
+		desc:    "nodes: add decision_type TEXT column; migrate transient=1 to decision_type=transient; drop transient column",
+		up: func(tx *sql.Tx) error {
+			if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN decision_type TEXT NOT NULL DEFAULT 'decision'`); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE nodes SET decision_type = 'transient' WHERE transient = 1`); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`ALTER TABLE nodes DROP COLUMN transient`)
+			return err
+		},
+	},
 }
 
 // migrate creates the schema_migrations tracking table (if needed) then applies
@@ -591,9 +605,13 @@ func (s *Store) RemoveAlias(alias string) error {
 	return nil
 }
 
-func (s *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time, tags string, transient bool) (*Node, error) {
+func (s *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time, tags string, decisionType string) (*Node, error) {
 	id := slug(label) + "-" + shortID()
 	now := time.Now().UTC()
+
+	if decisionType == "" {
+		decisionType = "decision"
+	}
 
 	// Atomically insert the node and (when occurred_at is set) its audit row.
 	tx, err := s.db.Begin()
@@ -601,9 +619,9 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 		return nil, err
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags, transient)
+		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags, decision_type)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, label, description, whyMatters, domain, now, now, occurredAt, tags, transient,
+		id, label, description, whyMatters, domain, now, now, occurredAt, tags, decisionType,
 	); err != nil {
 		tx.Rollback()
 		return nil, err
@@ -628,16 +646,16 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 	}
 
 	return &Node{
-		ID:          id,
-		Label:       label,
-		Description: description,
-		WhyMatters:  whyMatters,
-		Tags:        tags,
-		Domain:      domain,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		OccurredAt:  occurredAt,
-		Transient:   transient,
+		ID:           id,
+		Label:        label,
+		Description:  description,
+		WhyMatters:   whyMatters,
+		Tags:         tags,
+		Domain:       domain,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		OccurredAt:   occurredAt,
+		DecisionType: decisionType,
 	}, nil
 }
 
@@ -674,9 +692,9 @@ func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
 	var oa sql.NullTime
 	var aa sql.NullTime
 	err := s.db.QueryRow(
-		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		 FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
-	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient)
+	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("node not found: %s", id)
 	}
@@ -773,7 +791,7 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 	if domain != "" {
 		rows, err = s.db.Query(`
 			SELECT n.id, n.label, n.description, n.why_matters, n.domain,
-			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.transient,
+			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.decision_type,
 			       vec_distance_cosine(e.embedding, ?) AS dist
 			FROM node_embeddings e
 			JOIN nodes n ON n.id = e.node_id
@@ -784,7 +802,7 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 	} else {
 		rows, err = s.db.Query(`
 			SELECT n.id, n.label, n.description, n.why_matters, n.domain,
-			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.transient,
+			       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.decision_type,
 			       vec_distance_cosine(e.embedding, ?) AS dist
 			FROM node_embeddings e
 			JOIN nodes n ON n.id = e.node_id
@@ -805,7 +823,7 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 		var dist float64
 		if err := rows.Scan(
 			&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.Transient,
+			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.DecisionType,
 			&dist,
 		); err != nil {
 			return nil, err
@@ -849,14 +867,14 @@ func (s *Store) searchNodesLike(query, domain string, limit int) (*SearchResult,
 
 	if domain != "" {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY updated_at DESC LIMIT ?`,
 			domain, q, q, q, q, fetch,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY updated_at DESC LIMIT ?`,
 			q, q, q, q, fetch,
@@ -958,7 +976,7 @@ func scanNodeRows(rows *sql.Rows) ([]Node, error) {
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -1137,7 +1155,7 @@ func (s *Store) searchByWords(words []string, domain string, limit int) ([]Node,
 
 	var q string
 	if domain != "" {
-		q = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+		q = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 		     WHERE domain = ? AND archived_at IS NULL AND (` + combined + `) ORDER BY updated_at DESC LIMIT ?`
 		// domain goes first, limit last
 		finalArgs := make([]interface{}, 0, 1+len(args)+1)
@@ -1146,7 +1164,7 @@ func (s *Store) searchByWords(words []string, domain string, limit int) ([]Node,
 		finalArgs = append(finalArgs, fetch)
 		args = finalArgs
 	} else {
-		q = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+		q = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 		     WHERE archived_at IS NULL AND (` + combined + `) ORDER BY updated_at DESC LIMIT ?`
 		args = append(args, fetch)
 	}
@@ -1180,14 +1198,14 @@ func (s *Store) bestMatch(term, domain string) (*Node, error) {
 	var row *sql.Row
 	if domain != "" {
 		row = s.db.QueryRow(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
 			domain, q, q, q, q, q,
 		)
 	} else {
 		row = s.db.QueryRow(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
 			q, q, q, q, q,
@@ -1196,7 +1214,7 @@ func (s *Store) bestMatch(term, domain string) (*Node, error) {
 	var n Node
 	var oa sql.NullTime
 	var aa sql.NullTime
-	err := row.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient)
+	err := row.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1273,13 +1291,13 @@ func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 
 	if domain != "" {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE domain = ? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
 			domain, limit,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE archived_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
 			limit,
 		)
@@ -1294,7 +1312,7 @@ func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -1337,7 +1355,7 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from,
 	conds, args = tagFilter("tags", tags, conds, args)
 	args = append(args, limit)
 
-	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes WHERE " +
+	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY COALESCE(occurred_at, created_at) ASC LIMIT ?"
 
 	rows, err := s.db.Query(q, args...)
@@ -1351,7 +1369,7 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from,
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -1558,13 +1576,13 @@ func (s *Store) ListArchived(domain string) ([]Node, error) {
 
 	if domain != "" {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE archived_at IS NOT NULL AND domain = ? ORDER BY archived_at DESC`,
 			domain,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE archived_at IS NOT NULL ORDER BY archived_at DESC`,
 		)
 	}
@@ -1578,7 +1596,7 @@ func (s *Store) ListArchived(domain string) ([]Node, error) {
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -1611,25 +1629,29 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 			return nil, fmt.Errorf("node %d: domain is required", i)
 		}
 		id := slug(inp.Label) + "-" + shortID()
+		decisionType := inp.DecisionType
+		if decisionType == "" {
+			decisionType = "decision"
+		}
 		if _, err := tx.Exec(
-			`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags, transient)
+			`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags, decision_type)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id, inp.Label, inp.Description, inp.WhyMatters, inp.Domain, now, now, inp.OccurredAt, inp.Tags, inp.Transient,
+			id, inp.Label, inp.Description, inp.WhyMatters, inp.Domain, now, now, inp.OccurredAt, inp.Tags, decisionType,
 		); err != nil {
 			tx.Rollback()
 			return nil, err
 		}
 		nodes = append(nodes, &Node{
-			ID:          id,
-			Label:       inp.Label,
-			Description: inp.Description,
-			WhyMatters:  inp.WhyMatters,
-			Tags:        inp.Tags,
-			Domain:      inp.Domain,
-			CreatedAt:   now,
-			UpdatedAt:   now,
-			OccurredAt:  inp.OccurredAt,
-			Transient:   inp.Transient,
+			ID:           id,
+			Label:        inp.Label,
+			Description:  inp.Description,
+			WhyMatters:   inp.WhyMatters,
+			Tags:         inp.Tags,
+			Domain:       inp.Domain,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+			OccurredAt:   inp.OccurredAt,
+			DecisionType: decisionType,
 		})
 	}
 	if err := tx.Commit(); err != nil {
@@ -1734,7 +1756,7 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 		var n Node
 		var oa, aa sql.NullTime
 		if err := r.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); err != nil {
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
 			return Node{}, err
 		}
 		if oa.Valid {
@@ -1751,9 +1773,9 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	// ── Rule 1: contradicts edges ─────────────────────────────────────────────
 	rows, err := s.db.Query(`
 		SELECT a.id, a.label, a.description, a.why_matters, a.domain,
-		       a.created_at, a.updated_at, a.occurred_at, a.archived_at, a.tags, a.transient,
+		       a.created_at, a.updated_at, a.occurred_at, a.archived_at, a.tags, a.decision_type,
 		       b.id, b.label, b.description, b.why_matters, b.domain,
-		       b.created_at, b.updated_at, b.occurred_at, b.archived_at, b.tags, b.transient
+		       b.created_at, b.updated_at, b.occurred_at, b.archived_at, b.tags, b.decision_type
 		FROM edges e
 		JOIN nodes a ON a.id = e.from_node AND a.archived_at IS NULL
 		JOIN nodes b ON b.id = e.to_node   AND b.archived_at IS NULL
@@ -1767,28 +1789,28 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 			aCreated, aUpdated                time.Time
 			aOA, aAA                          sql.NullTime
 			aTags                             string
-			aTransient                        bool
+			aDecisionType                     string
 			bID, bLabel, bDesc, bWhy, bDomain string
 			bCreated, bUpdated                time.Time
 			bOA, bAA                          sql.NullTime
 			bTags                             string
-			bTransient                        bool
+			bDecisionType                     string
 		)
 		if err := rows.Scan(
-			&aID, &aLabel, &aDesc, &aWhy, &aDomain, &aCreated, &aUpdated, &aOA, &aAA, &aTags, &aTransient,
-			&bID, &bLabel, &bDesc, &bWhy, &bDomain, &bCreated, &bUpdated, &bOA, &bAA, &bTags, &bTransient,
+			&aID, &aLabel, &aDesc, &aWhy, &aDomain, &aCreated, &aUpdated, &aOA, &aAA, &aTags, &aDecisionType,
+			&bID, &bLabel, &bDesc, &bWhy, &bDomain, &bCreated, &bUpdated, &bOA, &bAA, &bTags, &bDecisionType,
 		); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		a := Node{ID: aID, Label: aLabel, Description: aDesc, WhyMatters: aWhy, Domain: aDomain, CreatedAt: aCreated, UpdatedAt: aUpdated, Tags: aTags, Transient: aTransient}
+		a := Node{ID: aID, Label: aLabel, Description: aDesc, WhyMatters: aWhy, Domain: aDomain, CreatedAt: aCreated, UpdatedAt: aUpdated, Tags: aTags, DecisionType: aDecisionType}
 		if aOA.Valid {
 			a.OccurredAt = &aOA.Time
 		}
 		if aAA.Valid {
 			a.ArchivedAt = &aAA.Time
 		}
-		b := Node{ID: bID, Label: bLabel, Description: bDesc, WhyMatters: bWhy, Domain: bDomain, CreatedAt: bCreated, UpdatedAt: bUpdated, Tags: bTags, Transient: bTransient}
+		b := Node{ID: bID, Label: bLabel, Description: bDesc, WhyMatters: bWhy, Domain: bDomain, CreatedAt: bCreated, UpdatedAt: bUpdated, Tags: bTags, DecisionType: bDecisionType}
 		if bOA.Valid {
 			b.OccurredAt = &bOA.Time
 		}
@@ -1815,11 +1837,11 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	var rows2 *sql.Rows
 	if domain != "" {
 		rows2, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient `+
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+supersededKW, domain)
 	} else {
 		rows2, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient ` +
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type ` +
 				`FROM nodes WHERE archived_at IS NULL AND ` + supersededKW)
 	}
 	if err != nil {
@@ -1848,12 +1870,12 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	var rows3 *sql.Rows
 	if domain != "" {
 		rows3, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient `+
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+staleKW+` AND `+ageFilter,
 			domain, cutoff30, cutoff30)
 	} else {
 		rows3, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient `+
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type `+
 				`FROM nodes WHERE archived_at IS NULL AND `+staleKW+` AND `+ageFilter,
 			cutoff30, cutoff30)
 	}
@@ -1879,11 +1901,11 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	var rows4 *sql.Rows
 	if domain != "" {
 		rows4, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient `+
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+dupExists, domain)
 	} else {
 		rows4, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient ` +
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type ` +
 				`FROM nodes WHERE archived_at IS NULL AND ` + dupExists)
 	}
 	if err != nil {
@@ -1907,13 +1929,13 @@ func (s *Store) FindDrift(domain string, limit int) ([]DriftCandidate, error) {
 	var rows5 *sql.Rows
 	if domain != "" {
 		rows5, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient `+
-				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND transient = 1 AND created_at < ?`,
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type `+
+				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND decision_type = 'transient' AND created_at < ?`,
 			domain, cutoff7)
 	} else {
 		rows5, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient `+
-				`FROM nodes WHERE archived_at IS NULL AND transient = 1 AND created_at < ?`,
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type `+
+				`FROM nodes WHERE archived_at IS NULL AND decision_type = 'transient' AND created_at < ?`,
 			cutoff7)
 	}
 	if err != nil {
@@ -1993,7 +2015,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 
 	// Step 1: all live nodes in the domain.
 	rows, err := s.db.Query(
-		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		 FROM nodes WHERE archived_at IS NULL AND domain = ?`, domain)
 	if err != nil {
 		return
@@ -2003,7 +2025,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 		var n Node
 		var oa, aa sql.NullTime
 		if scanErr := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); scanErr != nil {
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); scanErr != nil {
 			rows.Close()
 			err = scanErr
 			return
@@ -2109,15 +2131,15 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 // Writes an audit_log entry recording which fields changed and their old values.
 // Returns the full updated node. Returns an error if the node does not exist or
 // has been archived.
-func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time, transient *bool) (*Node, error) {
+func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time, decisionType *string) (*Node, error) {
 	// Fetch current values for comparison and audit trail.
 	var cur Node
 	var curOA, curAA sql.NullTime
 	if err := s.db.QueryRow(
-		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		 FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
 	).Scan(&cur.ID, &cur.Label, &cur.Description, &cur.WhyMatters, &cur.Domain,
-		&cur.CreatedAt, &cur.UpdatedAt, &curOA, &curAA, &cur.Tags, &cur.Transient); err != nil {
+		&cur.CreatedAt, &cur.UpdatedAt, &curOA, &curAA, &cur.Tags, &cur.DecisionType); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("node not found: %s", id)
 		}
@@ -2171,15 +2193,16 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 		}
 		changes = append(changes, fmt.Sprintf("occurred_at (was %s)", oldVal))
 	}
-	if transient != nil {
-		sets = append(sets, "transient = ?")
-		val := 0
-		if *transient {
-			val = 1
+	if decisionType != nil {
+		switch *decisionType {
+		case "decision", "transient", "standing":
+		default:
+			return nil, fmt.Errorf("invalid decision_type %q: must be decision, transient, or standing", *decisionType)
 		}
-		args = append(args, val)
-		if *transient != cur.Transient {
-			changes = append(changes, fmt.Sprintf("transient (was %v)", cur.Transient))
+		sets = append(sets, "decision_type = ?")
+		args = append(args, *decisionType)
+		if *decisionType != cur.DecisionType {
+			changes = append(changes, fmt.Sprintf("decision_type (was %q)", cur.DecisionType))
 		}
 	}
 	args = append(args, id)
@@ -2221,9 +2244,9 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	var n Node
 	var oa, aa sql.NullTime
 	if err := s.db.QueryRow(
-		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		 FROM nodes WHERE id = ?`, id,
-	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); err != nil {
+	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
 		return nil, err
 	}
 	if oa.Valid {
@@ -2237,13 +2260,13 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 
 // NodeUpdateInput is a single entry in an UpdateNodesBatch call.
 type NodeUpdateInput struct {
-	ID          string
-	Label       *string
-	Description *string
-	WhyMatters  *string
-	Tags        *string
-	OccurredAt  *time.Time
-	Transient   *bool
+	ID           string
+	Label        *string
+	Description  *string
+	WhyMatters   *string
+	Tags         *string
+	OccurredAt   *time.Time
+	DecisionType *string
 }
 
 // UpdateNodesBatch updates multiple nodes in a single transaction.
@@ -2263,10 +2286,10 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 		var cur Node
 		var curOA, curAA sql.NullTime
 		if err := tx.QueryRow(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 			 FROM nodes WHERE id = ? AND archived_at IS NULL`, inp.ID,
 		).Scan(&cur.ID, &cur.Label, &cur.Description, &cur.WhyMatters, &cur.Domain,
-			&cur.CreatedAt, &cur.UpdatedAt, &curOA, &curAA, &cur.Tags, &cur.Transient); err != nil {
+			&cur.CreatedAt, &cur.UpdatedAt, &curOA, &curAA, &cur.Tags, &cur.DecisionType); err != nil {
 			tx.Rollback()
 			if err == sql.ErrNoRows {
 				return nil, fmt.Errorf("node not found: %s", inp.ID)
@@ -2318,15 +2341,11 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			}
 			changes = append(changes, fmt.Sprintf("occurred_at (was %s)", oldVal))
 		}
-		if inp.Transient != nil {
-			sets = append(sets, "transient = ?")
-			val := 0
-			if *inp.Transient {
-				val = 1
-			}
-			args = append(args, val)
-			if *inp.Transient != cur.Transient {
-				changes = append(changes, fmt.Sprintf("transient (was %v)", cur.Transient))
+		if inp.DecisionType != nil {
+			sets = append(sets, "decision_type = ?")
+			args = append(args, *inp.DecisionType)
+			if *inp.DecisionType != cur.DecisionType {
+				changes = append(changes, fmt.Sprintf("decision_type (was %q)", cur.DecisionType))
 			}
 		}
 		args = append(args, inp.ID)
@@ -2360,9 +2379,9 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 		var n Node
 		var oa, aa sql.NullTime
 		if err := tx.QueryRow(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 			 FROM nodes WHERE id = ?`, inp.ID,
-		).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); err != nil {
+		).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
 			tx.Rollback()
 			return nil, err
 		}
@@ -2743,7 +2762,7 @@ func (s *Store) FindPossibleDuplicates(label, domain, excludeID string) ([]Node,
 		return []Node{}, nil
 	}
 	rows, err := s.db.Query(
-		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		 FROM nodes WHERE domain = ? AND archived_at IS NULL AND id != ?`,
 		domain, excludeID,
 	)
@@ -2756,7 +2775,7 @@ func (s *Store) FindPossibleDuplicates(label, domain, excludeID string) ([]Node,
 		var n Node
 		var oa, aa sql.NullTime
 		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); err != nil {
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
 			return nil, err
 		}
 		if oa.Valid {
@@ -2876,10 +2895,10 @@ func (s *Store) LastAuditEntry() (entry AuditEntry, ok bool, err error) {
 func (s *Store) FindDisconnected(domain string) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 
-	const baseQ = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+	const baseQ = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		FROM nodes
 		WHERE archived_at IS NULL
-		  AND transient = 0
+		  AND decision_type != 'transient'
 		  AND id NOT IN (SELECT from_node FROM edges UNION SELECT to_node FROM edges)`
 
 	var (
@@ -2901,7 +2920,46 @@ func (s *Store) FindDisconnected(domain string) ([]Node, error) {
 		var n Node
 		var oa, aa sql.NullTime
 		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters,
-			&n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient); err != nil {
+			&n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
+			return nil, err
+		}
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}
+
+// GetStandingNodes returns live nodes with decision_type = 'standing' for the
+// given domain, ordered by inbound edge count descending, capped at 20.
+func (s *Store) GetStandingNodes(domain string) ([]Node, error) {
+	domain = s.ResolveAlias(domain)
+	rows, err := s.db.Query(`
+		SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+		       n.created_at, n.updated_at, n.occurred_at, n.archived_at,
+		       n.tags, n.decision_type,
+		       COUNT(e.id) AS inbound_count
+		FROM nodes n
+		LEFT JOIN edges e ON e.to_node = n.id
+		WHERE n.domain = ? AND n.archived_at IS NULL AND n.decision_type = 'standing'
+		GROUP BY n.id
+		ORDER BY inbound_count DESC
+		LIMIT 20`, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		var oa, aa sql.NullTime
+		var inboundCount int64
+		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType, &inboundCount); err != nil {
 			return nil, err
 		}
 		if oa.Valid {
@@ -2922,10 +2980,10 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 	var target Node
 	var oa, aa sql.NullTime
 	err = s.db.QueryRow(
-		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		 FROM nodes WHERE id = ? AND archived_at IS NULL`, nodeID,
 	).Scan(&target.ID, &target.Label, &target.Description, &target.WhyMatters, &target.Domain,
-		&target.CreatedAt, &target.UpdatedAt, &oa, &aa, &target.Tags, &target.Transient)
+		&target.CreatedAt, &target.UpdatedAt, &oa, &aa, &target.Tags, &target.DecisionType)
 	if err == sql.ErrNoRows {
 		return nil, nil, fmt.Errorf("node not found: %s", nodeID)
 	}
@@ -2975,7 +3033,7 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 		nArgs[i] = id
 	}
 	nRows, err := s.db.Query(
-		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		 FROM nodes WHERE archived_at IS NULL AND id IN (`+ph+`)`, nArgs...)
 	if err != nil {
 		return nil, nil, err
@@ -2984,7 +3042,7 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 		var n Node
 		var oa2, aa2 sql.NullTime
 		if scanErr := nRows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa2, &aa2, &n.Tags, &n.Transient); scanErr != nil {
+			&n.CreatedAt, &n.UpdatedAt, &oa2, &aa2, &n.Tags, &n.DecisionType); scanErr != nil {
 			nRows.Close()
 			return nil, nil, scanErr
 		}
@@ -3067,7 +3125,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	declaredArgs := []interface{}{domain}
 	declaredConds, declaredArgs = tagFilter("tags", tags, declaredConds, declaredArgs)
 	declaredQ := `SELECT id, label, description, why_matters, tags, domain,
-		       created_at, updated_at, occurred_at, archived_at, transient
+		       created_at, updated_at, occurred_at, archived_at, decision_type
 		FROM nodes WHERE ` + strings.Join(declaredConds, " AND ") + ` ORDER BY occurred_at ASC`
 	declaredRows, err := s.db.Query(declaredQ, declaredArgs...)
 	if err != nil {
@@ -3099,7 +3157,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	structConds, structArgs = tagFilter("n.tags", tags, structConds, structArgs)
 	structArgs = append(structArgs, limit)
 	structQ := `SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
-		       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.transient,
+		       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.decision_type,
 		       SUM(1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS importance_score
 		FROM edges e
 		JOIN nodes n  ON e.to_node   = n.id
@@ -3118,10 +3176,10 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 		var sn ScoredNode
 		var tags, desc, why sql.NullString
 		var occurredAt, archivedAt sql.NullTime
-		var transient int
+		var decisionType string
 		if err := structRows.Scan(
 			&sn.ID, &sn.Label, &desc, &why, &tags, &sn.Domain,
-			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &transient,
+			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &decisionType,
 			&sn.ImportanceScore,
 		); err != nil {
 			return res, fmt.Errorf("GetSignificance scan structural: %w", err)
@@ -3135,7 +3193,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 		if archivedAt.Valid {
 			sn.ArchivedAt = &archivedAt.Time
 		}
-		sn.Transient = transient != 0
+		sn.DecisionType = decisionType
 		res.Structural = append(res.Structural, sn)
 		structIDs[sn.ID] = true
 	}
@@ -3305,7 +3363,7 @@ func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bo
 	}
 	args = append(args, limit)
 
-	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, transient FROM nodes WHERE " +
+	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY COALESCE(occurred_at, created_at) ASC LIMIT ?"
 
 	rows, err := s.db.Query(q, args...)
@@ -3319,7 +3377,7 @@ func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bo
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.Transient)
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -3360,7 +3418,7 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 	// ── declared ─────────────────────────────────────────────────────────────
 	declaredRows, err := s.db.Query(
 		`SELECT id, label, description, why_matters, tags, domain,
-		        created_at, updated_at, occurred_at, archived_at, transient
+		        created_at, updated_at, occurred_at, archived_at, decision_type
 		 FROM nodes
 		 WHERE id IN (`+ph+`)
 		   AND occurred_at IS NOT NULL
@@ -3393,7 +3451,7 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 
 	structRows, err := s.db.Query(
 		`SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
-		        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.transient,
+		        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.decision_type,
 		        SUM(1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS importance_score
 		 FROM edges e
 		 JOIN nodes n  ON e.to_node   = n.id
@@ -3413,10 +3471,10 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 		var sn ScoredNode
 		var tags, desc, why sql.NullString
 		var occurredAt, archivedAt sql.NullTime
-		var transient int
+		var decisionType string
 		if err := structRows.Scan(
 			&sn.ID, &sn.Label, &desc, &why, &tags, &sn.Domain,
-			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &transient,
+			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &decisionType,
 			&sn.ImportanceScore,
 		); err != nil {
 			return res, fmt.Errorf("getSignificanceByNodeIDs scan structural: %w", err)
@@ -3430,7 +3488,7 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 		if archivedAt.Valid {
 			sn.ArchivedAt = &archivedAt.Time
 		}
-		sn.Transient = transient != 0
+		sn.DecisionType = decisionType
 		res.Structural = append(res.Structural, sn)
 		structIDs[sn.ID] = true
 	}
@@ -3516,15 +3574,15 @@ func (s *Store) logSignificance(callID string, calledAt time.Time, domain string
 
 // scanNode scans a single row from a query that SELECTs the standard 11 node
 // columns in the order: id, label, description, why_matters, tags, domain,
-// created_at, updated_at, occurred_at, archived_at, transient.
+// created_at, updated_at, occurred_at, archived_at, decision_type.
 func scanNode(rows *sql.Rows) (Node, error) {
 	var n Node
 	var desc, why, tags sql.NullString
 	var occurredAt, archivedAt sql.NullTime
-	var transient int
+	var decisionType string
 	if err := rows.Scan(
 		&n.ID, &n.Label, &desc, &why, &tags, &n.Domain,
-		&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &transient,
+		&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &decisionType,
 	); err != nil {
 		return n, err
 	}
@@ -3537,6 +3595,6 @@ func scanNode(rows *sql.Rows) (Node, error) {
 	if archivedAt.Valid {
 		n.ArchivedAt = &archivedAt.Time
 	}
-	n.Transient = transient != 0
+	n.DecisionType = decisionType
 	return n, nil
 }

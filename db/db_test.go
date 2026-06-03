@@ -28,7 +28,7 @@ func newStore(t *testing.T) *db.Store {
 
 func mustAddNode(t *testing.T, s *db.Store, label, domain string) *db.Node {
 	t.Helper()
-	n, err := s.AddNode(label, "desc", "why", domain, nil, "", false)
+	n, err := s.AddNode(label, "desc", "why", domain, nil, "", "")
 	if err != nil {
 		t.Fatalf("AddNode(%q): %v", label, err)
 	}
@@ -41,7 +41,7 @@ func ptr(t time.Time) *time.Time { return &t }
 
 func TestAddNode_IDContainsSlug(t *testing.T) {
 	s := newStore(t)
-	n, err := s.AddNode("RST Boot Crash", "desc", "why", "deep-game", nil, "", false)
+	n, err := s.AddNode("RST Boot Crash", "desc", "why", "deep-game", nil, "", "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestAddNode_IDContainsSlug(t *testing.T) {
 func TestAddNode_WithOccurredAt(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
-	n, err := s.AddNode("dated node", "d", "w", "proj", &ts, "", false)
+	n, err := s.AddNode("dated node", "d", "w", "proj", &ts, "", "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -293,8 +293,8 @@ func TestTimeline_AscendingOrder(t *testing.T) {
 	early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	late := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	n1, _ := s.AddNode("Early", "d", "w", "proj", ptr(early), "", false)
-	n2, _ := s.AddNode("Late", "d", "w", "proj", ptr(late), "", false)
+	n1, _ := s.AddNode("Early", "d", "w", "proj", ptr(early), "", "")
+	n2, _ := s.AddNode("Late", "d", "w", "proj", ptr(late), "", "")
 
 	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
 	if err != nil {
@@ -313,7 +313,7 @@ func TestTimeline_DefaultModeIncludesNullOccurredAt(t *testing.T) {
 	s := newStore(t)
 	noDate := mustAddNode(t, s, "no date", "proj")
 	ts := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", false)
+	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", "")
 
 	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
 	if err != nil {
@@ -341,7 +341,7 @@ func TestTimeline_ImportantOnlyExcludesNullOccurredAt(t *testing.T) {
 	s := newStore(t)
 	noDate := mustAddNode(t, s, "no date", "proj")
 	ts := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", false)
+	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", "")
 
 	nodes, err := s.Timeline("proj", true, nil, nil, nil, 10)
 	if err != nil {
@@ -366,7 +366,7 @@ func TestTimeline_ImportantOnlyExcludesNullOccurredAt(t *testing.T) {
 func TestTimeline_ExcludesArchived(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
-	n, _ := s.AddNode("archived event", "d", "w", "proj", ptr(ts), "", false)
+	n, _ := s.AddNode("archived event", "d", "w", "proj", ptr(ts), "", "")
 	s.ArchiveNode(n.ID, "reason")
 
 	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
@@ -385,9 +385,9 @@ func TestTimeline_DateRangeFilter(t *testing.T) {
 	jan := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	mar := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
 	jun := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
-	s.AddNode("Jan", "d", "w", "proj", ptr(jan), "", false)
-	nMar, _ := s.AddNode("Mar", "d", "w", "proj", ptr(mar), "", false)
-	s.AddNode("Jun", "d", "w", "proj", ptr(jun), "", false)
+	s.AddNode("Jan", "d", "w", "proj", ptr(jan), "", "")
+	nMar, _ := s.AddNode("Mar", "d", "w", "proj", ptr(mar), "", "")
+	s.AddNode("Jun", "d", "w", "proj", ptr(jun), "", "")
 
 	from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
@@ -406,7 +406,7 @@ func TestTimeline_FromToFiltersByCoalesceDate(t *testing.T) {
 	// A node with no occurred_at should be included if its created_at is in range.
 	s := newStore(t)
 	// Add a node with no occurred_at (relies on created_at for ordering / filtering).
-	undated, _ := s.AddNode("undated recent", "d", "w", "proj", nil, "", false)
+	undated, _ := s.AddNode("undated recent", "d", "w", "proj", nil, "", "")
 
 	// Use a wide open range to ensure created_at falls inside it.
 	from := time.Now().UTC().Add(-time.Hour)
@@ -430,10 +430,10 @@ func TestTimeline_FromToFiltersByCoalesceDate(t *testing.T) {
 func TestTimeline_TagFilter_WholeWordMatch(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
-	taggedA, _ := s.AddNode("node A", "d", "w", "proj", ptr(ts), "decision architecture", false)
-	taggedB, _ := s.AddNode("node B", "d", "w", "proj", ptr(ts), "architecture release", false)
-	_, _ = s.AddNode("node C", "d", "w", "proj", ptr(ts), "release", false)
-	_, _ = s.AddNode("node D", "d", "w", "proj", ptr(ts), "", false)
+	taggedA, _ := s.AddNode("node A", "d", "w", "proj", ptr(ts), "decision architecture", "")
+	taggedB, _ := s.AddNode("node B", "d", "w", "proj", ptr(ts), "architecture release", "")
+	_, _ = s.AddNode("node C", "d", "w", "proj", ptr(ts), "release", "")
+	_, _ = s.AddNode("node D", "d", "w", "proj", ptr(ts), "", "")
 
 	nodes, err := s.Timeline("proj", false, []string{"architecture"}, nil, nil, 10)
 	if err != nil {
@@ -467,9 +467,9 @@ func TestGetHistoryForMemoryID_ReturnsChronological(t *testing.T) {
 	mar := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	jun := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	anchor, _ := s.AddNode("Anchor", "d", "w", "proj", ptr(jan), "", false)
-	n1, _ := s.AddNode("March", "d", "w", "proj", ptr(mar), "", false)
-	n2, _ := s.AddNode("June", "d", "w", "proj", ptr(jun), "", false)
+	anchor, _ := s.AddNode("Anchor", "d", "w", "proj", ptr(jan), "", "")
+	n1, _ := s.AddNode("March", "d", "w", "proj", ptr(mar), "", "")
+	n2, _ := s.AddNode("June", "d", "w", "proj", ptr(jun), "", "")
 	s.AddEdge(anchor.ID, n1.ID, "connects_to", "")
 	s.AddEdge(anchor.ID, n2.ID, "connects_to", "")
 
@@ -525,7 +525,7 @@ func TestGetHistoryForMemoryID_ImportantOnly(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	anchor := mustAddNode(t, s, "Anchor", "proj")
-	dated, _ := s.AddNode("Dated", "d", "w", "proj", ptr(ts), "", false)
+	dated, _ := s.AddNode("Dated", "d", "w", "proj", ptr(ts), "", "")
 	undated := mustAddNode(t, s, "Undated", "proj")
 	s.AddEdge(anchor.ID, dated.ID, "connects_to", "")
 	s.AddEdge(anchor.ID, undated.ID, "connects_to", "")
@@ -556,7 +556,7 @@ func TestGetHistoryForMemoryID_ImportantOnly(t *testing.T) {
 func TestGetHistoryForMemoryID_TagsFilter(t *testing.T) {
 	s := newStore(t)
 	anchor := mustAddNode(t, s, "Anchor", "proj")
-	tagged, _ := s.AddNode("Tagged", "d", "w", "proj", nil, "mytag", false)
+	tagged, _ := s.AddNode("Tagged", "d", "w", "proj", nil, "mytag", "")
 	untagged := mustAddNode(t, s, "Untagged", "proj")
 	s.AddEdge(anchor.ID, tagged.ID, "connects_to", "")
 	s.AddEdge(anchor.ID, untagged.ID, "connects_to", "")
@@ -925,7 +925,7 @@ func TestUpdateNode_UpdatesTags(t *testing.T) {
 
 func TestUpdateNode_OnlyUpdatesProvidedFields(t *testing.T) {
 	s := newStore(t)
-	n, _ := s.AddNode("stable label", "original desc", "original why", "proj", nil, "original tags", false)
+	n, _ := s.AddNode("stable label", "original desc", "original why", "proj", nil, "original tags", "")
 
 	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil, nil, nil)
 	if err != nil {
@@ -987,7 +987,7 @@ func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
 func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
 	s := newStore(t)
 	// The label won't match; a tag synonym will.
-	n, err := s.AddNode("Parameterised test approval files need withNameSuffix", "some description", "why", "proj", nil, "testing approval parameterised withNamesuffix", false)
+	n, err := s.AddNode("Parameterised test approval files need withNameSuffix", "some description", "why", "proj", nil, "testing approval parameterised withNamesuffix", "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -1063,7 +1063,7 @@ func TestSearchNodes_MultiWordFallback_WordsSpreadAcrossFields(t *testing.T) {
 		"proj",
 		nil,
 		"parameterised kotlin", // tags: contains "parameterised"
-		false,
+		"",
 	)
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
@@ -1116,7 +1116,7 @@ func TestSearchNodes_MultiWordFallback_NoDomain(t *testing.T) {
 		"proj-a",
 		nil,
 		"parameterised",
-		false,
+		"",
 	)
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
@@ -1140,33 +1140,33 @@ func TestSearchNodes_MultiWordFallback_NoDomain(t *testing.T) {
 
 // ── Transient field ───────────────────────────────────────────────────────────
 
-func TestAddNode_Transient_Persists(t *testing.T) {
+func TestAddNode_DecisionTypeTransient_Persists(t *testing.T) {
 	s := newStore(t)
-	n, err := s.AddNode("sprint ticket XYZ", "d", "w", "proj", nil, "", true)
+	n, err := s.AddNode("sprint ticket XYZ", "d", "w", "proj", nil, "", "transient")
 	if err != nil {
 		t.Fatalf("AddNode transient: %v", err)
 	}
-	if !n.Transient {
-		t.Error("Transient should be true on returned node")
+	if n.DecisionType != "transient" {
+		t.Errorf("DecisionType should be 'transient', got %q", n.DecisionType)
 	}
 
 	got, err := s.GetNode(n.ID)
 	if err != nil {
 		t.Fatalf("GetNode: %v", err)
 	}
-	if !got.Node.Transient {
-		t.Error("Transient should be true when fetched via GetNode")
+	if got.Node.DecisionType != "transient" {
+		t.Errorf("DecisionType should be 'transient' when fetched via GetNode, got %q", got.Node.DecisionType)
 	}
 }
 
-func TestAddNode_Transient_DefaultsFalse(t *testing.T) {
+func TestAddNode_DecisionTypeDefaultsToDecision_Legacy(t *testing.T) {
 	s := newStore(t)
-	n, err := s.AddNode("regular node", "d", "w", "proj", nil, "", false)
+	n, err := s.AddNode("regular node", "d", "w", "proj", nil, "", "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
-	if n.Transient {
-		t.Error("Transient should default to false")
+	if n.DecisionType != "decision" {
+		t.Errorf("DecisionType should default to 'decision', got %q", n.DecisionType)
 	}
 }
 
@@ -1179,7 +1179,7 @@ func TestFindDrift_TransientOlderThan7Days_IsDriftCandidate(t *testing.T) {
 	}
 	defer s.Close()
 
-	n, err := s.AddNode("sprint ticket stale", "d", "w", "transient-drift", nil, "", true)
+	n, err := s.AddNode("sprint ticket stale", "d", "w", "transient-drift", nil, "", "transient")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -1216,7 +1216,7 @@ func TestFindDrift_TransientOlderThan7Days_IsDriftCandidate(t *testing.T) {
 
 func TestFindDrift_TransientNewerThan7Days_NotDriftCandidate(t *testing.T) {
 	s := newStore(t)
-	n, err := s.AddNode("recent sprint ticket", "d", "w", "transient-new", nil, "", true)
+	n, err := s.AddNode("recent sprint ticket", "d", "w", "transient-new", nil, "", "transient")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -1236,8 +1236,8 @@ func TestFindDrift_TransientNewerThan7Days_NotDriftCandidate(t *testing.T) {
 
 func TestSuggestEdges_ReturnsOverlappingTagsNode(t *testing.T) {
 	s := newStore(t)
-	nA, _ := s.AddNode("sprint ticket alpha", "d", "w", "proj", nil, "kotlin testing", false)
-	nB, _ := s.AddNode("sprint ticket beta", "d", "w", "proj", nil, "kotlin approval", false)
+	nA, _ := s.AddNode("sprint ticket alpha", "d", "w", "proj", nil, "kotlin testing", "")
+	nB, _ := s.AddNode("sprint ticket beta", "d", "w", "proj", nil, "kotlin approval", "")
 	mustAddNode(t, s, "completely unrelated thing", "proj") // no overlap
 
 	suggestions, err := s.SuggestEdges(nA.ID, 5)
@@ -1260,7 +1260,7 @@ func TestSuggestEdges_ReturnsOverlappingTagsNode(t *testing.T) {
 
 func TestSuggestEdges_ExcludesSelf(t *testing.T) {
 	s := newStore(t)
-	n, _ := s.AddNode("self test node kotlin", "d", "w", "proj", nil, "kotlin", false)
+	n, _ := s.AddNode("self test node kotlin", "d", "w", "proj", nil, "kotlin", "")
 	mustAddNode(t, s, "kotlin partner node", "proj") // gives a keyword match
 
 	suggestions, err := s.SuggestEdges(n.ID, 5)
@@ -1276,9 +1276,9 @@ func TestSuggestEdges_ExcludesSelf(t *testing.T) {
 
 func TestSuggestEdges_DomainScoping_DB(t *testing.T) {
 	s := newStore(t)
-	nA, _ := s.AddNode("kotlin build system", "d", "w", "domain-a", nil, "kotlin gradle", false)
-	s.AddNode("kotlin build tool", "d", "w", "domain-b", nil, "kotlin gradle", false) // different domain
-	nC, _ := s.AddNode("kotlin runner", "d", "w", "domain-a", nil, "kotlin testing", false)
+	nA, _ := s.AddNode("kotlin build system", "d", "w", "domain-a", nil, "kotlin gradle", "")
+	s.AddNode("kotlin build tool", "d", "w", "domain-b", nil, "kotlin gradle", "") // different domain
+	nC, _ := s.AddNode("kotlin runner", "d", "w", "domain-a", nil, "kotlin testing", "")
 
 	suggestions, err := s.SuggestEdges(nA.ID, 5)
 	if err != nil {
@@ -1302,7 +1302,7 @@ func TestSuggestEdges_DomainScoping_DB(t *testing.T) {
 
 func TestAddNode_Tags_RoundTrip(t *testing.T) {
 	s := newStore(t)
-	n, err := s.AddNode("my node", "desc", "why", "proj", nil, "alpha beta gamma", false)
+	n, err := s.AddNode("my node", "desc", "why", "proj", nil, "alpha beta gamma", "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
@@ -1500,8 +1500,8 @@ func TestGetSignificance_Declared(t *testing.T) {
 	early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	late := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	n1, _ := s.AddNode("Early decision", "d", "w", "proj", ptr(early), "", false)
-	n2, _ := s.AddNode("Late decision", "d", "w", "proj", ptr(late), "", false)
+	n1, _ := s.AddNode("Early decision", "d", "w", "proj", ptr(early), "", "")
+	n2, _ := s.AddNode("Late decision", "d", "w", "proj", ptr(late), "", "")
 	mustAddNode(t, s, "Undated node", "proj") // no occurred_at — should not appear in Declared
 
 	res, err := s.GetSignificance("proj", 10, 90, nil)
@@ -1563,7 +1563,7 @@ func TestGetSignificance_RecencyWindow(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 
 	target := mustAddNode(t, s, "Target node", "proj")
-	linker, _ := s.AddNode("Stale linker", "d", "w", "proj", nil, "", false)
+	linker, _ := s.AddNode("Stale linker", "d", "w", "proj", nil, "", "")
 	if _, err := s.AddEdge(linker.ID, target.ID, "connects_to", ""); err != nil {
 		t.Fatalf("AddEdge: %v", err)
 	}
@@ -1629,7 +1629,7 @@ func TestGetSignificance_PotentiallyStale(t *testing.T) {
 	s := newStore(t)
 	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// Node with occurred_at but no inbound edges — structurally irrelevant.
-	isolated, _ := s.AddNode("Isolated declared node", "d", "w", "proj", ptr(ts), "", false)
+	isolated, _ := s.AddNode("Isolated declared node", "d", "w", "proj", ptr(ts), "", "")
 
 	res, err := s.GetSignificance("proj", 10, 90, nil)
 	if err != nil {
@@ -1726,7 +1726,7 @@ func TestGetSignificance_ArchivedExcluded(t *testing.T) {
 	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	// Archived node with occurred_at — should not appear in declared.
-	n1, _ := s.AddNode("Archived declared", "d", "w", "proj", ptr(ts), "", false)
+	n1, _ := s.AddNode("Archived declared", "d", "w", "proj", ptr(ts), "", "")
 	s.ArchiveNode(n1.ID, "testing")
 
 	// Archived target node with an inbound edge — should not appear in structural.
@@ -1785,5 +1785,105 @@ func TestCountArchived_AfterArchive(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("want 2, got %d", count)
+	}
+}
+
+// ── DecisionType ──────────────────────────────────────────────────────────────
+
+func TestAddNode_DecisionTypeDefaultsToDecision(t *testing.T) {
+	s := newStore(t)
+	n, err := s.AddNode("default type node", "d", "w", "proj", nil, "", "")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if n.DecisionType != "decision" {
+		t.Errorf("DecisionType: got %q, want %q", n.DecisionType, "decision")
+	}
+}
+
+func TestAddNode_DecisionTypeStanding(t *testing.T) {
+	s := newStore(t)
+	n, err := s.AddNode("a standing rule", "d", "why", "proj", nil, "", "standing")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if n.DecisionType != "standing" {
+		t.Errorf("DecisionType: got %q, want %q", n.DecisionType, "standing")
+	}
+	got, err := s.GetNode(n.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got.Node.DecisionType != "standing" {
+		t.Errorf("GetNode DecisionType: got %q, want %q", got.Node.DecisionType, "standing")
+	}
+}
+
+func TestGetStandingNodes_Empty(t *testing.T) {
+	s := newStore(t)
+	mustAddNode(t, s, "just a decision", "proj")
+	nodes, err := s.GetStandingNodes("proj")
+	if err != nil {
+		t.Fatalf("GetStandingNodes: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Errorf("expected 0 standing nodes, got %d", len(nodes))
+	}
+}
+
+func TestGetStandingNodes_OrderedByInboundEdgeCount(t *testing.T) {
+	s := newStore(t)
+	// 3 standing nodes; add inbound edges to give them 0, 1, 2 inbound counts.
+	zero, _ := s.AddNode("standing zero", "d", "w", "proj", nil, "", "standing")
+	one, _ := s.AddNode("standing one", "d", "w", "proj", nil, "", "standing")
+	two, _ := s.AddNode("standing two", "d", "w", "proj", nil, "", "standing")
+
+	linkerA := mustAddNode(t, s, "linker A", "proj")
+	linkerB := mustAddNode(t, s, "linker B", "proj")
+	linkerC := mustAddNode(t, s, "linker C", "proj")
+
+	s.AddEdge(linkerA.ID, one.ID, "governed_by", "")
+	s.AddEdge(linkerB.ID, two.ID, "governed_by", "")
+	s.AddEdge(linkerC.ID, two.ID, "governed_by", "")
+
+	nodes, err := s.GetStandingNodes("proj")
+	if err != nil {
+		t.Fatalf("GetStandingNodes: %v", err)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 standing nodes, got %d", len(nodes))
+	}
+	// Descending order: two (2), one (1), zero (0).
+	if nodes[0].ID != two.ID {
+		t.Errorf("nodes[0]: want two (%q), got %q", two.ID, nodes[0].ID)
+	}
+	if nodes[1].ID != one.ID {
+		t.Errorf("nodes[1]: want one (%q), got %q", one.ID, nodes[1].ID)
+	}
+	if nodes[2].ID != zero.ID {
+		t.Errorf("nodes[2]: want zero (%q), got %q", zero.ID, nodes[2].ID)
+	}
+}
+
+func TestUpdateNode_DecisionType(t *testing.T) {
+	s := newStore(t)
+	n, _ := s.AddNode("will become standing", "d", "w", "proj", nil, "", "decision")
+
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, ptrStr("standing"))
+	if err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if updated.DecisionType != "standing" {
+		t.Errorf("DecisionType: got %q, want %q", updated.DecisionType, "standing")
+	}
+}
+
+func TestUpdateNode_DecisionType_Invalid(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "any node", "proj")
+
+	_, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, ptrStr("nonsense"))
+	if err == nil {
+		t.Error("expected error for invalid decision_type, got nil")
 	}
 }
