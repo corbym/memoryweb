@@ -2,6 +2,8 @@
 
 **Status:** PENDING
 
+**Shared-surface node:** `orient-stale-count-in-response-r-9971193d`
+
 **Memoryweb-meta node:** `story-rules-section-hard-cap-sec-5864279d`
 
 ---
