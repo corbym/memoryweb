@@ -1258,6 +1258,123 @@ func TestFindDrift_TransientNewerThan7Days_NotDriftCandidate(t *testing.T) {
 	}
 }
 
+// TestFindDrift_LowConnectionStandingNode: a standing node with 0 inbound edges
+// older than 30 days must be flagged by rule 6.
+func TestFindDrift_LowConnectionStandingNode(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+
+	n, err := s.AddNode("orphaned standing rule", "desc", "why", "standing-low-conn", nil, "", "standing")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+	old := time.Now().UTC().AddDate(0, 0, -31).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE id = ?`, old, n.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	candidates, err := s.FindDrift("standing-low-conn", 10, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, c := range candidates {
+		if c.Node.ID == n.ID {
+			found = true
+			if !strings.Contains(c.Reason, "low connection count") {
+				t.Errorf("reason should mention 'low connection count'; got %q", c.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("old standing node with no edges (%s) should appear in drift candidates", n.ID)
+	}
+}
+
+// TestFindDrift_StandingNodeNotFlaggedWhenYoung: a standing node younger than 30
+// days must not be flagged by rule 6, even with 0 edges.
+func TestFindDrift_StandingNodeNotFlaggedWhenYoung(t *testing.T) {
+	s := newStore(t)
+	n, err := s.AddNode("fresh standing rule", "desc", "why", "standing-young", nil, "", "standing")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	candidates, err := s.FindDrift("standing-young", 10, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, c := range candidates {
+		if c.Node.ID == n.ID {
+			t.Errorf("young standing node should NOT appear in drift; got reason: %q", c.Reason)
+		}
+	}
+}
+
+// TestFindDrift_StandingNodeNotFlaggedWhenWellConnected: a standing node older
+// than 30 days with at least 2 inbound edges must not be flagged by rule 6.
+func TestFindDrift_StandingNodeNotFlaggedWhenWellConnected(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+
+	rule, err := s.AddNode("well connected rule", "desc", "why", "standing-connected", nil, "", "standing")
+	if err != nil {
+		t.Fatalf("AddNode rule: %v", err)
+	}
+	src1, err := s.AddNode("source one", "d", "w", "standing-connected", nil, "", "")
+	if err != nil {
+		t.Fatalf("AddNode src1: %v", err)
+	}
+	src2, err := s.AddNode("source two", "d", "w", "standing-connected", nil, "", "")
+	if err != nil {
+		t.Fatalf("AddNode src2: %v", err)
+	}
+	if _, err := s.AddEdge(src1.ID, rule.ID, "governed_by", "s1 governed by rule"); err != nil {
+		t.Fatalf("AddEdge 1: %v", err)
+	}
+	if _, err := s.AddEdge(src2.ID, rule.ID, "governed_by", "s2 governed by rule"); err != nil {
+		t.Fatalf("AddEdge 2: %v", err)
+	}
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+	old := time.Now().UTC().AddDate(0, 0, -31).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE id = ?`, old, rule.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	candidates, err := s.FindDrift("standing-connected", 10, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, c := range candidates {
+		if c.Node.ID == rule.ID {
+			t.Errorf("well-connected standing node should NOT appear in drift; got reason: %q", c.Reason)
+		}
+	}
+}
+
 // ── SuggestEdges ──────────────────────────────────────────────────────────────
 
 func TestSuggestEdges_ReturnsOverlappingTagsNode(t *testing.T) {

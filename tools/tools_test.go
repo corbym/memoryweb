@@ -2965,6 +2965,159 @@ func TestListTools_OrientDescriptionTruncationDisclosure(t *testing.T) {
 	t.Error("orient tool not found in ListTools response")
 }
 
+// ── orient stale_count ────────────────────────────────────────────────────────
+
+// TestOrient_StaleCountZeroWhenNoDrift: orient must include stale_count = 0
+// when no nodes match any drift rule.
+func TestOrient_StaleCountZeroWhenNoDrift(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Fresh memory", "orient-stalecnt-zero", nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-stalecnt-zero"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		StaleCount int `json:"stale_count"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.StaleCount != 0 {
+		t.Errorf("stale_count: got %d, want 0", resp.StaleCount)
+	}
+}
+
+// TestOrient_StaleCountNonZeroWhenTransientIsStale: orient stale_count must be
+// > 0 when a transient node is older than 7 days.
+func TestOrient_StaleCountNonZeroWhenTransientIsStale(t *testing.T) {
+	dbPath, _, h := newEnvWithPath(t)
+
+	addNode(t, h, "Old sprint ticket", "orient-stalecnt-transient", map[string]any{
+		"decision_type": "transient",
+	})
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+	old := time.Now().UTC().AddDate(0, 0, -8).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE domain = ?`, old, "orient-stalecnt-transient"); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-stalecnt-transient"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		StaleCount int `json:"stale_count"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.StaleCount == 0 {
+		t.Error("stale_count: got 0, want > 0 for a stale transient node")
+	}
+}
+
+// TestOrient_StaleCountNonZeroWhenStandingNodeContradicts: orient stale_count
+// must be > 0 when a standing node is connected by a contradicts edge.
+func TestOrient_StaleCountNonZeroWhenStandingNodeContradicts(t *testing.T) {
+	_, h := newEnv(t)
+	aID := addNode(t, h, "Rule A contradicted", "orient-stalecnt-contradicts", map[string]any{
+		"decision_type": "standing",
+	})
+	bID := addNode(t, h, "Rule B contradicts it", "orient-stalecnt-contradicts", map[string]any{
+		"decision_type": "standing",
+	})
+	call(t, h, "connect", map[string]any{
+		"from_memory":  aID,
+		"to_memory":    bID,
+		"relationship": "contradicts",
+		"narrative":    "these rules conflict",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-stalecnt-contradicts"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		StaleCount int `json:"stale_count"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.StaleCount == 0 {
+		t.Error("stale_count: got 0, want > 0 when a contradicts edge exists")
+	}
+}
+
+// TestOrient_StaleCountNonZeroWhenLowConnectionStanding: orient stale_count
+// must be > 0 for a standing node with < 2 inbound edges older than 30 days.
+func TestOrient_StaleCountNonZeroWhenLowConnectionStanding(t *testing.T) {
+	dbPath, _, h := newEnvWithPath(t)
+
+	addNode(t, h, "Lonely standing rule", "orient-stalecnt-standing", map[string]any{
+		"decision_type": "standing",
+	})
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+	old := time.Now().UTC().AddDate(0, 0, -31).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE domain = ?`, old, "orient-stalecnt-standing"); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	tr := call(t, h, "orient", map[string]any{"domain": "orient-stalecnt-standing"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		StaleCount int `json:"stale_count"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.StaleCount == 0 {
+		t.Error("stale_count: got 0, want > 0 for a low-connection standing node older than 30 days")
+	}
+}
+
+// TestOrient_DescriptionContainsStaleCountAdvisory: orient description must
+// contain the stale_count advisory instructing agents to call audit(mode=stale).
+func TestOrient_DescriptionContainsStaleCountAdvisory(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "orient" {
+			if !strings.Contains(td.Description, "stale_count > 0") {
+				t.Error(`orient description must contain "stale_count > 0"`)
+			}
+			if !strings.Contains(td.Description, "audit(mode=stale)") {
+				t.Error(`orient description must contain "audit(mode=stale)"`)
+			}
+			return
+		}
+	}
+	t.Error("orient tool not found in ListTools response")
+}
+
 // ── orient topic ──────────────────────────────────────────────────────────────
 
 // TestOrient_Topic_ReturnsRelevantSection: orient with topic must return a

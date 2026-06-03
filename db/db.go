@@ -1852,6 +1852,7 @@ func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
 //  3. Stale open question: contains open-question keywords and is older than 30 days.
 //  4. Duplicate label: identical lowercased label in the same domain.
 //  5. Transient node older than 7 days.
+//  6. Standing node with fewer than 2 inbound edges and older than 30 days.
 func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID string, depth int) ([]DriftCandidate, error) {
 	if limit <= 0 {
 		limit = 10
@@ -2071,6 +2072,62 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 		return nil, err
 	}
 
+	// ── Rule 6: standing nodes with low inbound edge count older than 30 days ──
+	cutoff30standing := time.Now().UTC().AddDate(0, 0, -30)
+	var rows6 *sql.Rows
+	if domain != "" {
+		rows6, err = s.db.Query(
+			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.decision_type,
+			        COUNT(e.id) AS inbound_count
+			 FROM nodes n
+			 LEFT JOIN edges e ON e.to_node = n.id
+			 WHERE n.archived_at IS NULL
+			   AND n.decision_type = 'standing'
+			   AND n.created_at < ?
+			   AND n.domain = ?
+			 GROUP BY n.id
+			 HAVING inbound_count < 2`,
+			cutoff30standing, domain)
+	} else {
+		rows6, err = s.db.Query(
+			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.decision_type,
+			        COUNT(e.id) AS inbound_count
+			 FROM nodes n
+			 LEFT JOIN edges e ON e.to_node = n.id
+			 WHERE n.archived_at IS NULL
+			   AND n.decision_type = 'standing'
+			   AND n.created_at < ?
+			 GROUP BY n.id
+			 HAVING inbound_count < 2`,
+			cutoff30standing)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for rows6.Next() {
+		var n Node
+		var oa, aa sql.NullTime
+		var inboundCount int
+		if err := rows6.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType, &inboundCount); err != nil {
+			rows6.Close()
+			return nil, err
+		}
+		if oa.Valid {
+			n.OccurredAt = &oa.Time
+		}
+		if aa.Valid {
+			n.ArchivedAt = &aa.Time
+		}
+		add(n, nil, "standing rule with low connection count — may not be in use")
+	}
+	rows6.Close()
+	if err = rows6.Err(); err != nil {
+		return nil, err
+	}
+
 	// Post-filter by neighbourhood (memory_id scoping).
 	if memoryID != "" {
 		allowedIDs, _, err := s.neighbourhoodIDs(memoryID, depth)
@@ -2143,6 +2200,17 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 	}
 
 	return out, nil
+}
+
+// CountStaleDrift returns the number of live nodes that would be surfaced by
+// audit(mode=stale) — i.e. the union of all FindDrift rules. Used to populate
+// the stale_count field in the orient response.
+func (s *Store) CountStaleDrift(domain string) (int, error) {
+	candidates, err := s.FindDrift(domain, 1000, nil, "", 2)
+	if err != nil {
+		return 0, err
+	}
+	return len(candidates), nil
 }
 
 // GetDomainGraph returns the live nodes and the edges between them for a domain.

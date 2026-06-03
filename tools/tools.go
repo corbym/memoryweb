@@ -267,7 +267,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "orient",
-			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns four sections: rules (standing constraints and durable decisions that govern the domain — always apply these), declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain. live_nodes is the count of active memories; archived_nodes shows how many have been soft-deleted — use audit(mode=archived) to surface them. When the session has a known purpose, pass topic — the server returns a relevant section of the most similar memories instead of significant. declared_spine and recent are always returned.",
+			Description: "Call this at the start of every session to orient yourself in a domain before filing or searching. Omit domain for a cross-domain snapshot showing where work was last happening — use the result to pick a domain and then call orient with that domain. With a domain, returns four sections: rules (standing constraints and durable decisions that govern the domain — always apply these), declared_spine (curated significant decisions with occurred_at set, chronological — weigh these heavily), significant (structurally load-bearing memories right now, ranked by recency-weighted inbound connections), and recent (where work was last happening, by updated_at). Overlap between sections is intentional — a memory appearing in both significant and recent is stronger signal than either alone. If stale_count > 0, call audit(mode=stale) before filing new memories. After orient, use search for specific questions. Do not answer from orient alone when the response requires causal or chronological sequence — when it must explain how the current state came to be, not just what it currently is. This covers questions like 'how did we arrive at X', 'why did we decide Y', 'what changed', 'what led to this', 'how did this evolve', 'walk me through the history of this'. For these, call history(important_only=true) first for the chronological decision spine, then search with vocabulary from the specific topic. Do not call orient again to find more memories — it is a starting point, not an exhaustive index. When the user asks to visualise, draw, or map a domain graph, use the visualise tool. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live memories. Archived memories are hidden. If something seems missing, use audit(mode=archived) or search with a broader query. orient returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). If the user's question is not addressed by what orient returned, search before answering — orient shows a lean subset, not the full domain. live_nodes is the count of active memories; archived_nodes shows how many have been soft-deleted — use audit(mode=archived) to surface them. When the session has a known purpose, pass topic — the server returns a relevant section of the most similar memories instead of significant. declared_spine and recent are always returned.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -966,6 +966,7 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	staleCount, _ := h.store.CountStaleDrift(domain)
 
 	result, err := h.store.SearchNodes(topic, domain, 5, "")
 	if err != nil {
@@ -1030,6 +1031,7 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 		ServerVersion string      `json:"server_version"`
 		LiveNodes     int         `json:"live_nodes"`
 		ArchivedNodes int         `json:"archived_nodes"`
+		StaleCount    int         `json:"stale_count"`
 		Rules         interface{} `json:"rules,omitempty"`
 		DeclaredSpine interface{} `json:"declared_spine"`
 		Relevant      interface{} `json:"relevant"`
@@ -1039,6 +1041,7 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 		ServerVersion: h.version,
 		LiveNodes:     liveNodes,
 		ArchivedNodes: archivedNodes,
+		StaleCount:    staleCount,
 		Rules:         rulesField,
 		DeclaredSpine: spineEntries,
 		Relevant:      relevant,
@@ -1099,6 +1102,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	staleCount, _ := h.store.CountStaleDrift(a.Domain)
 
 	// Step 2: fetch significant nodes (structurally load-bearing, recency-weighted inbound degree).
 	sigResult, err := h.store.GetSignificance(a.Domain, 10, 90, nil)
@@ -1181,6 +1185,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		ServerVersion string      `json:"server_version"`
 		LiveNodes     int         `json:"live_nodes"`
 		ArchivedNodes int         `json:"archived_nodes"`
+		StaleCount    int         `json:"stale_count"`
 		Rules         interface{} `json:"rules,omitempty"`
 		DeclaredSpine interface{} `json:"declared_spine"`
 		Significant   interface{} `json:"significant"`
@@ -1190,6 +1195,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		ServerVersion: h.version,
 		LiveNodes:     liveNodes,
 		ArchivedNodes: archivedNodes,
+		StaleCount:    staleCount,
 		Rules:         rulesField,
 		DeclaredSpine: spineEntries,
 		Significant:   sigEntries,
