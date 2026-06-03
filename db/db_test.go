@@ -117,7 +117,7 @@ func TestSearchNodes_MatchesLabel(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "ULA memory write fix", "deep-game")
 
-	res, err := s.SearchNodes("ULA", "deep-game", 10)
+	res, err := s.SearchNodes("ULA", "deep-game", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestSearchNodes_ExcludesArchivedNodes(t *testing.T) {
 	n := mustAddNode(t, s, "searchable node", "proj")
 	s.ArchiveNode(n.ID, "reason")
 
-	res, err := s.SearchNodes("searchable", "proj", 10)
+	res, err := s.SearchNodes("searchable", "proj", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestSearchNodes_DomainFilter(t *testing.T) {
 	nA := mustAddNode(t, s, "shared label", "domain-a")
 	mustAddNode(t, s, "shared label", "domain-b")
 
-	res, err := s.SearchNodes("shared label", "domain-a", 10)
+	res, err := s.SearchNodes("shared label", "domain-a", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestSearchNodes_EmptyQueryReturnsAll(t *testing.T) {
 	mustAddNode(t, s, "Beta", "proj")
 	mustAddNode(t, s, "Gamma", "proj")
 
-	res, err := s.SearchNodes("", "proj", 10)
+	res, err := s.SearchNodes("", "proj", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestSearchNodes_LimitIsRespected(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		mustAddNode(t, s, "limit test", "proj")
 	}
-	res, err := s.SearchNodes("limit test", "proj", 3)
+	res, err := s.SearchNodes("limit test", "proj", 3, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestSearchNodes_TruncatedFlagSetWhenLimitExceeded(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		mustAddNode(t, s, "truncation test", "proj")
 	}
-	res, err := s.SearchNodes("truncation test", "proj", 3)
+	res, err := s.SearchNodes("truncation test", "proj", 3, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestSearchNodes_TruncatedFlagNotSetWhenUnderLimit(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		mustAddNode(t, s, "truncation under", "proj")
 	}
-	res, err := s.SearchNodes("truncation under", "proj", 10)
+	res, err := s.SearchNodes("truncation under", "proj", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestSearchNodes_includesEdgesBetweenResults(t *testing.T) {
 	b := mustAddNode(t, s, "beta edge test", "proj")
 	s.AddEdge(a.ID, b.ID, "connects_to", "they relate")
 
-	res, err := s.SearchNodes("edge test", "proj", 10)
+	res, err := s.SearchNodes("edge test", "proj", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -695,7 +695,7 @@ func TestRestoreNode_ReappearsInSearch(t *testing.T) {
 	s.ArchiveNode(n.ID, "reason")
 
 	// hidden
-	res, _ := s.SearchNodes("restore me", "proj", 10)
+	res, _ := s.SearchNodes("restore me", "proj", 10, "")
 	for _, node := range res.Nodes {
 		if node.ID == n.ID {
 			t.Fatal("should be hidden before restore")
@@ -707,7 +707,7 @@ func TestRestoreNode_ReappearsInSearch(t *testing.T) {
 	}
 
 	// visible again
-	res, _ = s.SearchNodes("restore me", "proj", 10)
+	res, _ = s.SearchNodes("restore me", "proj", 10, "")
 	found := false
 	for _, node := range res.Nodes {
 		if node.ID == n.ID {
@@ -815,7 +815,7 @@ func TestAddAlias_AffectsSearch(t *testing.T) {
 	n := mustAddNode(t, s, "Engine fact", "deep-engine")
 	s.AddAlias("engine", "deep-engine")
 
-	res, err := s.SearchNodes("Engine fact", "engine", 10)
+	res, err := s.SearchNodes("Engine fact", "engine", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes via alias: %v", err)
 	}
@@ -992,7 +992,7 @@ func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	res, err := s.SearchNodes("testing approval parameterised", "proj", 10)
+	res, err := s.SearchNodes("testing approval parameterised", "proj", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -1069,7 +1069,7 @@ func TestSearchNodes_MultiWordFallback_WordsSpreadAcrossFields(t *testing.T) {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	res, err := s.SearchNodes("testing approval parameterised", "proj", 10)
+	res, err := s.SearchNodes("testing approval parameterised", "proj", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -1090,7 +1090,7 @@ func TestSearchNodes_SingleWord_BehaviourUnchanged(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "ULA memory write fix", "proj")
 
-	res, err := s.SearchNodes("ULA", "proj", 10)
+	res, err := s.SearchNodes("ULA", "proj", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -1123,7 +1123,7 @@ func TestSearchNodes_MultiWordFallback_NoDomain(t *testing.T) {
 	}
 
 	// No domain filter — should still hit fallback path.
-	res, err := s.SearchNodes("testing approval parameterised", "", 10)
+	res, err := s.SearchNodes("testing approval parameterised", "", 10, "")
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -1885,5 +1885,51 @@ func TestUpdateNode_DecisionType_Invalid(t *testing.T) {
 	_, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, ptrStr("nonsense"))
 	if err == nil {
 		t.Error("expected error for invalid decision_type, got nil")
+	}
+}
+
+// ── SearchNodes memory_id scoping ────────────────────────────────────────────
+
+func TestSearchNodesLike_MemoryID_NeighbourhoodOnly(t *testing.T) {
+	s := newStore(t)
+
+	// anchor — connected to neighbour
+	anchor := mustAddNode(t, s, "anchor node", "proj")
+	neighbour := mustAddNode(t, s, "arch neighbour", "proj")
+	unrelated := mustAddNode(t, s, "arch unrelated", "proj")
+	s.AddEdge(anchor.ID, neighbour.ID, "connects_to", "")
+
+	res, err := s.SearchNodes("arch", "proj", 10, anchor.ID)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	for _, nr := range res.Nodes {
+		if nr.ID == unrelated.ID {
+			t.Error("unrelated node (not in neighbourhood) should be excluded")
+		}
+	}
+	found := false
+	for _, nr := range res.Nodes {
+		if nr.ID == neighbour.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("neighbour node should be included in scoped results")
+	}
+}
+
+func TestSearchNodes_MemoryID_EmptyFallsBackToNormal(t *testing.T) {
+	s := newStore(t)
+
+	mustAddNode(t, s, "arch alpha", "proj")
+	mustAddNode(t, s, "arch beta", "proj")
+
+	res, err := s.SearchNodes("arch", "proj", 10, "")
+	if err != nil {
+		t.Fatalf("SearchNodes with empty memoryID: %v", err)
+	}
+	if len(res.Nodes) != 2 {
+		t.Errorf("expected 2 results with no memory_id filter, got %d", len(res.Nodes))
 	}
 }

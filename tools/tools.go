@@ -129,10 +129,11 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"query":  {Type: "string", Description: "Terms to search for. Must use vocabulary that appears in the stored label, description, why_matters, or tags. Conceptual paraphrases that don't share vocabulary with the stored content will not match. For unique identifiers or ticket numbers known to appear verbatim, also set exact: true."},
-					"domain": {Type: "string", Description: "Optional domain to scope search"},
-					"limit":  {Type: "integer", Description: "Max results (default 10). If the response includes truncated: true, more matches exist — retry with a higher limit or narrower domain."},
-					"exact":  {Type: "boolean", Description: "When true, bypass semantic ranking and use pure substring (LIKE) matching only. Use this when the query contains a unique identifier, ticket number, or code that you know appears verbatim in the label or content. Results will not include a semantic_distance field."},
+					"query":     {Type: "string", Description: "Terms to search for. Must use vocabulary that appears in the stored label, description, why_matters, or tags. Conceptual paraphrases that don't share vocabulary with the stored content will not match. For unique identifiers or ticket numbers known to appear verbatim, also set exact: true."},
+					"domain":    {Type: "string", Description: "Optional domain to scope search"},
+					"limit":     {Type: "integer", Description: "Max results (default 10). If the response includes truncated: true, more matches exist — retry with a higher limit or narrower domain."},
+					"exact":     {Type: "boolean", Description: "When true, bypass semantic ranking and use pure substring (LIKE) matching only. Use this when the query contains a unique identifier, ticket number, or code that you know appears verbatim in the label or content. Results will not include a semantic_distance field."},
+					"memory_id": {Type: "string", Description: "Anchor memory ID. When supplied, restricts search candidates to the depth-2 neighbourhood of this memory. Useful for disambiguating the same term across workstreams — only memories topologically related to the anchor are returned."},
 				},
 				Required: []string{"query"},
 			},
@@ -561,10 +562,11 @@ func (h *Handler) getNode(args json.RawMessage) (*ToolResult, error) {
 
 func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
-		Query  string `json:"query"`
-		Domain string `json:"domain"`
-		Limit  int    `json:"limit"`
-		Exact  bool   `json:"exact"`
+		Query    string `json:"query"`
+		Domain   string `json:"domain"`
+		Limit    int    `json:"limit"`
+		Exact    bool   `json:"exact"`
+		MemoryID string `json:"memory_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -578,9 +580,9 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 	var nodes *db.SearchResult
 	var err error
 	if a.Exact {
-		nodes, err = h.store.SearchNodesExact(a.Query, a.Domain, a.Limit)
+		nodes, err = h.store.SearchNodesExact(a.Query, a.Domain, a.Limit, a.MemoryID)
 	} else {
-		nodes, err = h.store.SearchNodes(a.Query, a.Domain, a.Limit)
+		nodes, err = h.store.SearchNodes(a.Query, a.Domain, a.Limit, a.MemoryID)
 	}
 	if err != nil {
 		return nil, err
@@ -916,7 +918,7 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 		return nil, err
 	}
 
-	result, err := h.store.SearchNodes(topic, domain, 5)
+	result, err := h.store.SearchNodes(topic, domain, 5, "")
 	if err != nil {
 		return nil, err
 	}

@@ -740,14 +740,23 @@ type SearchResult struct {
 	Truncated bool         `json:"truncated,omitempty"`
 }
 
-func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, error) {
+func (s *Store) SearchNodes(query, domain string, limit int, memoryID string) (*SearchResult, error) {
 	domain = s.ResolveAlias(domain)
+
+	var allowedIDs []string
+	if memoryID != "" {
+		ids, _, err := s.neighbourhoodIDs(memoryID, 2)
+		if err != nil {
+			return nil, err
+		}
+		allowedIDs = ids
+	}
 
 	// Try semantic search when sqlite-vec is loaded.
 	if s.vecAvailable {
 		embedding, err := embed(query)
 		if err == nil && len(embedding) > 0 {
-			result, err := s.searchNodesSemantic(query, domain, limit, embedding)
+			result, err := s.searchNodesSemantic(query, domain, limit, embedding, allowedIDs)
 			if err == nil {
 				return result, nil
 			}
@@ -755,7 +764,7 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 		}
 	}
 
-	return s.searchNodesLike(query, domain, limit)
+	return s.searchNodesLike(query, domain, limit, allowedIDs)
 }
 
 // SearchNodesExact performs a pure substring (LIKE) search, bypassing semantic
@@ -763,9 +772,19 @@ func (s *Store) SearchNodes(query, domain string, limit int) (*SearchResult, err
 // number, or short code that is known to appear verbatim in the stored content.
 // Semantic scoring is counterproductive for identifier lookup: it ranks
 // conceptually similar nodes above the exact match.
-func (s *Store) SearchNodesExact(query, domain string, limit int) (*SearchResult, error) {
+func (s *Store) SearchNodesExact(query, domain string, limit int, memoryID string) (*SearchResult, error) {
 	domain = s.ResolveAlias(domain)
-	return s.searchNodesLike(query, domain, limit)
+
+	var allowedIDs []string
+	if memoryID != "" {
+		ids, _, err := s.neighbourhoodIDs(memoryID, 2)
+		if err != nil {
+			return nil, err
+		}
+		allowedIDs = ids
+	}
+
+	return s.searchNodesLike(query, domain, limit, allowedIDs)
 }
 
 // semanticDistanceThreshold is the maximum cosine distance for a node to be
@@ -777,7 +796,7 @@ const semanticDistanceThreshold = 0.3
 // searchNodesSemantic ranks nodes by cosine distance between the query
 // embedding and stored node embeddings, then falls back to LIKE if no
 // semantic results are found within the relevance threshold.
-func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding []float32) (*SearchResult, error) {
+func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding []float32, allowedIDs []string) (*SearchResult, error) {
 	blob, err := vec.SerializeFloat32(embedding)
 	if err != nil {
 		return nil, err
@@ -842,9 +861,24 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 		results = append(results, NodeResult{Node: n, SemanticDistance: &d})
 	}
 
+	// Post-filter to neighbourhood if memoryID was supplied.
+	if len(allowedIDs) > 0 {
+		allowed := make(map[string]struct{}, len(allowedIDs))
+		for _, id := range allowedIDs {
+			allowed[id] = struct{}{}
+		}
+		filtered := results[:0]
+		for _, nr := range results {
+			if _, ok := allowed[nr.ID]; ok {
+				filtered = append(filtered, nr)
+			}
+		}
+		results = filtered
+	}
+
 	if len(results) == 0 {
-		// No embeddings within threshold; fall back to literal search.
-		return s.searchNodesLike(query, domain, limit)
+		// No embeddings within threshold (or all filtered out); fall back to literal search.
+		return s.searchNodesLike(query, domain, limit, allowedIDs)
 	}
 
 	truncated := len(results) > limit
@@ -857,7 +891,8 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 }
 
 // searchNodesLike performs a full-phrase LIKE search with a multi-word fallback.
-func (s *Store) searchNodesLike(query, domain string, limit int) (*SearchResult, error) {
+// When allowedIDs is non-empty, results are restricted to nodes in that set.
+func (s *Store) searchNodesLike(query, domain string, limit int, allowedIDs []string) (*SearchResult, error) {
 	q := "%" + query + "%"
 	var rows *sql.Rows
 	var err error
@@ -865,7 +900,28 @@ func (s *Store) searchNodesLike(query, domain string, limit int) (*SearchResult,
 	// Fetch one extra row to detect truncation without a separate COUNT query.
 	fetch := limit + 1
 
-	if domain != "" {
+	if len(allowedIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(allowedIDs))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := []interface{}{}
+		if domain != "" {
+			args = append(args, domain)
+		}
+		args = append(args, q, q, q, q)
+		for _, id := range allowedIDs {
+			args = append(args, id)
+		}
+		args = append(args, fetch)
+		var qStr string
+		if domain != "" {
+			qStr = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
+			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?) AND id IN (` + placeholders + `) ORDER BY updated_at DESC LIMIT ?`
+		} else {
+			qStr = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
+			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?) AND id IN (` + placeholders + `) ORDER BY updated_at DESC LIMIT ?`
+		}
+		rows, err = s.db.Query(qStr, args...)
+	} else if domain != "" {
 		rows, err = s.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
 			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
@@ -898,7 +954,9 @@ func (s *Store) searchNodesLike(query, domain string, limit int) (*SearchResult,
 	// If the full-phrase LIKE returned nothing and the query contains multiple
 	// words, fall back to an OR of individual-word LIKE terms so that nodes
 	// whose fields collectively cover the query words are still surfaced.
-	if len(nodes) == 0 && !truncated {
+	// Neighbourhood scoping is not applied to the word fallback — it already
+	// returned nothing within the neighbourhood.
+	if len(nodes) == 0 && !truncated && len(allowedIDs) == 0 {
 		words := strings.Fields(query)
 		if len(words) > 1 {
 			log.Printf("[memoryweb] search: no results for %q (domain=%q), falling back to individual-word search", query, domain)

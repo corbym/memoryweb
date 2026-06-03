@@ -7125,3 +7125,99 @@ func TestConnect_GovernedBy(t *testing.T) {
 	})
 	mustNotError(t, tr)
 }
+
+// ── search memory_id scoping ──────────────────────────────────────────────────
+
+// TestSearch_MemoryID_ScopesResults: when memory_id is supplied, only nodes in
+// the depth-2 neighbourhood of the anchor appear in results.
+func TestSearch_MemoryID_ScopesResults(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	anchorID := addNode(t, h, "anchor node", "proj", nil)
+	neighbourID := addNode(t, h, "architecture neighbour", "proj", nil)
+	unrelatedID := addNode(t, h, "architecture unrelated", "proj", nil)
+
+	// connect anchor → neighbour
+	call(t, h, "connect", map[string]any{
+		"from_memory":  anchorID,
+		"to_memory":    neighbourID,
+		"relationship": "connects_to",
+	})
+
+	tr := call(t, h, "search", map[string]any{
+		"query":     "architecture",
+		"domain":    "proj",
+		"memory_id": anchorID,
+	})
+	mustNotError(t, tr)
+
+	ids := searchIDs(t, tr)
+	for _, id := range ids {
+		if id == unrelatedID {
+			t.Error("unrelated node should be excluded when memory_id is set")
+		}
+	}
+	if !contains(ids, neighbourID) {
+		t.Error("neighbour node should appear in scoped results")
+	}
+}
+
+// TestSearch_MemoryID_AbsentBehavesLikeDefault: omitting memory_id returns all
+// matching nodes regardless of neighbourhood.
+func TestSearch_MemoryID_AbsentBehavesLikeDefault(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	id1 := addNode(t, h, "arch alpha unlinked", "proj", nil)
+	id2 := addNode(t, h, "arch beta unlinked", "proj", nil)
+
+	tr := call(t, h, "search", map[string]any{
+		"query":  "arch",
+		"domain": "proj",
+	})
+	mustNotError(t, tr)
+
+	ids := searchIDs(t, tr)
+	if !contains(ids, id1) || !contains(ids, id2) {
+		t.Error("both nodes should appear when no memory_id filter is set")
+	}
+}
+
+// TestSearch_MemoryID_SchemaHasProperty: the search tool input schema must
+// expose the memory_id property so agents know it exists.
+func TestSearch_MemoryID_SchemaHasProperty(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "search" {
+			continue
+		}
+		prop, ok := td.InputSchema.Properties["memory_id"]
+		if !ok {
+			t.Fatal("search tool missing memory_id property in schema")
+		}
+		if prop.Description == "" {
+			t.Error("memory_id property must have a description")
+		}
+		return
+	}
+	t.Fatal("search tool not found in ListTools")
+}
