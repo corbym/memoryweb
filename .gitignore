@@ -2,6 +2,9 @@
 memoryweb
 memoryweb.exe
 
+# build output directory (use: go build -o out/memoryweb .)
+out/
+
 # CGO header shim (machine-specific paths)
 .sqlite3-shim/
 
