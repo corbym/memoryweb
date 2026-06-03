@@ -30,26 +30,34 @@ for this story. The only remaining gaps are `stale_count` and the description ad
 
 ## Changes
 
-### 1. DB — `CountStaleTransients`
+### 1. DB — `CountStaleDrift`
 
 New method in `db/db.go`:
 
 ```go
-func (s *Store) CountStaleTransients(domain string) (int, error)
+func (s *Store) CountStaleDrift(domain string) (int, error)
 ```
 
-Returns the count of live transient nodes (decision_type = 'transient') that are older
-than 7 days. This is the same set surfaced by `audit(mode=stale)`. If `domain` is empty,
-counts across all domains. Uses `archived_at IS NULL` guard.
+Returns the count of live nodes that would be surfaced by `audit(mode=stale)` — i.e. the
+union of all 5 `FindDrift` rules. This includes **any** `decision_type`, not just
+transients:
 
-SQL sketch:
-```sql
-SELECT COUNT(*) FROM nodes
-WHERE archived_at IS NULL
-  AND decision_type = 'transient'
-  AND created_at < datetime('now', '-7 days')
-  [AND domain = ? if domain != ""]
-```
+1. Connected by a `contradicts` edge  
+2. Label contains superseded keywords (old, deprecated, replaced, legacy, previous)  
+3. Open-question keywords + older than 30 days  
+4. Duplicate label in same domain  
+5. `decision_type = 'transient'` and older than 7 days  
+
+Standing rules CAN appear in rules 1–4 (e.g. a standing rule with a `contradicts` edge,
+or a stale open-question standing node). The count must reflect this.
+
+Implementation: the simplest correct approach is to call `FindDrift(domain, 1000, nil, "", 2)`
+and return `len(result)`. This avoids duplicating the 5-rule SQL logic. The 1000 limit is
+a practical cap; in pathological cases the count will be floored at 1000, which is
+acceptable — if there are 1000+ stale nodes, `stale_count > 0` is all the agent needs.
+
+Alternatively, extract a private `countDrift(domain string) int` to avoid the
+allocation if performance matters. Start with the `FindDrift` delegation approach first.
 
 ### 2. Tools — orient response struct
 
@@ -67,7 +75,7 @@ resp := struct {
 }
 ```
 
-Populate it by calling `h.store.CountStaleTransients(domain)`. If the call errors, log
+Populate it by calling `h.store.CountStaleDrift(domain)`. If the call errors, log
 and default to 0 (non-fatal).
 
 Apply to **both** orient response structs: the domain-scoped path and the cross-domain
@@ -88,8 +96,9 @@ the instruction-position convention.
 ## Acceptance criteria
 
 - `stale_count` appears in orient JSON output as an integer.
-- `stale_count` is 0 when no transient nodes are older than 7 days.
-- `stale_count` is > 0 when at least one transient node is older than 7 days.
+- `stale_count` is 0 when no nodes match any of the 5 FindDrift rules.
+- `stale_count` is > 0 when at least one node matches any drift rule (transient >7d, contradicts edge, superseded label, stale open question, or duplicate).
+- A standing node with a `contradicts` edge contributes to `stale_count`.
 - orient description contains the phrase `stale_count > 0` and references `audit(mode=stale)`.
 - No existing orient tests broken.
 - TDD sequence: failing tests first, confirm red, implement, green.
@@ -100,13 +109,15 @@ the instruction-position convention.
 
 ```go
 // tools/tools_test.go
-func TestOrient_StaleCountZeroWhenNoStaleTransients(t *testing.T) { ... }
-func TestOrient_StaleCountNonZeroWhenStaleTransientsExist(t *testing.T) { ... }
+func TestOrient_StaleCountZeroWhenNoDrift(t *testing.T) { ... }
+func TestOrient_StaleCountNonZeroWhenTransientIsStale(t *testing.T) { ... }
+func TestOrient_StaleCountNonZeroWhenStandingNodeContradicts(t *testing.T) { ... }
 func TestOrient_DescriptionContainsStaleCountAdvisory(t *testing.T) { ... }
 ```
 
-Stale transients can be created by calling `addNode` then directly updating
-`created_at` via the raw Store (use `newEnvWithPath` helper).
+Stale transients: call `addNode` then update `created_at` to >7 days ago via raw Store
+(`newEnvWithPath` helper). Contradicts: add two nodes and `connect` them with
+`relationship=contradicts`.
 
 ---
 
