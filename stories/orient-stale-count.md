@@ -1,6 +1,6 @@
 # orient: stale_count in response root + audit(mode=stale) prompt in description
 
-**Status:** PENDING
+**Status:** COMPLETE — v1.29.0 (commit ae8f81d)
 
 **Shared-surface node:** `orient-stale-count-in-response-r-9971193d`
 
