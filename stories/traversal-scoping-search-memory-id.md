@@ -1,6 +1,8 @@
 # search: memory_id scoping parameter
 
-**Status:** PENDING
+**Status:** COMPLETE — commit 8d960ab
+
+**memoryweb-meta node:** `search-memory-id-scoping-paramet-ac54f2a0`
 
 **Shared-surface node:** `traversal-tool-scoping-consisten-c691512d`
 
