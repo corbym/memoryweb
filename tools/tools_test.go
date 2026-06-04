@@ -5324,6 +5324,111 @@ func TestReviseAll_SetsOccurredAt(t *testing.T) {
 	}
 }
 
+// ── revise: tags ─────────────────────────────────────────────────────────────
+
+// TestRevise_Tags_ReplacesExistingTags: supplying tags to revise must overwrite
+// the node's tags, not return the old ones.
+func TestRevise_Tags_ReplacesExistingTags(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "tagged node", "proj", map[string]any{
+		"tags": "old-tag alpha",
+	})
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":   id,
+		"tags": "new-tag beta",
+	})
+	mustNotError(t, tr)
+
+	// The returned node must carry the new tags.
+	var resp struct {
+		Tags string `json:"tags"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	if strings.Contains(resp.Tags, "old-tag") {
+		t.Errorf("old tags still present after revise; tags = %q", resp.Tags)
+	}
+	if !strings.Contains(resp.Tags, "new-tag") {
+		t.Errorf("new tags not present after revise; tags = %q", resp.Tags)
+	}
+
+	// Confirm via recall that the stored node reflects the new tags.
+	// recall returns NodeWithEdges: {"node": {...}, "edges": [...]}
+	rr := call(t, h, "recall", map[string]any{"id": id})
+	mustNotError(t, rr)
+	var recallResp struct {
+		Node struct {
+			Tags string `json:"tags"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(text(t, rr)), &recallResp); err != nil {
+		t.Fatalf("parse recall response: %v", err)
+	}
+	if strings.Contains(recallResp.Node.Tags, "old-tag") {
+		t.Errorf("old tags still stored after revise; recall tags = %q", recallResp.Node.Tags)
+	}
+	if !strings.Contains(recallResp.Node.Tags, "new-tag") {
+		t.Errorf("new tags not stored after revise; recall tags = %q", recallResp.Node.Tags)
+	}
+}
+
+// TestRevise_Updates_WrapperRejected: passing tags (or any field) inside an
+// "updates" wrapper object must return an error, not silently drop the change.
+// This guards against the retired revise_all parameter format.
+func TestRevise_Updates_WrapperRejected(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "wrapper test node", "proj", map[string]any{
+		"tags": "original-tag",
+	})
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":      id,
+		"updates": map[string]any{"tags": "should-not-apply"},
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "updates") {
+		t.Errorf("error should mention 'updates'; got: %s", text(t, tr))
+	}
+}
+
+// TestReviseBatch_Tags_ReplacesExistingTags: same guarantee in batch (items) mode.
+func TestReviseBatch_Tags_ReplacesExistingTags(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "batch tagged node", "proj", map[string]any{
+		"tags": "old-tag alpha",
+	})
+
+	tr := call(t, h, "revise", map[string]any{
+		"items": []map[string]any{
+			{"id": id, "tags": "new-tag beta"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Updated []struct {
+			Tags string `json:"tags"`
+		} `json:"updated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse batch revise response: %v", err)
+	}
+	if len(resp.Updated) != 1 {
+		t.Fatalf("expected 1 updated node, got %d", len(resp.Updated))
+	}
+	tags := resp.Updated[0].Tags
+	if strings.Contains(tags, "old-tag") {
+		t.Errorf("old tags still present after batch revise; tags = %q", tags)
+	}
+	if !strings.Contains(tags, "new-tag") {
+		t.Errorf("new tags not present after batch revise; tags = %q", tags)
+	}
+}
+
 // ── history tool ──────────────────────────────────────────────────────────────
 
 func historyIDs(t *testing.T, tr *tools.ToolResult) []string {

@@ -1416,6 +1416,19 @@ func detectLegacyEdgeKeys(raw json.RawMessage) string {
 		". The connect tool uses 'from_memory' and 'to_memory'. Call tools/list to refresh your schema."
 }
 
+// detectLegacyNodeUpdateKeys inspects raw JSON for the retired revise_all
+// "updates" wrapper key. Returns a non-empty error message if found.
+func detectLegacyNodeUpdateKeys(raw json.RawMessage) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	if _, hasUpdates := m["updates"]; hasUpdates {
+		return "Unknown parameter 'updates'. Pass fields (label, description, why_matters, tags, …) directly alongside id, or use items for batch mode. Call tools/list to refresh your schema."
+	}
+	return ""
+}
+
 // addEdgesBatch handles the batch mode of connect: items is the raw JSON array of edge objects.
 func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	var rawItems []json.RawMessage
@@ -1464,6 +1477,11 @@ func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
 	}
 	if len(peek.Items) > 0 && string(peek.Items) != "null" {
 		return h.updateNodesBatch(peek.Items)
+	}
+
+	// Detect the retired revise_all/updates wrapper format.
+	if msg := detectLegacyNodeUpdateKeys(args); msg != "" {
+		return errorResult(msg), nil
 	}
 
 	var a struct {
