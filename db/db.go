@@ -1487,7 +1487,9 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from,
 		var n Node
 		var oa sql.NullTime
 		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
+		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
+			return nil, err
+		}
 		if oa.Valid {
 			n.OccurredAt = &oa.Time
 		}
@@ -1496,7 +1498,7 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from,
 		}
 		nodes = append(nodes, n)
 	}
-	return nodes, nil
+	return nodes, rows.Err()
 }
 
 // ── archive / restore ─────────────────────────────────────────────────────────
