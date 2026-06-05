@@ -2,9 +2,12 @@ package db
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var nonAlpha = regexp.MustCompile(`[^a-z0-9]+`)
@@ -58,4 +61,74 @@ func nodeMatchesTags(tagString string, tags []string) bool {
 		}
 	}
 	return false
+}
+
+// nullTimeToPtr returns a pointer to nt.Time when valid, nil otherwise.
+func nullTimeToPtr(nt sql.NullTime) *time.Time {
+	if nt.Valid {
+		return &nt.Time
+	}
+	return nil
+}
+
+// scanRows iterates rows, calling scan for each row and accumulating results.
+// Caller is responsible for closing rows.
+func scanRows[T any](rows *sql.Rows, scan func(*sql.Rows) (T, error)) ([]T, error) {
+	var out []T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// inClause returns a "?,?,?" placeholder string and the items as []any,
+// ready for use in a SQL IN clause. Returns ("", nil) for an empty slice.
+func inClause[T any](items []T) (string, []any) {
+	if len(items) == 0 {
+		return "", nil
+	}
+	args := make([]any, len(items))
+	for i, v := range items {
+		args[i] = v
+	}
+	ph := strings.Repeat("?,", len(items))
+	return ph[:len(ph)-1], args
+}
+
+// filter returns a new slice containing only the items for which keep returns true.
+func filter[T any](items []T, keep func(T) bool) []T {
+	var out []T
+	for _, v := range items {
+		if keep(v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// mapSlice transforms a []T into a []U by applying f to each element.
+func mapSlice[T, U any](items []T, f func(T) U) []U {
+	out := make([]U, len(items))
+	for i, v := range items {
+		out[i] = f(v)
+	}
+	return out
+}
+
+// applyStringField appends a SQL SET clause and optional audit change entry for
+// an optional string field. If newVal is nil, nothing is appended.
+// col is the SQL column name; fieldName is the label used in audit messages.
+func applyStringField(newVal *string, current, col, fieldName string, sets, changes *[]string, args *[]interface{}) {
+	if newVal == nil {
+		return
+	}
+	*sets = append(*sets, col+" = ?")
+	*args = append(*args, *newVal)
+	if *newVal != current {
+		*changes = append(*changes, fmt.Sprintf("%s (was %q)", fieldName, current))
+	}
 }

@@ -701,12 +701,8 @@ func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
 	if err != nil {
 		return nil, err
 	}
-	if oa.Valid {
-		n.OccurredAt = &oa.Time
-	}
-	if aa.Valid {
-		n.ArchivedAt = &aa.Time
-	}
+	n.OccurredAt = nullTimeToPtr(oa)
+	n.ArchivedAt = nullTimeToPtr(aa)
 
 	rows, err := s.db.Query(
 		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
@@ -851,12 +847,8 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 		if dist > semanticDistanceThreshold {
 			break
 		}
-		if occurredAt.Valid {
-			n.OccurredAt = &occurredAt.Time
-		}
-		if archivedAt.Valid {
-			n.ArchivedAt = &archivedAt.Time
-		}
+		n.OccurredAt = nullTimeToPtr(occurredAt)
+		n.ArchivedAt = nullTimeToPtr(archivedAt)
 		d := dist // copy for pointer stability
 		results = append(results, NodeResult{Node: n, SemanticDistance: &d})
 	}
@@ -867,13 +859,10 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 		for _, id := range allowedIDs {
 			allowed[id] = struct{}{}
 		}
-		filtered := results[:0]
-		for _, nr := range results {
-			if _, ok := allowed[nr.ID]; ok {
-				filtered = append(filtered, nr)
-			}
-		}
-		results = filtered
+		results = filter(results, func(nr NodeResult) bool {
+			_, ok := allowed[nr.ID]
+			return ok
+		})
 	}
 
 	if len(results) == 0 {
@@ -901,24 +890,21 @@ func (s *Store) searchNodesLike(query, domain string, limit int, allowedIDs []st
 	fetch := limit + 1
 
 	if len(allowedIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(allowedIDs))
-		placeholders = placeholders[:len(placeholders)-1]
+		ph, idArgs := inClause(allowedIDs)
 		args := []interface{}{}
 		if domain != "" {
 			args = append(args, domain)
 		}
 		args = append(args, q, q, q, q)
-		for _, id := range allowedIDs {
-			args = append(args, id)
-		}
+		args = append(args, idArgs...)
 		args = append(args, fetch)
 		var qStr string
 		if domain != "" {
 			qStr = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
-			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?) AND id IN (` + placeholders + `) ORDER BY updated_at DESC LIMIT ?`
+			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?) AND id IN (` + ph + `) ORDER BY updated_at DESC LIMIT ?`
 		} else {
 			qStr = `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type FROM nodes
-			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?) AND id IN (` + placeholders + `) ORDER BY updated_at DESC LIMIT ?`
+			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?) AND id IN (` + ph + `) ORDER BY updated_at DESC LIMIT ?`
 		}
 		rows, err = s.db.Query(qStr, args...)
 	} else if domain != "" {
@@ -975,20 +961,12 @@ func (s *Store) searchNodesLike(query, domain string, limit int, allowedIDs []st
 
 // extractNodes extracts the embedded Node from each NodeResult.
 func extractNodes(nrs []NodeResult) []Node {
-	ns := make([]Node, len(nrs))
-	for i, nr := range nrs {
-		ns[i] = nr.Node
-	}
-	return ns
+	return mapSlice(nrs, func(nr NodeResult) Node { return nr.Node })
 }
 
 // wrapNodes wraps []Node into []NodeResult with nil SemanticDistance (LIKE results).
 func wrapNodes(nodes []Node) []NodeResult {
-	nrs := make([]NodeResult, len(nodes))
-	for i, n := range nodes {
-		nrs[i] = NodeResult{Node: n}
-	}
-	return nrs
+	return mapSlice(nodes, func(n Node) NodeResult { return NodeResult{Node: n} })
 }
 
 // collectEdges returns edges whose both endpoints appear in nodes.
@@ -996,19 +974,10 @@ func collectEdges(db *sql.DB, nodes []Node) []Edge {
 	if len(nodes) <= 1 {
 		return nil
 	}
-	ids := make([]interface{}, len(nodes))
-	for i, n := range nodes {
-		ids[i] = n.ID
-	}
-	ph := make([]byte, 0, len(ids)*2)
-	for i := range ids {
-		if i > 0 {
-			ph = append(ph, ',')
-		}
-		ph = append(ph, '?')
-	}
+	nodeIDs := mapSlice(nodes, func(n Node) string { return n.ID })
+	ph, ids := inClause(nodeIDs)
 	edgeQ := "SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges WHERE from_node IN (" +
-		string(ph) + ") AND to_node IN (" + string(ph) + ")"
+		ph + ") AND to_node IN (" + ph + ")"
 	eRows, err := db.Query(edgeQ, append(ids, ids...)...)
 	if err != nil {
 		return nil
@@ -1026,24 +995,25 @@ func collectEdges(db *sql.DB, nodes []Node) []Edge {
 	return edges
 }
 
+// scanNodeRow scans a single row from a query that selects the standard 11 node
+// columns in the order: id, label, description, why_matters, domain,
+// created_at, updated_at, occurred_at, archived_at, tags, decision_type.
+func scanNodeRow(rows *sql.Rows) (Node, error) {
+	var n Node
+	var oa, aa sql.NullTime
+	if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+		&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
+		return Node{}, err
+	}
+	n.OccurredAt = nullTimeToPtr(oa)
+	n.ArchivedAt = nullTimeToPtr(aa)
+	return n, nil
+}
+
 // scanNodeRows reads all node rows from rows into a slice.
 // Caller is responsible for closing rows.
 func scanNodeRows(rows *sql.Rows) ([]Node, error) {
-	var nodes []Node
-	for rows.Next() {
-		var n Node
-		var oa sql.NullTime
-		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
+	return scanRows(rows, scanNodeRow)
 }
 
 // PathResult holds the shortest path between two nodes and all edges
@@ -1151,14 +1121,8 @@ func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) 
 	}
 
 	// Build placeholder list for IN clause.
-	placeholders := make([]string, len(nodeIDs))
-	args := make([]interface{}, len(nodeIDs)*2)
-	for i, id := range nodeIDs {
-		placeholders[i] = "?"
-		args[i] = id
-		args[len(nodeIDs)+i] = id
-	}
-	ph := strings.Join(placeholders, ", ")
+	ph, phArgs := inClause(nodeIDs)
+	args := append(phArgs, phArgs...)
 
 	rows, err := s.db.Query(
 		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
@@ -1279,12 +1243,8 @@ func (s *Store) bestMatch(term, domain string) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	if oa.Valid {
-		n.OccurredAt = &oa.Time
-	}
-	if aa.Valid {
-		n.ArchivedAt = &aa.Time
-	}
+	n.OccurredAt = nullTimeToPtr(oa)
+	n.ArchivedAt = nullTimeToPtr(aa)
 	return &n, nil
 }
 
@@ -1402,12 +1362,9 @@ func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, t
 		if len(ids) == 0 {
 			return nil, nil
 		}
-		placeholders := make([]string, len(ids))
-		for i, id := range ids {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		conds = append(conds, "id IN ("+strings.Join(placeholders, ",")+")")
+		ph, phArgs := inClause(ids)
+		conds = append(conds, "id IN ("+ph+")")
+		args = append(args, phArgs...)
 	} else if domain != "" {
 		conds = append(conds, "domain = ?")
 		args = append(args, domain)
@@ -1425,21 +1382,7 @@ func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, t
 	}
 	defer rows.Close()
 
-	var nodes []Node
-	for rows.Next() {
-		var n Node
-		var oa sql.NullTime
-		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, nil
+	return scanNodeRows(rows)
 }
 
 // Timeline returns nodes ordered by COALESCE(occurred_at, created_at) ASC.
@@ -1482,23 +1425,7 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from,
 	}
 	defer rows.Close()
 
-	var nodes []Node
-	for rows.Next() {
-		var n Node
-		var oa sql.NullTime
-		var aa sql.NullTime
-		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
-			return nil, err
-		}
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
+	return scanNodeRows(rows)
 }
 
 // ── archive / restore ─────────────────────────────────────────────────────────
@@ -1710,21 +1637,7 @@ func (s *Store) ListArchived(domain string, tags []string) ([]Node, error) {
 	}
 	defer rows.Close()
 
-	var nodes []Node
-	for rows.Next() {
-		var n Node
-		var oa sql.NullTime
-		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, nil
+	return scanNodeRows(rows)
 }
 
 // ── batch insert ──────────────────────────────────────────────────────────────
@@ -1871,23 +1784,6 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 		}
 	}
 
-	// scanSingle scans 11 standard node columns from a *sql.Rows.
-	scanSingle := func(r *sql.Rows) (Node, error) {
-		var n Node
-		var oa, aa sql.NullTime
-		if err := r.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
-			return Node{}, err
-		}
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		return n, nil
-	}
-
 	var err error
 
 	// ── Rule 1: contradicts edges ─────────────────────────────────────────────
@@ -1924,19 +1820,11 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 			return nil, err
 		}
 		a := Node{ID: aID, Label: aLabel, Description: aDesc, WhyMatters: aWhy, Domain: aDomain, CreatedAt: aCreated, UpdatedAt: aUpdated, Tags: aTags, DecisionType: aDecisionType}
-		if aOA.Valid {
-			a.OccurredAt = &aOA.Time
-		}
-		if aAA.Valid {
-			a.ArchivedAt = &aAA.Time
-		}
+		a.OccurredAt = nullTimeToPtr(aOA)
+		a.ArchivedAt = nullTimeToPtr(aAA)
 		b := Node{ID: bID, Label: bLabel, Description: bDesc, WhyMatters: bWhy, Domain: bDomain, CreatedAt: bCreated, UpdatedAt: bUpdated, Tags: bTags, DecisionType: bDecisionType}
-		if bOA.Valid {
-			b.OccurredAt = &bOA.Time
-		}
-		if bAA.Valid {
-			b.ArchivedAt = &bAA.Time
-		}
+		b.OccurredAt = nullTimeToPtr(bOA)
+		b.ArchivedAt = nullTimeToPtr(bAA)
 		if domain == "" || a.Domain == domain {
 			bc := b
 			add(a, &bc, "explicitly marked as contradicting each other")
@@ -1968,7 +1856,7 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 		return nil, err
 	}
 	for rows2.Next() {
-		n, err := scanSingle(rows2)
+		n, err := scanNodeRow(rows2)
 		if err != nil {
 			rows2.Close()
 			return nil, err
@@ -2003,7 +1891,7 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 		return nil, err
 	}
 	for rows3.Next() {
-		n, err := scanSingle(rows3)
+		n, err := scanNodeRow(rows3)
 		if err != nil {
 			rows3.Close()
 			return nil, err
@@ -2032,7 +1920,7 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 		return nil, err
 	}
 	for rows4.Next() {
-		n, err := scanSingle(rows4)
+		n, err := scanNodeRow(rows4)
 		if err != nil {
 			rows4.Close()
 			return nil, err
@@ -2062,7 +1950,7 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 		return nil, err
 	}
 	for rows5.Next() {
-		n, err := scanSingle(rows5)
+		n, err := scanNodeRow(rows5)
 		if err != nil {
 			rows5.Close()
 			return nil, err
@@ -2108,26 +1996,24 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 	if err != nil {
 		return nil, err
 	}
-	for rows6.Next() {
+	nodes6, err := scanRows(rows6, func(r *sql.Rows) (Node, error) {
 		var n Node
 		var oa, aa sql.NullTime
 		var inboundCount int
-		if err := rows6.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+		if err := r.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
 			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType, &inboundCount); err != nil {
-			rows6.Close()
-			return nil, err
+			return Node{}, err
 		}
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		add(n, nil, "standing rule with low connection count — may not be in use")
-	}
+		n.OccurredAt = nullTimeToPtr(oa)
+		n.ArchivedAt = nullTimeToPtr(aa)
+		return n, nil
+	})
 	rows6.Close()
-	if err = rows6.Err(); err != nil {
+	if err != nil {
 		return nil, err
+	}
+	for _, n := range nodes6 {
+		add(n, nil, "standing rule with low connection count — may not be in use")
 	}
 
 	// Post-filter by neighbourhood (memory_id scoping).
@@ -2140,24 +2026,12 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 		for _, id := range allowedIDs {
 			allowed[id] = true
 		}
-		filtered := out[:0]
-		for _, c := range out {
-			if allowed[c.Node.ID] {
-				filtered = append(filtered, c)
-			}
-		}
-		out = filtered
+		out = filter(out, func(c DriftCandidate) bool { return allowed[c.Node.ID] })
 	}
 
 	// Post-filter by tags (whole-word OR match).
 	if len(tags) > 0 {
-		filtered := out[:0]
-		for _, c := range out {
-			if nodeMatchesTags(c.Node.Tags, tags) {
-				filtered = append(filtered, c)
-			}
-		}
-		out = filtered
+		out = filter(out, func(c DriftCandidate) bool { return nodeMatchesTags(c.Node.Tags, tags) })
 	}
 
 	if len(out) > limit {
@@ -2166,17 +2040,9 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 
 	// Enrich each candidate with its total edge count (from + to).
 	if len(out) > 0 {
-		ids := make([]string, len(out))
-		for i, c := range out {
-			ids[i] = c.Node.ID
-		}
-		ph := strings.Repeat("?,", len(ids))
-		ph = ph[:len(ph)-1]
-		args := make([]interface{}, len(ids)*2)
-		for i, id := range ids {
-			args[i] = id
-			args[len(ids)+i] = id
-		}
+		ids := mapSlice(out, func(c DriftCandidate) string { return c.Node.ID })
+		ph, phArgs := inClause(ids)
+		args := append(phArgs, phArgs...)
 		ecRows, ecErr := s.db.Query(
 			`SELECT id_val, COUNT(*) FROM (`+
 				`SELECT from_node AS id_val FROM edges WHERE from_node IN (`+ph+`) `+
@@ -2238,25 +2104,9 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 		return
 	}
 	var allNodes []Node
-	for rows.Next() {
-		var n Node
-		var oa, aa sql.NullTime
-		if scanErr := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); scanErr != nil {
-			rows.Close()
-			err = scanErr
-			return
-		}
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		allNodes = append(allNodes, n)
-	}
+	allNodes, err = scanNodeRows(rows)
 	rows.Close()
-	if err = rows.Err(); err != nil {
+	if err != nil {
 		return
 	}
 	if len(allNodes) == 0 {
@@ -2264,17 +2114,9 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 	}
 
 	// Step 2: count edges (from + to) per node to rank by connectivity.
-	ids := make([]string, len(allNodes))
-	for i, n := range allNodes {
-		ids[i] = n.ID
-	}
-	ph := strings.Repeat("?,", len(ids))
-	ph = ph[:len(ph)-1]
-	rankArgs := make([]interface{}, len(ids)*2)
-	for i, id := range ids {
-		rankArgs[i] = id
-		rankArgs[len(ids)+i] = id
-	}
+	ids := mapSlice(allNodes, func(n Node) string { return n.ID })
+	ph, phArgs := inClause(ids)
+	rankArgs := append(phArgs, phArgs...)
 	ecRows, ecErr := s.db.Query(
 		`SELECT id_val, COUNT(*) FROM (`+
 			`SELECT from_node AS id_val FROM edges WHERE from_node IN (`+ph+`) `+
@@ -2315,13 +2157,8 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 	nodes = allNodes
 
 	// Step 4: fetch edges whose both endpoints are in the result set.
-	edgeArgs := make([]interface{}, len(nodes)*2)
-	ph2 := strings.Repeat("?,", len(nodes))
-	ph2 = ph2[:len(ph2)-1]
-	for i, n := range nodes {
-		edgeArgs[i] = n.ID
-		edgeArgs[len(nodes)+i] = n.ID
-	}
+	ph2, nodePhArgs := inClause(mapSlice(nodes, func(n Node) string { return n.ID }))
+	edgeArgs := append(nodePhArgs, nodePhArgs...)
 	eRows, eErr := s.db.Query(
 		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges `+
 			`WHERE from_node IN (`+ph2+`) AND to_node IN (`+ph2+`)`,
@@ -2362,9 +2199,7 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 		}
 		return nil, err
 	}
-	if curOA.Valid {
-		cur.OccurredAt = &curOA.Time
-	}
+	cur.OccurredAt = nullTimeToPtr(curOA)
 
 	now := time.Now().UTC()
 	sets := []string{"updated_at = ?"}
@@ -2373,34 +2208,10 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	// Build audit reason describing each changed field with its old value.
 	var changes []string
 
-	if label != nil {
-		sets = append(sets, "label = ?")
-		args = append(args, *label)
-		if *label != cur.Label {
-			changes = append(changes, fmt.Sprintf("label (was %q)", cur.Label))
-		}
-	}
-	if description != nil {
-		sets = append(sets, "description = ?")
-		args = append(args, *description)
-		if *description != cur.Description {
-			changes = append(changes, fmt.Sprintf("description (was %q)", cur.Description))
-		}
-	}
-	if whyMatters != nil {
-		sets = append(sets, "why_matters = ?")
-		args = append(args, *whyMatters)
-		if *whyMatters != cur.WhyMatters {
-			changes = append(changes, fmt.Sprintf("why_matters (was %q)", cur.WhyMatters))
-		}
-	}
-	if tags != nil {
-		sets = append(sets, "tags = ?")
-		args = append(args, *tags)
-		if *tags != cur.Tags {
-			changes = append(changes, fmt.Sprintf("tags (was %q)", cur.Tags))
-		}
-	}
+	applyStringField(label, cur.Label, "label", "label", &sets, &changes, &args)
+	applyStringField(description, cur.Description, "description", "description", &sets, &changes, &args)
+	applyStringField(whyMatters, cur.WhyMatters, "why_matters", "why_matters", &sets, &changes, &args)
+	applyStringField(tags, cur.Tags, "tags", "tags", &sets, &changes, &args)
 	if occurredAt != nil {
 		sets = append(sets, "occurred_at = ?")
 		args = append(args, *occurredAt)
@@ -2466,12 +2277,8 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
 		return nil, err
 	}
-	if oa.Valid {
-		n.OccurredAt = &oa.Time
-	}
-	if aa.Valid {
-		n.ArchivedAt = &aa.Time
-	}
+	n.OccurredAt = nullTimeToPtr(oa)
+	n.ArchivedAt = nullTimeToPtr(aa)
 	return &n, nil
 }
 
@@ -2513,42 +2320,16 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			}
 			return nil, err
 		}
-		if curOA.Valid {
-			cur.OccurredAt = &curOA.Time
-		}
+		cur.OccurredAt = nullTimeToPtr(curOA)
 
 		sets := []string{"updated_at = ?"}
 		args := []interface{}{now}
 		var changes []string
 
-		if inp.Label != nil {
-			sets = append(sets, "label = ?")
-			args = append(args, *inp.Label)
-			if *inp.Label != cur.Label {
-				changes = append(changes, fmt.Sprintf("label (was %q)", cur.Label))
-			}
-		}
-		if inp.Description != nil {
-			sets = append(sets, "description = ?")
-			args = append(args, *inp.Description)
-			if *inp.Description != cur.Description {
-				changes = append(changes, fmt.Sprintf("description (was %q)", cur.Description))
-			}
-		}
-		if inp.WhyMatters != nil {
-			sets = append(sets, "why_matters = ?")
-			args = append(args, *inp.WhyMatters)
-			if *inp.WhyMatters != cur.WhyMatters {
-				changes = append(changes, fmt.Sprintf("why_matters (was %q)", cur.WhyMatters))
-			}
-		}
-		if inp.Tags != nil {
-			sets = append(sets, "tags = ?")
-			args = append(args, *inp.Tags)
-			if *inp.Tags != cur.Tags {
-				changes = append(changes, fmt.Sprintf("tags (was %q)", cur.Tags))
-			}
-		}
+		applyStringField(inp.Label, cur.Label, "label", "label", &sets, &changes, &args)
+		applyStringField(inp.Description, cur.Description, "description", "description", &sets, &changes, &args)
+		applyStringField(inp.WhyMatters, cur.WhyMatters, "why_matters", "why_matters", &sets, &changes, &args)
+		applyStringField(inp.Tags, cur.Tags, "tags", "tags", &sets, &changes, &args)
 		if inp.OccurredAt != nil {
 			sets = append(sets, "occurred_at = ?")
 			args = append(args, *inp.OccurredAt)
@@ -2602,12 +2383,8 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			tx.Rollback()
 			return nil, err
 		}
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
+		n.OccurredAt = nullTimeToPtr(oa)
+		n.ArchivedAt = nullTimeToPtr(aa)
 		nodes = append(nodes, &n)
 	}
 
@@ -2987,24 +2764,11 @@ func (s *Store) FindPossibleDuplicates(label, domain, excludeID string) ([]Node,
 		return nil, err
 	}
 	defer rows.Close()
-	var results []Node
-	for rows.Next() {
-		var n Node
-		var oa, aa sql.NullTime
-		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
-			return nil, err
-		}
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		if normaliseLabel(n.Label) == norm {
-			results = append(results, n)
-		}
+	all, err := scanNodeRows(rows)
+	if err != nil {
+		return nil, err
 	}
+	results := filter(all, func(n Node) bool { return normaliseLabel(n.Label) == norm })
 	if results == nil {
 		results = []Node{}
 	}
@@ -3135,23 +2899,7 @@ func (s *Store) FindDisconnected(domain string, tags []string) ([]Node, error) {
 	}
 	defer rows.Close()
 
-	var nodes []Node
-	for rows.Next() {
-		var n Node
-		var oa, aa sql.NullTime
-		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters,
-			&n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType); err != nil {
-			return nil, err
-		}
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
+	return scanNodeRows(rows)
 }
 
 // GetStandingNodes returns live nodes with decision_type = 'standing' for the
@@ -3173,24 +2921,18 @@ func (s *Store) GetStandingNodes(domain string) ([]Node, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var nodes []Node
-	for rows.Next() {
+	return scanRows(rows, func(r *sql.Rows) (Node, error) {
 		var n Node
 		var oa, aa sql.NullTime
 		var inboundCount int64
-		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+		if err := r.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
 			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType, &inboundCount); err != nil {
-			return nil, err
+			return Node{}, err
 		}
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
+		n.OccurredAt = nullTimeToPtr(oa)
+		n.ArchivedAt = nullTimeToPtr(aa)
+		return n, nil
+	})
 }
 
 // GetNodeNeighbourhood returns the target node, all live nodes directly
@@ -3210,12 +2952,8 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 	if err != nil {
 		return nil, nil, err
 	}
-	if oa.Valid {
-		target.OccurredAt = &oa.Time
-	}
-	if aa.Valid {
-		target.ArchivedAt = &aa.Time
-	}
+	target.OccurredAt = nullTimeToPtr(oa)
+	target.ArchivedAt = nullTimeToPtr(aa)
 
 	// Collect IDs of all direct neighbours via edges.
 	eRows, err := s.db.Query(
@@ -3246,45 +2984,23 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 	}
 
 	// Fetch all live nodes in the neighbourhood.
-	ph := strings.Repeat("?,", len(allIDs))
-	ph = ph[:len(ph)-1]
-	nArgs := make([]interface{}, len(allIDs))
-	for i, id := range allIDs {
-		nArgs[i] = id
-	}
+	ph, nArgs := inClause(allIDs)
 	nRows, err := s.db.Query(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, decision_type
 		 FROM nodes WHERE archived_at IS NULL AND id IN (`+ph+`)`, nArgs...)
 	if err != nil {
 		return nil, nil, err
 	}
-	for nRows.Next() {
-		var n Node
-		var oa2, aa2 sql.NullTime
-		if scanErr := nRows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa2, &aa2, &n.Tags, &n.DecisionType); scanErr != nil {
-			nRows.Close()
-			return nil, nil, scanErr
-		}
-		if oa2.Valid {
-			n.OccurredAt = &oa2.Time
-		}
-		if aa2.Valid {
-			n.ArchivedAt = &aa2.Time
-		}
-		nodes = append(nodes, n)
-	}
+	var neighbourhood []Node
+	neighbourhood, err = scanNodeRows(nRows)
 	nRows.Close()
-	if err = nRows.Err(); err != nil {
+	if err != nil {
 		return nil, nil, err
 	}
+	nodes = append(nodes, neighbourhood...)
 
 	// Fetch all edges where both endpoints are in the live neighbourhood set.
-	eArgs := make([]interface{}, len(allIDs)*2)
-	for i, id := range allIDs {
-		eArgs[i] = id
-		eArgs[len(allIDs)+i] = id
-	}
+	eArgs := append(nArgs, nArgs...)
 	edgeRows, err := s.db.Query(
 		`SELECT id, from_node, to_node, relationship, narrative, created_at
 		 FROM edges WHERE from_node IN (`+ph+`) AND to_node IN (`+ph+`)`, eArgs...)
@@ -3407,12 +3123,8 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 		sn.Description = desc.String
 		sn.WhyMatters = why.String
 		sn.Tags = tags.String
-		if occurredAt.Valid {
-			sn.OccurredAt = &occurredAt.Time
-		}
-		if archivedAt.Valid {
-			sn.ArchivedAt = &archivedAt.Time
-		}
+		sn.OccurredAt = nullTimeToPtr(occurredAt)
+		sn.ArchivedAt = nullTimeToPtr(archivedAt)
 		sn.DecisionType = decisionType
 		res.Structural = append(res.Structural, sn)
 		structIDs[sn.ID] = true
@@ -3592,21 +3304,8 @@ func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bo
 	}
 	defer rows.Close()
 
-	var nodes []Node
-	for rows.Next() {
-		var n Node
-		var oa sql.NullTime
-		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.DecisionType)
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
-		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
-		}
-		nodes = append(nodes, n)
-	}
-	if err := rows.Err(); err != nil {
+	nodes, err := scanNodeRows(rows)
+	if err != nil {
 		return nil, fmt.Errorf("GetHistoryForMemoryID rows: %w", err)
 	}
 	return nodes, nil
@@ -3628,12 +3327,7 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 		return res, nil
 	}
 
-	ph := strings.Repeat("?,", len(nodeIDs))
-	ph = ph[:len(ph)-1]
-	nodeArgs := make([]interface{}, len(nodeIDs))
-	for i, id := range nodeIDs {
-		nodeArgs[i] = id
-	}
+	ph, nodeArgs := inClause(nodeIDs)
 
 	// ── declared ─────────────────────────────────────────────────────────────
 	declaredRows, err := s.db.Query(
@@ -3663,11 +3357,7 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 	}
 
 	// ── structural ────────────────────────────────────────────────────────────
-	structArgs := make([]interface{}, len(nodeIDs)+1)
-	for i, id := range nodeIDs {
-		structArgs[i] = id
-	}
-	structArgs[len(nodeIDs)] = recencyWindowDays
+	structArgs := append(nodeArgs, recencyWindowDays)
 
 	structRows, err := s.db.Query(
 		`SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
@@ -3702,12 +3392,8 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 		sn.Description = desc.String
 		sn.WhyMatters = why.String
 		sn.Tags = tags.String
-		if occurredAt.Valid {
-			sn.OccurredAt = &occurredAt.Time
-		}
-		if archivedAt.Valid {
-			sn.ArchivedAt = &archivedAt.Time
-		}
+		sn.OccurredAt = nullTimeToPtr(occurredAt)
+		sn.ArchivedAt = nullTimeToPtr(archivedAt)
 		sn.DecisionType = decisionType
 		res.Structural = append(res.Structural, sn)
 		structIDs[sn.ID] = true
@@ -3809,12 +3495,8 @@ func scanNode(rows *sql.Rows) (Node, error) {
 	n.Description = desc.String
 	n.WhyMatters = why.String
 	n.Tags = tags.String
-	if occurredAt.Valid {
-		n.OccurredAt = &occurredAt.Time
-	}
-	if archivedAt.Valid {
-		n.ArchivedAt = &archivedAt.Time
-	}
+	n.OccurredAt = nullTimeToPtr(occurredAt)
+	n.ArchivedAt = nullTimeToPtr(archivedAt)
 	n.DecisionType = decisionType
 	return n, nil
 }

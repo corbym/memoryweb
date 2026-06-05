@@ -464,17 +464,10 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 }
 
 func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
-	// Peek for items field to decide mode.
-	var peek struct {
-		Items json.RawMessage `json:"items"`
-	}
-	if err := json.Unmarshal(args, &peek); err != nil {
-		return nil, err
-	}
-	if len(peek.Items) > 0 && string(peek.Items) != "null" {
-		return h.addNodesBatch(peek.Items)
-	}
+	return dispatchBatch(args, h.addNodeSingle, h.addNodesBatch)
+}
 
+func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Label        string            `json:"label"`
 		Description  string            `json:"description"`
@@ -1358,17 +1351,10 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 }
 
 func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
-	// Peek for items field to decide mode.
-	var peek struct {
-		Items json.RawMessage `json:"items"`
-	}
-	if err := json.Unmarshal(args, &peek); err != nil {
-		return nil, err
-	}
-	if len(peek.Items) > 0 && string(peek.Items) != "null" {
-		return h.addEdgesBatch(peek.Items)
-	}
+	return dispatchBatch(args, h.addEdgeSingle, h.addEdgesBatch)
+}
 
+func (h *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
 	// Detect retired parameter names before unmarshalling.
 	if msg := detectLegacyEdgeKeys(args); msg != "" {
 		return errorResult(msg), nil
@@ -1468,17 +1454,10 @@ func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 }
 
 func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
-	// Peek for items field to decide mode.
-	var peek struct {
-		Items json.RawMessage `json:"items"`
-	}
-	if err := json.Unmarshal(args, &peek); err != nil {
-		return nil, err
-	}
-	if len(peek.Items) > 0 && string(peek.Items) != "null" {
-		return h.updateNodesBatch(peek.Items)
-	}
+	return dispatchBatch(args, h.updateNodeSingle, h.updateNodesBatch)
+}
 
+func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	// Detect the retired revise_all/updates wrapper format.
 	if msg := detectLegacyNodeUpdateKeys(args); msg != "" {
 		return errorResult(msg), nil
