@@ -173,6 +173,33 @@ which scans all property-level descriptions too.
 
 ---
 
+## Go generics — standing rule
+
+**Decision:** Use Go generics whenever they remove real duplication across multiple
+call sites. The bar is: would you write the same 3+ line pattern twice? Use a
+generic. Would it be the first and only use? Don't.
+
+Canonical candidates in this codebase:
+- Row iteration → `scanRows[T]` in `db/util.go`
+- SQL IN clauses → `inClause[T]` in `db/util.go`
+- Slice transform / filter → `mapSlice[T,U]`, `filter[T]` in `db/util.go`
+- Optional field SQL update → `applyStringField` in `db/util.go`
+- Single-vs-batch JSON dispatch → `dispatchBatch[T]` in `tools/util.go`
+
+**Self-enforcement:** every story that ships a generic helper must be linked in
+the examples list below. Future agents reading this file must consult the list
+before deciding "we don't do that here."
+
+### Shipped examples
+
+| Story | Generic introduced | Applied in |
+|-------|--------------------|-----------|
+| `stories/generics-wave1.md` | `nullTimeToPtr`, `scanRows`, `inClause`, `filter`, `mapSlice` | `db/db.go` |
+| `stories/generics-optional-field-update.md` | `applyStringField` | `db/db.go` — `UpdateNode`, `UpdateNodesBatch` |
+| `stories/generics-json-batch-dispatch.md` | `dispatchBatch` | `tools/tools.go` — `addNode`, `addEdge`, `updateNode` |
+
+---
+
 ## Testing conventions
 
 **Decision:** all tests live in the same directory as the code under test — Go
