@@ -1,6 +1,6 @@
 # Computed Trust — epistemic weight derived from node_kind topology
 
-**Status:** OPEN — unblocked; `stories/node-kind.md` is implemented (commit 5b451e6), pending release
+**Status:** OPEN — unblocked; `stories/node-kind.md` shipped in v1.30.0
 
 **Shared-surface node:** `trust-as-computed-property-deriv-76098ec7`
 

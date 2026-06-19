@@ -1,6 +1,6 @@
 # node_kind — rename decision_type, expand enum to full knowledge classifier
 
-**Status:** COMPLETE — implemented 2026-06-19, awaiting version bump/release
+**Status:** COMPLETE — v1.30.0 (commit 5b451e6)
 
 **Shared-surface node:** `build-node-kind-rename-decision--4e2cd629`
 
