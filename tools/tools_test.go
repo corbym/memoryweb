@@ -5684,6 +5684,12 @@ func TestRemember_OrphanWarning_PresentWhenNoConnections(t *testing.T) {
 	if !strings.Contains(tr.Content[0].Text, "No connections were made") {
 		t.Error("expected orphan_warning message in response")
 	}
+	if strings.Contains(tr.Content[0].Text, "cannot be connected directly") {
+		t.Error("orphan_warning must not say 'cannot be connected directly' — use usage-instruction wording instead")
+	}
+	if !strings.Contains(tr.Content[0].Text, "pass their domain explicitly") {
+		t.Error("orphan_warning must instruct agent to pass domain explicitly for cross-domain connect")
+	}
 }
 
 func TestRemember_OrphanWarning_AbsentWhenRelatedToProvided(t *testing.T) {
@@ -5714,6 +5720,12 @@ func TestRememberAll_OrphanWarning_PresentWhenNoEdges(t *testing.T) {
 	}
 	if !strings.Contains(tr.Content[0].Text, "No connections were made") {
 		t.Error("expected orphan_warning message in remember batch response")
+	}
+	if strings.Contains(tr.Content[0].Text, "cannot be connected directly") {
+		t.Error("orphan_warning must not say 'cannot be connected directly' — use usage-instruction wording instead")
+	}
+	if !strings.Contains(tr.Content[0].Text, "pass their domain explicitly") {
+		t.Error("orphan_warning must instruct agent to pass domain explicitly for cross-domain connect")
 	}
 }
 

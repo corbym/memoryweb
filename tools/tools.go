@@ -522,7 +522,7 @@ func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 
 	orphanWarning := ""
 	if len(a.RelatedTo) == 0 || (len(a.RelatedTo) > 0 && len(skipped) == len(a.RelatedTo)) {
-		orphanWarning = fmt.Sprintf("No connections were made. Call connect with domain=%s to link these memories. Suggested connections in other domains cannot be connected directly — check their domain field first.", node.Domain)
+		orphanWarning = fmt.Sprintf("No connections were made. Call connect with domain=%s to link these memories. Some suggested connections are in other domains — pass their domain explicitly when calling connect, not the current domain.", node.Domain)
 	}
 
 	resp := struct {
@@ -1315,7 +1315,7 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	}
 	orphanWarning := ""
 	if len(nodes) > 0 && !anyConnected {
-		orphanWarning = "No connections were made. Call connect with domain=<domain> to link these memories. Suggested connections in other domains cannot be connected directly — check their domain field first."
+		orphanWarning = "No connections were made. Call connect with domain=<domain> to link these memories. Some suggested connections are in other domains — pass their domain explicitly when calling connect, not the current domain."
 	}
 
 	type response struct {
