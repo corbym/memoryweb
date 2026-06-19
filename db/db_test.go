@@ -1166,33 +1166,33 @@ func TestSearchNodes_MultiWordFallback_NoDomain(t *testing.T) {
 
 // ── Transient field ───────────────────────────────────────────────────────────
 
-func TestAddNode_DecisionTypeTransient_Persists(t *testing.T) {
+func TestAddNode_NodeKindTransient_Persists(t *testing.T) {
 	s := newStore(t)
 	n, err := s.AddNode("sprint ticket XYZ", "d", "w", "proj", nil, "", "transient")
 	if err != nil {
 		t.Fatalf("AddNode transient: %v", err)
 	}
-	if n.DecisionType != "transient" {
-		t.Errorf("DecisionType should be 'transient', got %q", n.DecisionType)
+	if n.NodeKind != "transient" {
+		t.Errorf("NodeKind should be 'transient', got %q", n.NodeKind)
 	}
 
 	got, err := s.GetNode(n.ID)
 	if err != nil {
 		t.Fatalf("GetNode: %v", err)
 	}
-	if got.Node.DecisionType != "transient" {
-		t.Errorf("DecisionType should be 'transient' when fetched via GetNode, got %q", got.Node.DecisionType)
+	if got.Node.NodeKind != "transient" {
+		t.Errorf("NodeKind should be 'transient' when fetched via GetNode, got %q", got.Node.NodeKind)
 	}
 }
 
-func TestAddNode_DecisionTypeDefaultsToDecision_Legacy(t *testing.T) {
+func TestAddNode_NodeKindDefaultsToDecision_Legacy(t *testing.T) {
 	s := newStore(t)
 	n, err := s.AddNode("regular node", "d", "w", "proj", nil, "", "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
-	if n.DecisionType != "decision" {
-		t.Errorf("DecisionType should default to 'decision', got %q", n.DecisionType)
+	if n.NodeKind != "decision" {
+		t.Errorf("NodeKind should default to 'decision', got %q", n.NodeKind)
 	}
 }
 
@@ -1931,34 +1931,55 @@ func TestCountArchived_AfterArchive(t *testing.T) {
 	}
 }
 
-// ── DecisionType ──────────────────────────────────────────────────────────────
+// ── NodeKind ──────────────────────────────────────────────────────────────────
 
-func TestAddNode_DecisionTypeDefaultsToDecision(t *testing.T) {
+func TestAddNode_NodeKindDefaultsToDecision(t *testing.T) {
 	s := newStore(t)
 	n, err := s.AddNode("default type node", "d", "w", "proj", nil, "", "")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
-	if n.DecisionType != "decision" {
-		t.Errorf("DecisionType: got %q, want %q", n.DecisionType, "decision")
+	if n.NodeKind != "decision" {
+		t.Errorf("NodeKind: got %q, want %q", n.NodeKind, "decision")
 	}
 }
 
-func TestAddNode_DecisionTypeStanding(t *testing.T) {
+func TestAddNode_NodeKindStanding(t *testing.T) {
 	s := newStore(t)
 	n, err := s.AddNode("a standing rule", "d", "why", "proj", nil, "", "standing")
 	if err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
-	if n.DecisionType != "standing" {
-		t.Errorf("DecisionType: got %q, want %q", n.DecisionType, "standing")
+	if n.NodeKind != "standing" {
+		t.Errorf("NodeKind: got %q, want %q", n.NodeKind, "standing")
 	}
 	got, err := s.GetNode(n.ID)
 	if err != nil {
 		t.Fatalf("GetNode: %v", err)
 	}
-	if got.Node.DecisionType != "standing" {
-		t.Errorf("GetNode DecisionType: got %q, want %q", got.Node.DecisionType, "standing")
+	if got.Node.NodeKind != "standing" {
+		t.Errorf("GetNode NodeKind: got %q, want %q", got.Node.NodeKind, "standing")
+	}
+}
+
+func TestAddNode_NodeKind_AllValues(t *testing.T) {
+	s := newStore(t)
+	kinds := []string{"transient", "reference", "issue", "decision", "option", "assumption", "finding", "standing", "goal"}
+	for _, kind := range kinds {
+		n, err := s.AddNode("node of kind "+kind, "d", "w", "proj", nil, "", kind)
+		if err != nil {
+			t.Fatalf("AddNode(%q): %v", kind, err)
+		}
+		if n.NodeKind != kind {
+			t.Errorf("NodeKind: got %q, want %q", n.NodeKind, kind)
+		}
+		got, err := s.GetNode(n.ID)
+		if err != nil {
+			t.Fatalf("GetNode(%q): %v", kind, err)
+		}
+		if got.Node.NodeKind != kind {
+			t.Errorf("GetNode NodeKind: got %q, want %q", got.Node.NodeKind, kind)
+		}
 	}
 }
 
@@ -2008,7 +2029,7 @@ func TestGetStandingNodes_OrderedByInboundEdgeCount(t *testing.T) {
 	}
 }
 
-func TestUpdateNode_DecisionType(t *testing.T) {
+func TestUpdateNode_NodeKind(t *testing.T) {
 	s := newStore(t)
 	n, _ := s.AddNode("will become standing", "d", "w", "proj", nil, "", "decision")
 
@@ -2016,18 +2037,80 @@ func TestUpdateNode_DecisionType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
-	if updated.DecisionType != "standing" {
-		t.Errorf("DecisionType: got %q, want %q", updated.DecisionType, "standing")
+	if updated.NodeKind != "standing" {
+		t.Errorf("NodeKind: got %q, want %q", updated.NodeKind, "standing")
 	}
 }
 
-func TestUpdateNode_DecisionType_Invalid(t *testing.T) {
+func TestUpdateNode_NodeKind_InvalidValue(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "any node", "proj")
 
 	_, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, ptrStr("nonsense"))
 	if err == nil {
-		t.Error("expected error for invalid decision_type, got nil")
+		t.Error("expected error for invalid node_kind, got nil")
+	}
+	if !strings.Contains(err.Error(), "transient") || !strings.Contains(err.Error(), "goal") {
+		t.Errorf("expected error to list valid kinds, got: %v", err)
+	}
+}
+
+// TestGetOrphans_ExcludesReference: only 'transient' nodes are excluded from
+// orphan detection. A 'reference' node with no edges must still be surfaced.
+func TestGetOrphans_ExcludesReference(t *testing.T) {
+	s := newStore(t)
+	refID, err := s.AddNode("a person", "d", "w", "orphans-ref", nil, "", "reference")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	orphans, err := s.FindDisconnected("orphans-ref", nil)
+	if err != nil {
+		t.Fatalf("FindDisconnected: %v", err)
+	}
+	if !contains(nodeIDs(orphans), refID.ID) {
+		t.Error("expected reference node with no edges to be surfaced as an orphan")
+	}
+}
+
+// TestGetStaleDrift_TransientNodes: a transient node older than 7 days is
+// surfaced as a drift candidate.
+func TestGetStaleDrift_TransientNodes(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+
+	n, err := s.AddNode("old sprint ticket", "d", "w", "stale-transient", nil, "", "transient")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	old := time.Now().UTC().AddDate(0, 0, -8).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE id = ?`, old, n.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	drift, err := s.FindDrift("stale-transient", 10, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, d := range drift {
+		if d.Node.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected stale transient node to be surfaced as a drift candidate")
 	}
 }
 

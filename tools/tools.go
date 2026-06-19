@@ -69,7 +69,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",
-			Description: "After filing, call connect for every suggested_connections entry before ending your session. Orphaned memories lose context immediately.\n\nFile one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate — use the search results to infer the domain: if related memories exist in a domain, file there. Prefer existing domains over creating new ones; only propose a new domain if no related content is found anywhere. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field.\n\nBatch mode (provide items array): file multiple memories in a single transaction. Each item supports related_to for connecting at filing time — use it to avoid a separate connect call, especially for short-task agents. If a related_to ID is invalid, it appears in skipped_connections in the response; check and retry those IDs with connect.\n\nFor occurred_at in either mode: two cases — (a) In-session witnessed: you directly observed this decision or event happen during the current conversation. Set occurred_at freely using today's date. No confirmation needed. (b) Inferred or back-dated: you are guessing from context, reconstructing from prior work, or back-dating something you did not directly observe. Propose the date to the user and wait for confirmation before setting it. Never guess. Never infer it silently from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse decision_type to classify each memory: 'decision' (default) for facts and findings, 'transient' for short-lived state like ticket notes that will stale within days, 'standing' for durable rules and constraints that govern other memories. Transient memories older than 7 days are surfaced by audit(mode=stale) as archiving candidates. Standing memories appear in the rules section of orient. The legacy transient=true field is accepted for backward compatibility and maps to decision_type='transient'.",
+			Description: "After filing, call connect for every suggested_connections entry before ending your session. Orphaned memories lose context immediately.\n\nFile one or more concepts, decisions, or findings. Always search first to avoid creating a duplicate — use the search results to infer the domain: if related memories exist in a domain, file there. Prefer existing domains over creating new ones; only propose a new domain if no related content is found anywhere. Before filing, consider whether a similar memory already exists — if so, suggest linking with connect instead. Duplicate nodes with no edges are the most common cause of drift candidates.\n\nSingle mode (omit items): provide label, domain, and optional fields directly. The response includes a suggested_connections field.\n\nBatch mode (provide items array): file multiple memories in a single transaction. Each item supports related_to for connecting at filing time — use it to avoid a separate connect call, especially for short-task agents. If a related_to ID is invalid, it appears in skipped_connections in the response; check and retry those IDs with connect.\n\nFor occurred_at in either mode: two cases — (a) In-session witnessed: you directly observed this decision or event happen during the current conversation. Set occurred_at freely using today's date. No confirmation needed. (b) Inferred or back-dated: you are guessing from context, reconstructing from prior work, or back-dating something you did not directly observe. Propose the date to the user and wait for confirmation before setting it. Never guess. Never infer it silently from context. If the user confirms without specifying a date, use today's system date. Future dates are valid for planned events and reminders.\n\nUse node_kind to classify each memory: 'decision' (default): a settled fact or choice. 'reference': an entity (person, system, org). 'issue': a problem or open question. 'option': a candidate answer to an issue. 'assumption': an unverified precondition. 'finding': an empirical observation. 'standing': a durable rule — appears in orient rules. 'goal': a desired future state. 'transient': short-lived state, surfaced by audit(mode=stale) after 7 days. Standing memories appear in the rules section of orient. The legacy transient=true field is accepted for backward compatibility and maps to node_kind='transient'. The legacy decision_type field name is rejected — use node_kind instead.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -84,12 +84,12 @@ func (h *Handler) ListTools() (interface{}, error) {
 						Description: "Optional list of memories to auto-connect at creation time. Single mode only. Each item is either a plain memory ID string (creates a connects_to connection) or an object with id and relationship fields. Invalid or unknown IDs are silently skipped.",
 						Items:       json.RawMessage(`{"oneOf":[{"type":"string"},{"type":"object","properties":{"id":{"type":"string"},"relationship":{"type":"string"}},"required":["id"],"additionalProperties":false}]}`),
 					},
-					"transient":     {Type: "boolean", Description: "Deprecated — use decision_type='transient' instead. Accepted for backward compatibility: if true and decision_type is not set, maps to decision_type='transient'."},
-					"decision_type": {Type: "string", Description: "Classify this memory. 'decision' (default): a fact, finding, or decision. 'transient': short-lived state (ticket notes, sprint state) — surfaced by audit(mode=stale) after 7 days. 'standing': a durable rule or constraint that governs other memories — appears in the rules section of orient.", Enum: []string{"decision", "transient", "standing"}},
+					"transient": {Type: "boolean", Description: "Deprecated — use node_kind='transient' instead. Accepted for backward compatibility: if true and node_kind is not set, maps to node_kind='transient'."},
+					"node_kind": {Type: "string", Description: "Classify this memory. 'decision' (default): a settled fact or choice. 'reference': an entity (person, system, org). 'issue': a problem or open question. 'option': a candidate answer to an issue. 'assumption': an unverified precondition. 'finding': an empirical observation. 'standing': a durable rule or constraint that governs other memories — appears in the rules section of orient. 'goal': a desired future state. 'transient': short-lived state — surfaced by audit(mode=stale) after 7 days.", Enum: []string{"transient", "reference", "issue", "decision", "option", "assumption", "finding", "standing", "goal"}},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), decision_type (string: decision|transient|standing), transient (boolean, deprecated — maps to decision_type=transient), related_to (string ID, object with id+relationship, or array of either — connects at filing time; invalid IDs appear in skipped_connections).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"decision_type":{"type":"string","enum":["decision","transient","standing"]},"transient":{"type":"boolean"},"related_to":{"description":"Connect at filing time. String ID (connects_to), object {id, relationship}, or array of either. Invalid IDs appear in skipped_connections — not silently dropped."}},"required":["label","domain"]}`),
+						Description: "Batch mode: array of memory objects to file in a single transaction. Each must have label (string, required) and domain (string, required). Optional: description, why_matters, tags (space-separated keywords), occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), node_kind (string: transient|reference|issue|decision|option|assumption|finding|standing|goal), transient (boolean, deprecated — maps to node_kind=transient), related_to (string ID, object with id+relationship, or array of either — connects at filing time; invalid IDs appear in skipped_connections).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"node_kind":{"type":"string","enum":["transient","reference","issue","decision","option","assumption","finding","standing","goal"]},"transient":{"type":"boolean"},"related_to":{"description":"Connect at filing time. String ID (connects_to), object {id, relationship}, or array of either. Invalid IDs appear in skipped_connections — not silently dropped."}},"required":["label","domain"]}`),
 					},
 				},
 			},
@@ -282,18 +282,18 @@ func (h *Handler) ListTools() (interface{}, error) {
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id":            {Type: "string", Description: "ID of the memory to update. Required in single mode; omit when using items."},
-					"label":         {Type: "string", Description: "New label (optional)"},
-					"description":   {Type: "string", Description: "New description (optional)"},
-					"why_matters":   {Type: "string", Description: "New why_matters text (optional)"},
-					"tags":          {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
-					"occurred_at":   {Type: "string", Description: "ISO8601 date or datetime. (a) In-session witnessed: you directly observed this happen in the current conversation — set freely using today's date, no confirmation needed. (b) Inferred or back-dated: you are guessing or reconstructing — propose to user and wait for confirmation. Never guess. Never infer silently. Single mode only."},
-					"transient":     {Type: "boolean", Description: "Deprecated — use decision_type instead. Accepted for backward compatibility: true maps to decision_type='transient', false maps to decision_type='decision'. Omit to leave unchanged."},
-					"decision_type": {Type: "string", Description: "Classify this memory. 'decision' (default): a fact, finding, or decision. 'transient': short-lived state, surfaced by audit(mode=stale) after 7 days. 'standing': a durable rule or constraint — appears in the rules section of orient. Omit to leave unchanged.", Enum: []string{"decision", "transient", "standing"}},
+					"id":          {Type: "string", Description: "ID of the memory to update. Required in single mode; omit when using items."},
+					"label":       {Type: "string", Description: "New label (optional)"},
+					"description": {Type: "string", Description: "New description (optional)"},
+					"why_matters": {Type: "string", Description: "New why_matters text (optional)"},
+					"tags":        {Type: "string", Description: "New space-separated search tags (optional); replaces any existing tags"},
+					"occurred_at": {Type: "string", Description: "ISO8601 date or datetime. (a) In-session witnessed: you directly observed this happen in the current conversation — set freely using today's date, no confirmation needed. (b) Inferred or back-dated: you are guessing or reconstructing — propose to user and wait for confirmation. Never guess. Never infer silently. Single mode only."},
+					"transient":   {Type: "boolean", Description: "Deprecated — use node_kind instead. Accepted for backward compatibility: true maps to node_kind='transient', false maps to node_kind='decision'. Omit to leave unchanged."},
+					"node_kind":   {Type: "string", Description: "Classify this memory. 'decision' (default): a settled fact or choice. 'reference': an entity (person, system, org). 'issue': a problem or open question. 'option': a candidate answer to an issue. 'assumption': an unverified precondition. 'finding': an empirical observation. 'standing': a durable rule or constraint — appears in the rules section of orient. 'goal': a desired future state. 'transient': short-lived state, surfaced by audit(mode=stale) after 7 days. Omit to leave unchanged.", Enum: []string{"transient", "reference", "issue", "decision", "option", "assumption", "finding", "standing", "goal"}},
 					"items": {
 						Type:        "array",
-						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), decision_type (string: decision|transient|standing), transient (boolean, deprecated — true maps to decision_type=transient, false to decision_type=decision).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"decision_type":{"type":"string","enum":["decision","transient","standing"]},"transient":{"type":"boolean"}},"required":["id"]}`),
+						Description: "Batch mode: array of update objects. Each must have id (string, required). Optional: label, description, why_matters, tags, occurred_at (ISO8601 — in-session: set freely; inferred/back-dated: propose+confirm, never infer silently), node_kind (string: transient|reference|issue|decision|option|assumption|finding|standing|goal), transient (boolean, deprecated — true maps to node_kind=transient, false to node_kind=decision).",
+						Items:       json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"why_matters":{"type":"string"},"tags":{"type":"string"},"occurred_at":{"type":"string"},"node_kind":{"type":"string","enum":["transient","reference","issue","decision","option","assumption","finding","standing","goal"]},"transient":{"type":"boolean"}},"required":["id"]}`),
 					},
 				},
 			},
@@ -468,16 +468,20 @@ func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
 }
 
 func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
+	if msg := detectLegacyDecisionTypeKey(args); msg != "" {
+		return errorResult(msg), nil
+	}
+
 	var a struct {
-		Label        string            `json:"label"`
-		Description  string            `json:"description"`
-		WhyMatters   string            `json:"why_matters"`
-		Domain       string            `json:"domain"`
-		OccurredAt   string            `json:"occurred_at"`
-		Tags         string            `json:"tags"`
-		RelatedTo    []json.RawMessage `json:"related_to"`
-		Transient    bool              `json:"transient"`
-		DecisionType string            `json:"decision_type"`
+		Label       string            `json:"label"`
+		Description string            `json:"description"`
+		WhyMatters  string            `json:"why_matters"`
+		Domain      string            `json:"domain"`
+		OccurredAt  string            `json:"occurred_at"`
+		Tags        string            `json:"tags"`
+		RelatedTo   []json.RawMessage `json:"related_to"`
+		Transient   bool              `json:"transient"`
+		NodeKind    string            `json:"node_kind"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -496,14 +500,14 @@ func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	if occurredAt != nil && a.WhyMatters == "" {
 		return nil, fmt.Errorf("occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.")
 	}
-	// backcompat: transient=true maps to decision_type=transient
-	if a.Transient && a.DecisionType == "" {
-		a.DecisionType = "transient"
+	// backcompat: transient=true maps to node_kind=transient
+	if a.Transient && a.NodeKind == "" {
+		a.NodeKind = "transient"
 	}
-	if a.DecisionType == "" {
-		a.DecisionType = "decision"
+	if a.NodeKind == "" {
+		a.NodeKind = "decision"
 	}
-	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags, a.DecisionType)
+	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags, a.NodeKind)
 	if err != nil {
 		return nil, err
 	}
@@ -1242,16 +1246,25 @@ func processRelatedTo(h *Handler, fromID string, entries []json.RawMessage) []sk
 
 // addNodesBatch handles the batch mode of remember: items is the raw JSON array of node objects.
 func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(items, &rawItems); err != nil {
+		return nil, err
+	}
+	for i, raw := range rawItems {
+		if msg := detectLegacyDecisionTypeKey(raw); msg != "" {
+			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
+		}
+	}
 	var nodeList []struct {
-		Label        string            `json:"label"`
-		Description  string            `json:"description"`
-		WhyMatters   string            `json:"why_matters"`
-		Tags         string            `json:"tags"`
-		Domain       string            `json:"domain"`
-		OccurredAt   string            `json:"occurred_at"`
-		Transient    bool              `json:"transient"`
-		DecisionType string            `json:"decision_type"`
-		RelatedTo    []json.RawMessage `json:"related_to"`
+		Label       string            `json:"label"`
+		Description string            `json:"description"`
+		WhyMatters  string            `json:"why_matters"`
+		Tags        string            `json:"tags"`
+		Domain      string            `json:"domain"`
+		OccurredAt  string            `json:"occurred_at"`
+		Transient   bool              `json:"transient"`
+		NodeKind    string            `json:"node_kind"`
+		RelatedTo   []json.RawMessage `json:"related_to"`
 	}
 	if err := json.Unmarshal(items, &nodeList); err != nil {
 		return nil, err
@@ -1272,22 +1285,22 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		if occurredAt != nil && n.WhyMatters == "" {
 			return nil, fmt.Errorf("node %d: occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.", i)
 		}
-		// backcompat: transient=true maps to decision_type=transient
-		decisionType := n.DecisionType
-		if n.Transient && decisionType == "" {
-			decisionType = "transient"
+		// backcompat: transient=true maps to node_kind=transient
+		nodeKind := n.NodeKind
+		if n.Transient && nodeKind == "" {
+			nodeKind = "transient"
 		}
-		if decisionType == "" {
-			decisionType = "decision"
+		if nodeKind == "" {
+			nodeKind = "decision"
 		}
 		inputs[i] = db.NodeInput{
-			Label:        n.Label,
-			Description:  n.Description,
-			WhyMatters:   n.WhyMatters,
-			Tags:         n.Tags,
-			Domain:       n.Domain,
-			OccurredAt:   occurredAt,
-			DecisionType: decisionType,
+			Label:       n.Label,
+			Description: n.Description,
+			WhyMatters:  n.WhyMatters,
+			Tags:        n.Tags,
+			Domain:      n.Domain,
+			OccurredAt:  occurredAt,
+			NodeKind:    nodeKind,
 		}
 	}
 	nodes, err := h.store.AddNodesBatch(inputs)
@@ -1402,6 +1415,19 @@ func detectLegacyEdgeKeys(raw json.RawMessage) string {
 		". The connect tool uses 'from_memory' and 'to_memory'. Call tools/list to refresh your schema."
 }
 
+// detectLegacyDecisionTypeKey inspects raw JSON for the retired 'decision_type'
+// parameter name (renamed to node_kind). Returns a non-empty error message if found.
+func detectLegacyDecisionTypeKey(raw json.RawMessage) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	if _, ok := m["decision_type"]; ok {
+		return "decision_type has been renamed to node_kind — use node_kind instead. Call tools/list to refresh your schema."
+	}
+	return ""
+}
+
 // detectLegacyNodeUpdateKeys inspects raw JSON for the retired revise_all
 // "updates" wrapper key. Returns a non-empty error message if found.
 func detectLegacyNodeUpdateKeys(raw json.RawMessage) string {
@@ -1462,16 +1488,19 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	if msg := detectLegacyNodeUpdateKeys(args); msg != "" {
 		return errorResult(msg), nil
 	}
+	if msg := detectLegacyDecisionTypeKey(args); msg != "" {
+		return errorResult(msg), nil
+	}
 
 	var a struct {
-		ID           string  `json:"id"`
-		Label        *string `json:"label"`
-		Description  *string `json:"description"`
-		WhyMatters   *string `json:"why_matters"`
-		Tags         *string `json:"tags"`
-		OccurredAt   *string `json:"occurred_at"`
-		Transient    *bool   `json:"transient"`
-		DecisionType *string `json:"decision_type"`
+		ID          string  `json:"id"`
+		Label       *string `json:"label"`
+		Description *string `json:"description"`
+		WhyMatters  *string `json:"why_matters"`
+		Tags        *string `json:"tags"`
+		OccurredAt  *string `json:"occurred_at"`
+		Transient   *bool   `json:"transient"`
+		NodeKind    *string `json:"node_kind"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -1502,17 +1531,17 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 			}
 		}
 	}
-	// backcompat: transient=true maps to decision_type=transient
-	if a.Transient != nil && a.DecisionType == nil {
+	// backcompat: transient=true maps to node_kind=transient
+	if a.Transient != nil && a.NodeKind == nil {
 		if *a.Transient {
 			s := "transient"
-			a.DecisionType = &s
+			a.NodeKind = &s
 		} else {
 			s := "decision"
-			a.DecisionType = &s
+			a.NodeKind = &s
 		}
 	}
-	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt, a.DecisionType)
+	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt, a.NodeKind)
 	if err != nil {
 		return nil, err
 	}
@@ -1522,15 +1551,24 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 
 // updateNodesBatch handles the batch mode of revise: items is the raw JSON array of update objects.
 func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(items, &rawItems); err != nil {
+		return nil, err
+	}
+	for i, raw := range rawItems {
+		if msg := detectLegacyDecisionTypeKey(raw); msg != "" {
+			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
+		}
+	}
 	var updateList []struct {
-		ID           string  `json:"id"`
-		Label        *string `json:"label"`
-		Description  *string `json:"description"`
-		WhyMatters   *string `json:"why_matters"`
-		Tags         *string `json:"tags"`
-		OccurredAt   *string `json:"occurred_at"`
-		Transient    *bool   `json:"transient"`
-		DecisionType *string `json:"decision_type"`
+		ID          string  `json:"id"`
+		Label       *string `json:"label"`
+		Description *string `json:"description"`
+		WhyMatters  *string `json:"why_matters"`
+		Tags        *string `json:"tags"`
+		OccurredAt  *string `json:"occurred_at"`
+		Transient   *bool   `json:"transient"`
+		NodeKind    *string `json:"node_kind"`
 	}
 	if err := json.Unmarshal(items, &updateList); err != nil {
 		return nil, err
@@ -1563,25 +1601,25 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 				}
 			}
 		}
-		// backcompat: transient bool maps to decision_type
-		decisionType := u.DecisionType
-		if u.Transient != nil && decisionType == nil {
+		// backcompat: transient bool maps to node_kind
+		nodeKind := u.NodeKind
+		if u.Transient != nil && nodeKind == nil {
 			if *u.Transient {
 				s := "transient"
-				decisionType = &s
+				nodeKind = &s
 			} else {
 				s := "decision"
-				decisionType = &s
+				nodeKind = &s
 			}
 		}
 		inputs[i] = db.NodeUpdateInput{
-			ID:           u.ID,
-			Label:        u.Label,
-			Description:  u.Description,
-			WhyMatters:   u.WhyMatters,
-			Tags:         u.Tags,
-			OccurredAt:   occurredAt,
-			DecisionType: decisionType,
+			ID:          u.ID,
+			Label:       u.Label,
+			Description: u.Description,
+			WhyMatters:  u.WhyMatters,
+			Tags:        u.Tags,
+			OccurredAt:  occurredAt,
+			NodeKind:    nodeKind,
 		}
 	}
 	nodes, err := h.store.UpdateNodesBatch(inputs)

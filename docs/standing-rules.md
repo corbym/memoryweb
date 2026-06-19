@@ -1,7 +1,8 @@
 # Standing rules — persistent constraints agents see every session
 
-memoryweb v1.27.0 introduced `decision_type=standing`. This page explains what it
-is, why it's useful, and how to set it up for different kinds of work.
+memoryweb v1.27.0 introduced `node_kind=standing` (originally named `decision_type`).
+This page explains what it is, why it's useful, and how to set it up for different
+kinds of work.
 
 ---
 
@@ -32,7 +33,7 @@ Examples:
 - "Meeting notes are transient — archive them after 7 days."
 - "Every research finding needs a source linked as `is_example_of`."
 
-In memoryweb, a standing rule is just a memory filed with `decision_type: standing`:
+In memoryweb, a standing rule is just a memory filed with `node_kind: standing`:
 
 ```
 "File this as a standing rule: all code reviews must link to the ticket they review."
@@ -42,13 +43,16 @@ Standing memories appear in the **rules section** at the top of every `orient`
 response for that domain — before `declared_spine`, before `significant`, before
 `recent`. An agent that orients will see your rules without being asked.
 
-The three `decision_type` values:
+`node_kind` has nine values in total; the three most relevant to standing rules:
 
 | Value | Lifespan | Example |
 |---|---|---|
 | `decision` (default) | Indefinite — a fact or finding | "Chose PostgreSQL over MySQL for audit log" |
 | `transient` | Days — archived after 7 days | "Sprint 42 ticket notes" |
 | `standing` | Until explicitly revised | "All DB migrations must be append-only" |
+
+(The other six — `reference`, `issue`, `option`, `assumption`, `finding`, `goal` —
+classify other kinds of knowledge and don't affect the rules section.)
 
 ---
 
@@ -107,7 +111,7 @@ which keeps the rule ranked at the top of orient permanently.
 
 ## Templates by role
 
-Use these as starting points. File each with `decision_type: standing` in the
+Use these as starting points. File each with `node_kind: standing` in the
 relevant domain.
 
 ### Solo developer
@@ -154,7 +158,7 @@ relevant domain.
 "Competing interpretations of the same evidence are connected with contradicts
  — never merge them into one memory, preserve the tension"
 
-"Working notes are transient — mark them as decision_type=transient when filed
+"Working notes are transient — mark them as node_kind=transient when filed
  so they surface for archiving after 7 days"
 
 "The 'spine' of this domain is the argument, not the bibliography — file key
@@ -179,8 +183,9 @@ relevant domain.
 "Before a planning session, orient in the product domain and run
  significance — the highest-ranked memories are the constraints; respect them"
 
-"OKRs and goals are transient by the end of the quarter — set decision_type=transient
- when filing quarterly notes so they surface for archiving after the quarter ends"
+"OKRs and goals are their own kind — file them with node_kind=goal, not transient.
+ Quarterly check-in notes about a goal's progress are a separate memory and those
+ should be node_kind=transient, so they surface for archiving after the quarter ends"
 ```
 
 ---
@@ -193,7 +198,7 @@ enforce and ask it to file it correctly:
 > "File a standing rule for this domain: all DB queries must use parameterised
 > statements, no string concatenation. Write the label as a directive agents
 > can act on, add a self-referencing connect instruction in the description,
-> and use decision_type=standing."
+> and use node_kind=standing."
 
 > "I always want agents to connect completed work back to the TDD rule in this
 > domain. File that as a standing rule with a label that makes it obvious."

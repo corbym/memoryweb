@@ -2993,7 +2993,7 @@ func TestOrient_StaleCountNonZeroWhenTransientIsStale(t *testing.T) {
 	dbPath, _, h := newEnvWithPath(t)
 
 	addNode(t, h, "Old sprint ticket", "orient-stalecnt-transient", map[string]any{
-		"decision_type": "transient",
+		"node_kind": "transient",
 	})
 
 	rawDB, err := sql.Open("sqlite3", dbPath)
@@ -3026,10 +3026,10 @@ func TestOrient_StaleCountNonZeroWhenTransientIsStale(t *testing.T) {
 func TestOrient_StaleCountNonZeroWhenStandingNodeContradicts(t *testing.T) {
 	_, h := newEnv(t)
 	aID := addNode(t, h, "Rule A contradicted", "orient-stalecnt-contradicts", map[string]any{
-		"decision_type": "standing",
+		"node_kind": "standing",
 	})
 	bID := addNode(t, h, "Rule B contradicts it", "orient-stalecnt-contradicts", map[string]any{
-		"decision_type": "standing",
+		"node_kind": "standing",
 	})
 	call(t, h, "connect", map[string]any{
 		"from_memory":  aID,
@@ -3058,7 +3058,7 @@ func TestOrient_StaleCountNonZeroWhenLowConnectionStanding(t *testing.T) {
 	dbPath, _, h := newEnvWithPath(t)
 
 	addNode(t, h, "Lonely standing rule", "orient-stalecnt-standing", map[string]any{
-		"decision_type": "standing",
+		"node_kind": "standing",
 	})
 
 	rawDB, err := sql.Open("sqlite3", dbPath)
@@ -4684,25 +4684,85 @@ func TestSummariseDomain_IncludesNodeIDs(t *testing.T) {
 
 // ── add_node transient + drift of transient ───────────────────────────────────
 
-func TestAddNode_DecisionTypeTransient_PersistedAndReturned(t *testing.T) {
+func TestAddNode_NodeKindTransient_PersistedAndReturned(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "remember", map[string]any{
-		"label":         "Sprint ticket ABC",
-		"domain":        "proj",
-		"decision_type": "transient",
+		"label":     "Sprint ticket ABC",
+		"domain":    "proj",
+		"node_kind": "transient",
 	})
 	mustNotError(t, tr)
 
 	var resp struct {
 		Node struct {
-			DecisionType string `json:"decision_type"`
+			NodeKind string `json:"node_kind"`
 		} `json:"node"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse remember response: %v", err)
 	}
-	if resp.Node.DecisionType != "transient" {
-		t.Errorf("decision_type should be 'transient' in remember response, got %q", resp.Node.DecisionType)
+	if resp.Node.NodeKind != "transient" {
+		t.Errorf("node_kind should be 'transient' in remember response, got %q", resp.Node.NodeKind)
+	}
+}
+
+func TestAddNode_NodeKind_Default(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"label":  "Plain memory",
+		"domain": "proj",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Node struct {
+			NodeKind string `json:"node_kind"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+	if resp.Node.NodeKind != "decision" {
+		t.Errorf("node_kind should default to 'decision', got %q", resp.Node.NodeKind)
+	}
+}
+
+func TestAddNode_NodeKind_AllValues(t *testing.T) {
+	_, h := newEnv(t)
+	kinds := []string{"transient", "reference", "issue", "decision", "option", "assumption", "finding", "standing", "goal"}
+	for _, kind := range kinds {
+		tr := call(t, h, "remember", map[string]any{
+			"label":       "node of kind " + kind,
+			"domain":      "proj",
+			"node_kind":   kind,
+			"why_matters": "required for standing kind",
+		})
+		mustNotError(t, tr)
+
+		var resp struct {
+			Node struct {
+				NodeKind string `json:"node_kind"`
+			} `json:"node"`
+		}
+		if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+			t.Fatalf("parse remember response for kind %q: %v", kind, err)
+		}
+		if resp.Node.NodeKind != kind {
+			t.Errorf("node_kind: got %q, want %q", resp.Node.NodeKind, kind)
+		}
+	}
+}
+
+func TestAddNode_DecisionType_Rejected(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"label":         "should be rejected",
+		"domain":        "proj",
+		"decision_type": "decision",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "node_kind") {
+		t.Errorf("expected rejection message to mention node_kind, got: %s", text(t, tr))
 	}
 }
 
@@ -4710,7 +4770,7 @@ func TestDrift_TransientOlderThan7Days_Surfaced(t *testing.T) {
 	dbPath, _, h := newEnvWithPath(t)
 
 	id := addNode(t, h, "Sprint ticket old", "transient-test", map[string]any{
-		"decision_type": "transient",
+		"node_kind": "transient",
 	})
 
 	// Backdate created_at to 8 days ago.
@@ -4737,7 +4797,7 @@ func TestDrift_TransientOlderThan7Days_Surfaced(t *testing.T) {
 func TestDrift_TransientNewerThan7Days_NotSurfaced(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Sprint ticket fresh", "transient-fresh", map[string]any{
-		"decision_type": "transient",
+		"node_kind": "transient",
 	})
 
 	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "transient-fresh"})
@@ -4803,7 +4863,7 @@ func TestDisconnectedExcludesTransient(t *testing.T) {
 	_, h := newEnv(t)
 	domain := "test-disconnected-2"
 
-	addNode(t, h, "Transient lone node", domain, map[string]any{"decision_type": "transient"})
+	addNode(t, h, "Transient lone node", domain, map[string]any{"node_kind": "transient"})
 	live := addNode(t, h, "Live lone node", domain, nil)
 
 	tr := call(t, h, "audit", map[string]any{"mode": "orphans", "domain": domain})
@@ -6668,15 +6728,15 @@ func TestListTools_RememberDescriptionContainsDomainInference(t *testing.T) {
 func TestRevise_TransientUpdatable(t *testing.T) {
 	t.Run("clear transient (transient to decision)", func(t *testing.T) {
 		_, h := newEnv(t)
-		id := addNode(t, h, "Transient node", "transient-test", map[string]any{"decision_type": "transient"})
+		id := addNode(t, h, "Transient node", "transient-test", map[string]any{"node_kind": "transient"})
 
-		tr := call(t, h, "revise", map[string]any{"id": id, "decision_type": "decision"})
+		tr := call(t, h, "revise", map[string]any{"id": id, "node_kind": "decision"})
 		mustNotError(t, tr)
 
 		got := call(t, h, "recall", map[string]any{"id": id})
 		mustNotError(t, got)
-		if strings.Contains(text(t, got), `"decision_type": "transient"`) {
-			t.Error("expected decision_type to be cleared to 'decision'")
+		if strings.Contains(text(t, got), `"node_kind": "transient"`) {
+			t.Error("expected node_kind to be cleared to 'decision'")
 		}
 	})
 
@@ -6684,56 +6744,56 @@ func TestRevise_TransientUpdatable(t *testing.T) {
 		_, h := newEnv(t)
 		id := addNode(t, h, "Permanent node", "transient-test", nil)
 
-		tr := call(t, h, "revise", map[string]any{"id": id, "decision_type": "transient"})
+		tr := call(t, h, "revise", map[string]any{"id": id, "node_kind": "transient"})
 		mustNotError(t, tr)
 
 		got := call(t, h, "recall", map[string]any{"id": id})
 		mustNotError(t, got)
-		if !strings.Contains(text(t, got), `"decision_type": "transient"`) {
-			t.Error("expected decision_type to be set to 'transient'")
+		if !strings.Contains(text(t, got), `"node_kind": "transient"`) {
+			t.Error("expected node_kind to be set to 'transient'")
 		}
 	})
 
-	t.Run("omit decision_type - unchanged", func(t *testing.T) {
+	t.Run("omit node_kind - unchanged", func(t *testing.T) {
 		_, h := newEnv(t)
-		id := addNode(t, h, "Transient node", "transient-test", map[string]any{"decision_type": "transient"})
+		id := addNode(t, h, "Transient node", "transient-test", map[string]any{"node_kind": "transient"})
 
 		tr := call(t, h, "revise", map[string]any{"id": id, "label": "Updated label"})
 		mustNotError(t, tr)
 
 		got := call(t, h, "recall", map[string]any{"id": id})
 		mustNotError(t, got)
-		if !strings.Contains(text(t, got), `"decision_type": "transient"`) {
-			t.Error("expected decision_type to remain 'transient' when omitted from revise")
+		if !strings.Contains(text(t, got), `"node_kind": "transient"`) {
+			t.Error("expected node_kind to remain 'transient' when omitted from revise")
 		}
 	})
 
-	t.Run("batch mode sets decision_type", func(t *testing.T) {
+	t.Run("batch mode sets node_kind", func(t *testing.T) {
 		_, h := newEnv(t)
 		id1 := addNode(t, h, "Batch node A", "transient-test", nil)
-		id2 := addNode(t, h, "Batch node B", "transient-test", map[string]any{"decision_type": "transient"})
+		id2 := addNode(t, h, "Batch node B", "transient-test", map[string]any{"node_kind": "transient"})
 
 		items := []map[string]any{
-			{"id": id1, "decision_type": "transient"},
-			{"id": id2, "decision_type": "decision"},
+			{"id": id1, "node_kind": "transient"},
+			{"id": id2, "node_kind": "decision"},
 		}
 		tr := call(t, h, "revise", map[string]any{"items": items})
 		mustNotError(t, tr)
 
 		got1 := call(t, h, "recall", map[string]any{"id": id1})
 		mustNotError(t, got1)
-		if !strings.Contains(text(t, got1), `"decision_type": "transient"`) {
-			t.Error("batch: expected id1 decision_type='transient'")
+		if !strings.Contains(text(t, got1), `"node_kind": "transient"`) {
+			t.Error("batch: expected id1 node_kind='transient'")
 		}
 
 		got2 := call(t, h, "recall", map[string]any{"id": id2})
 		mustNotError(t, got2)
-		if strings.Contains(text(t, got2), `"decision_type": "transient"`) {
-			t.Error("batch: expected id2 decision_type to be cleared to 'decision'")
+		if strings.Contains(text(t, got2), `"node_kind": "transient"`) {
+			t.Error("batch: expected id2 node_kind to be cleared to 'decision'")
 		}
 	})
 
-	t.Run("preserves edges when decision_type changes", func(t *testing.T) {
+	t.Run("preserves edges when node_kind changes", func(t *testing.T) {
 		_, h := newEnv(t)
 		id1 := addNode(t, h, "Node with edge", "transient-test", nil)
 		id2 := addNode(t, h, "Connected node", "transient-test", nil)
@@ -6741,7 +6801,7 @@ func TestRevise_TransientUpdatable(t *testing.T) {
 			"from_memory": id1, "to_memory": id2, "relationship": "connects_to", "because": "test edge",
 		}))
 
-		mustNotError(t, call(t, h, "revise", map[string]any{"id": id1, "decision_type": "transient"}))
+		mustNotError(t, call(t, h, "revise", map[string]any{"id": id1, "node_kind": "transient"}))
 
 		got := call(t, h, "recall", map[string]any{"id": id1})
 		mustNotError(t, got)
@@ -7223,31 +7283,31 @@ func TestSignificance_TagsFilter_DeclaredRespected(t *testing.T) {
 	}
 }
 
-// ── DecisionType ──────────────────────────────────────────────────────────────
+// ── NodeKind ──────────────────────────────────────────────────────────────────
 
-func TestRemember_DecisionTypeStanding(t *testing.T) {
+func TestRemember_NodeKindStanding(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
 	id := addNode(t, h, "no deploys on friday", "proj", map[string]any{
-		"decision_type": "standing",
-		"why_matters":   "reduces incidents",
+		"node_kind":   "standing",
+		"why_matters": "reduces incidents",
 	})
 	tr := call(t, h, "recall", map[string]any{"id": id})
 	mustNotError(t, tr)
 	var resp struct {
 		Node struct {
-			DecisionType string `json:"decision_type"`
+			NodeKind string `json:"node_kind"`
 		} `json:"node"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse recall response: %v", err)
 	}
-	if resp.Node.DecisionType != "standing" {
-		t.Errorf("decision_type: got %q, want %q", resp.Node.DecisionType, "standing")
+	if resp.Node.NodeKind != "standing" {
+		t.Errorf("node_kind: got %q, want %q", resp.Node.NodeKind, "standing")
 	}
 }
 
-func TestRemember_DecisionTypeBackcompat_Transient(t *testing.T) {
+func TestRemember_NodeKindBackcompat_Transient(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
 	id := addNode(t, h, "sprint ticket legacy", "proj", map[string]any{
@@ -7257,27 +7317,27 @@ func TestRemember_DecisionTypeBackcompat_Transient(t *testing.T) {
 	mustNotError(t, tr)
 	var resp struct {
 		Node struct {
-			DecisionType string `json:"decision_type"`
+			NodeKind string `json:"node_kind"`
 		} `json:"node"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse recall response: %v", err)
 	}
-	if resp.Node.DecisionType != "transient" {
-		t.Errorf("decision_type: got %q, want %q", resp.Node.DecisionType, "transient")
+	if resp.Node.NodeKind != "transient" {
+		t.Errorf("node_kind: got %q, want %q", resp.Node.NodeKind, "transient")
 	}
 }
 
-func TestRevise_DecisionType(t *testing.T) {
+func TestRevise_NodeKind(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
 	id := addNode(t, h, "promote to standing", "proj", map[string]any{
-		"decision_type": "decision",
-		"why_matters":   "will be promoted",
+		"node_kind":   "decision",
+		"why_matters": "will be promoted",
 	})
 	tr := call(t, h, "revise", map[string]any{
-		"id":            id,
-		"decision_type": "standing",
+		"id":        id,
+		"node_kind": "assumption",
 	})
 	mustNotError(t, tr)
 
@@ -7285,22 +7345,75 @@ func TestRevise_DecisionType(t *testing.T) {
 	mustNotError(t, tr2)
 	var resp struct {
 		Node struct {
-			DecisionType string `json:"decision_type"`
+			NodeKind string `json:"node_kind"`
 		} `json:"node"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr2)), &resp); err != nil {
 		t.Fatalf("parse recall response: %v", err)
 	}
-	if resp.Node.DecisionType != "standing" {
-		t.Errorf("decision_type after revise: got %q, want %q", resp.Node.DecisionType, "standing")
+	if resp.Node.NodeKind != "assumption" {
+		t.Errorf("node_kind after revise: got %q, want %q", resp.Node.NodeKind, "assumption")
+	}
+}
+
+func TestRevise_DecisionType_Rejected(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "old key revise target", "proj", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":            id,
+		"decision_type": "standing",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "node_kind") {
+		t.Errorf("expected rejection message to mention node_kind, got: %s", text(t, tr))
+	}
+}
+
+func TestUpdateNode_NodeKind_InvalidValue(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "any node", "proj", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":        id,
+		"node_kind": "nonsense",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "transient") || !strings.Contains(text(t, tr), "goal") {
+		t.Errorf("expected error to list valid kinds, got: %s", text(t, tr))
+	}
+}
+
+func TestGetStandingNodes_UsesNodeKind(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "pre-existing standing rule", "proj", map[string]any{
+		"node_kind":   "standing",
+		"why_matters": "governs deployments",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "proj"})
+	mustNotError(t, tr)
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	var rules []any
+	if err := json.Unmarshal(resp["rules"], &rules); err != nil {
+		t.Fatalf("parse rules: %v", err)
+	}
+	if len(rules) == 0 {
+		t.Error("standing node filed via node_kind should appear in orient rules section")
 	}
 }
 
 func TestOrient_RulesSection_StandingNodes(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
-	addNode(t, h, "rule alpha", "proj", map[string]any{"decision_type": "standing", "why_matters": "governs deployments"})
-	addNode(t, h, "rule beta", "proj", map[string]any{"decision_type": "standing", "why_matters": "governs testing"})
+	addNode(t, h, "rule alpha", "proj", map[string]any{"node_kind": "standing", "why_matters": "governs deployments"})
+	addNode(t, h, "rule beta", "proj", map[string]any{"node_kind": "standing", "why_matters": "governs testing"})
 	addNode(t, h, "plain decision", "proj", map[string]any{})
 
 	tr := call(t, h, "orient", map[string]any{"domain": "proj"})
@@ -7342,8 +7455,8 @@ func TestOrient_RulesSection_Absent_WhenNoStanding(t *testing.T) {
 func TestOrient_RulesSection_OrderedByInboundEdgeCount(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
-	idA := addNode(t, h, "rule with no refs", "proj", map[string]any{"decision_type": "standing", "why_matters": "a"})
-	idB := addNode(t, h, "rule with one ref", "proj", map[string]any{"decision_type": "standing", "why_matters": "b"})
+	idA := addNode(t, h, "rule with no refs", "proj", map[string]any{"node_kind": "standing", "why_matters": "a"})
+	idB := addNode(t, h, "rule with one ref", "proj", map[string]any{"node_kind": "standing", "why_matters": "b"})
 	idLinker := addNode(t, h, "work item", "proj", map[string]any{})
 
 	tr := call(t, h, "connect", map[string]any{
@@ -7384,7 +7497,7 @@ func TestOrient_RulesSection_OrderedByInboundEdgeCount(t *testing.T) {
 func TestConnect_GovernedBy(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
-	ruleID := addNode(t, h, "the standing rule", "proj", map[string]any{"decision_type": "standing", "why_matters": "a rule"})
+	ruleID := addNode(t, h, "the standing rule", "proj", map[string]any{"node_kind": "standing", "why_matters": "a rule"})
 	workID := addNode(t, h, "some work item", "proj", map[string]any{})
 
 	tr := call(t, h, "connect", map[string]any{
