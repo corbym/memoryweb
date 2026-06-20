@@ -132,3 +132,47 @@ func applyStringField(newVal *string, current, col, fieldName string, sets, chan
 		*changes = append(*changes, fmt.Sprintf("%s (was %q)", fieldName, current))
 	}
 }
+
+// scanNodeRow scans a single row from a query that selects the standard 11 node
+// columns in the order: id, label, description, why_matters, domain,
+// created_at, updated_at, occurred_at, archived_at, tags, node_kind.
+func scanNodeRow(rows *sql.Rows) (Node, error) {
+	var n Node
+	var oa, aa sql.NullTime
+	if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+		&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind); err != nil {
+		return Node{}, err
+	}
+	n.OccurredAt = nullTimeToPtr(oa)
+	n.ArchivedAt = nullTimeToPtr(aa)
+	return n, nil
+}
+
+// scanNodeRows reads all node rows from rows into a slice.
+// Caller is responsible for closing rows.
+func scanNodeRows(rows *sql.Rows) ([]Node, error) {
+	return scanRows(rows, scanNodeRow)
+}
+
+// scanNode scans a single row from a query that SELECTs the standard 11 node
+// columns in the order: id, label, description, why_matters, tags, domain,
+// created_at, updated_at, occurred_at, archived_at, node_kind.
+func scanNode(rows *sql.Rows) (Node, error) {
+	var n Node
+	var desc, why, tags sql.NullString
+	var occurredAt, archivedAt sql.NullTime
+	var nodeKind string
+	if err := rows.Scan(
+		&n.ID, &n.Label, &desc, &why, &tags, &n.Domain,
+		&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
+	); err != nil {
+		return n, err
+	}
+	n.Description = desc.String
+	n.WhyMatters = why.String
+	n.Tags = tags.String
+	n.OccurredAt = nullTimeToPtr(occurredAt)
+	n.ArchivedAt = nullTimeToPtr(archivedAt)
+	n.NodeKind = nodeKind
+	return n, nil
+}

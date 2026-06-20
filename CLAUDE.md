@@ -18,13 +18,44 @@ reading lines from stdin and writing responses to stdout.
 
 ## Package layout
 
+`db/` and `tools/` are split by concern, one file per area — not one monolithic
+file per package. When adding a new Store method or tool handler, put it in the
+file for its concern; create a new file only for a genuinely new concern.
+
 ```
-main.go          JSON-RPC 2.0 wire loop (stdin → dispatch → stdout)
-db/db.go         Store type, all SQL, Node/Edge structs, migrations
-db/util.go       slug(), shortID() helpers
-tools/tools.go   MCP tool definitions + handler methods
-cmd/             CLI-only subcommands (not MCP tools)
-stats/           WKD session scoring and stats logging
+main.go               JSON-RPC 2.0 wire loop (stdin → dispatch → stdout)
+
+db/store.go           Store type, New/Close, schema/version/stats queries, init()
+db/migrations.go      migration type, the migrations slice, migrate() — append-only, see below
+db/embeddings.go      Ollama embedding client, storeEmbedding, BackfillEmbeddings
+db/nodes.go           Node struct, AddNode/GetNode/UpdateNode/ArchiveNode/RestoreNode/ListArchived, batch variants
+db/edges.go           Edge struct, AddEdge/AddEdgesBatch/DeleteEdge, collectEdges
+db/search.go          SearchNodes/SearchNodesExact, LIKE + semantic search paths
+db/graph.go           FindPath/FindConnections/GetNodeNeighbourhood/GetDomainGraph, SuggestEdges
+db/timeline.go        RecentChanges(Scoped), Timeline, GetHistoryForMemoryID
+db/significance.go    GetSignificance and its memory_id/tags variants
+db/audit.go           FindDrift/CountStaleDrift/FindDisconnected
+db/domains.go         Alias CRUD, RenameDomain, MergeDomains, ListDomains
+db/purge.go           Purge — the one hard-delete path; CLI-only, never an MCP tool, kept visually separate
+db/util.go            slug(), shortID(), tagFilter, scanNodeRow(s), and the generic helpers below
+
+tools/tools.go        Handler type, CallTool dispatch switch, Instructions const, shared small helpers
+tools/definitions.go  ListTools() — the full MCP tool schema
+tools/lean.go         Shared lean-entry helpers (leanEntry, toLeanEntry, truncateWhy, ...)
+tools/remember.go     remember tool (addNode + batch)
+tools/revise.go       revise tool (updateNode + batch)
+tools/connect.go      connect/disconnect/suggest_connections
+tools/search.go       search tool
+tools/recent.go       recent tool
+tools/history.go      history tool
+tools/significance.go significance tool
+tools/orient.go       orient tool (cross-domain snapshot, topic mode, full domain summary)
+tools/domains.go      domains/alias tools, rename_domain
+tools/archive.go      forget/restore/forget_all, audit tool, drift
+tools/graph.go        why_connected, trace, visualise
+
+cmd/                  CLI-only subcommands (not MCP tools)
+stats/                WKD session scoring and stats logging
 ```
 
 ---
@@ -44,7 +75,7 @@ New `cmd/` directories must not be created without explicit instruction.
 
 ## The migration system — critical rules
 
-Migrations live in the `migrations` slice in `db/db.go`. They are **append-only**
+Migrations live in the `migrations` slice in `db/migrations.go`. They are **append-only**
 and version-numbered. The runner stamps applied versions in a `schema_migrations`
 table.
 
@@ -195,9 +226,9 @@ before deciding "we don't do that here."
 
 | Story | Generic introduced | Applied in |
 |-------|--------------------|-----------|
-| `stories/generics-wave1.md` | `nullTimeToPtr`, `scanRows`, `inClause`, `filter`, `mapSlice` | `db/db.go` |
-| `stories/generics-optional-field-update.md` | `applyStringField` | `db/db.go` — `UpdateNode`, `UpdateNodesBatch` |
-| `stories/generics-json-batch-dispatch.md` | `dispatchBatch` | `tools/tools.go` — `addNode`, `addEdge`, `updateNode` |
+| `stories/generics-wave1.md` | `nullTimeToPtr`, `scanRows`, `inClause`, `filter`, `mapSlice` | `db/util.go` |
+| `stories/generics-optional-field-update.md` | `applyStringField` | `db/util.go` — used by `UpdateNode`, `UpdateNodesBatch` in `db/nodes.go` |
+| `stories/generics-json-batch-dispatch.md` | `dispatchBatch` | `tools/util.go` — used by `addNode` (`tools/remember.go`), `addEdge` (`tools/connect.go`), `updateNode` (`tools/revise.go`) |
 
 ---
 
@@ -208,10 +239,12 @@ convention, no exceptions. There is no top-level `tests/` directory.
 
 | File | Package | What it tests |
 |------|---------|---------------|
-| `db/db_test.go` | `db_test` | DB-layer unit tests: all Store methods |
-| `tools/tools_test.go` | `tools_test` | Outside-in agent-style tests via `CallTool` |
+| `db/*_test.go` | `db_test` | DB-layer unit tests: all Store methods, one test file per production file (e.g. `nodes_test.go` tests `nodes.go`). `db_test.go` itself holds only the shared helpers (`newStore`, `mustAddNode`, ...) |
+| `tools/*_test.go` | `tools_test` | Outside-in agent-style tests via `CallTool`, one test file per production file (e.g. `remember_test.go` tests `remember.go`). `tools_test.go` itself holds only the shared helpers (`call`, `newEnv`, `mustNotError`, ...) plus the handful of tests that exercise `tools.go` directly (`CallTool` dispatch, `getNode`, `checkForUpdates`) |
 | `cmd/purge/main_test.go` | `main_test` | CLI integration tests via `exec.Command` |
 | `main_test.go` | `main_test` | Wire-layer tests for setup and subcommand dispatch |
+
+New production files always get a matching `_test.go` file of the same name — don't add a new concern's tests to an unrelated existing file.
 
 All tests use isolated temp-file SQLite DBs via `t.TempDir()`. Never share
 state between tests. Never use `:memory:` (WAL mode and schema stamping behave

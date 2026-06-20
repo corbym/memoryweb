@@ -59,22 +59,43 @@ story covers:
 1. **Exact line format.** Working draft: `"[id] label — truncated excerpt (domain, N edges)"`.
    Confirm field order and punctuation; decide whether `domain` is worth a token when the tool
    call was already domain-scoped.
-2. **Opt-in or default?** A new parameter (e.g. `digest: true`) keeps the existing JSON-array
-   contract as the default and avoids a breaking change to every caller; a new default
-   behaviour maximises the saving but breaks any caller (including memoryweb's own tests)
-   that parses the current JSON shape. Recommend opt-in via a parameter, default false,
-   given how much of `tools_test.go` already asserts on JSON shape for these tools.
-3. **Edge count.** `(domain, N edges)` implies counting connections per node cheaply at list
+2. **Edge count.** `(domain, N edges)` implies counting connections per node cheaply at list
    time — confirm this doesn't reintroduce the N+1 query cost the lean-format story avoided by
    leaving `edges` as a separate top-level array (search) or omitting it entirely (recent,
    significance, history).
-4. **importance_score / occurred_at placement.** significance and history both need to keep a
+3. **importance_score / occurred_at placement.** significance and history both need to keep a
    value lean-format already preserves; the line format must make room for it without becoming
    unreadable.
-5. **Per-tool or per-server flag?** Could be a parameter on each of the five tools, or a single
-   server-wide response-mode setting. Per-tool matches how `exact` already works for search.
-6. **Recordari (STORY-120).** Same tool set, same two-lever distinction — confirm Recordari
-   picks up digest mode as a follow-on to its own lean-format work, not bundled into it.
+4. **Per-tool or per-server flag (memoryweb)?** Could be a parameter on each of the five tools,
+   or a single server-wide response-mode setting. Per-tool matches how `exact` already works
+   for search.
+
+---
+
+## Resolved design questions
+
+- **Opt-in vs. default — and it's different per product.** A new parameter (e.g. `digest:
+  true`) that defaults to off keeps the existing JSON-array contract for every current caller;
+  defaulting it on maximises the saving but silently changes the response shape for anyone not
+  already passing the flag. The tell that this is a real breaking change, not a safe default
+  flip: if shipping it requires retrofitting every existing test with an explicit "give me the
+  old shape" flag just to keep them passing, that's evidence real callers need the same escape
+  hatch — and most of them won't know to ask for it.
+
+  This argument is asymmetric across the two products, though:
+  - **memoryweb**: opt-in, default **off**. `search`/`recent`/`significance`/`history` already
+    have a real, currently-shipped JSON-array contract (this repo's own test suite depends on
+    it). Resolved: opt-in via a parameter, default false.
+  - **Recordari**: default **on**, no flag needed. STORY-120 (lean format) hasn't shipped
+    there yet, so nothing currently depends on any particular shape for these four tools —
+    there is no "old behaviour" to protect. Recordari should implement lean-format and digest
+    mode together as the only behaviour for these tools, rather than mirroring memoryweb's
+    two-phase (lean format now, digest mode later, opt-in) rollout. The staged, cautious
+    sequencing memoryweb needed exists specifically *because* memoryweb has an installed base
+    on the current shape; Recordari doesn't, so the caution doesn't transfer.
+  - If memoryweb's digest mode proves useful in practice, flipping its default later is a
+    separate, deliberate decision — made with real usage data, documented as a breaking change
+    in release notes per the standing release-process rule, not bundled into the initial ship.
 
 ---
 
@@ -82,21 +103,38 @@ story covers:
 
 *(Defined at implementation time — these are current expectations)*
 
+### memoryweb
+
 - `TestSearch_DigestMode_SingleLinePerNode` (and equivalents for recent, significance,
   history, and orient's significant/recent sections).
-- Digest mode is opt-in: omitting the new parameter preserves the current JSON-array
-  response exactly (no regression to existing lean-format tests).
+- Digest mode is opt-in, default off: omitting the new parameter preserves the current
+  JSON-array response exactly (no regression to existing lean-format tests).
 - Each line includes `id` (so a caller can still follow up with `recall(id)`).
 - `go test ./...` green.
+
+### Recordari
+
+- Equivalent tests confirming digest-mode line output is the *only* response shape for
+  these four tools — no flag, no fallback JSON-array mode to maintain.
+- Lean-format field selection (STORY-120) and digest-mode line rendering ship together,
+  not as separate sequential stories.
 
 ---
 
 ## Files (expected)
 
+### memoryweb
+
 - `tools/tools.go` — digest-line rendering helper(s); new parameter handling for `search`,
   `recent`, `significance`, `history`, and orient's `significant`/`recent` sections; tool
   description updates documenting the new parameter.
 - `tools/tools_test.go` — new tests above.
+
+### Recordari
+
+- `internal/adapters/repository/supabase/search.go`, `timeline.go`, `significance.go` (and
+  whatever backs `recent`) — combined lean-entry mapping + digest-line rendering, no flag.
+- Equivalent tool description updates.
 
 ---
 

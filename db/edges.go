@@ -1,0 +1,139 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"time"
+)
+
+type Edge struct {
+	ID           string    `json:"id"`
+	FromNode     string    `json:"from_memory"`
+	ToNode       string    `json:"to_memory"`
+	Relationship string    `json:"relationship"`
+	Narrative    string    `json:"narrative"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// EdgeInput is the input type for AddEdgesBatch.
+type EdgeInput struct {
+	FromNode     string
+	ToNode       string
+	Relationship string
+	Narrative    string
+}
+
+func (s *Store) AddEdge(fromID, toID, relationship, narrative string) (*Edge, error) {
+	// Look up from node and get its domain.
+	var fromDomain string
+	if err := s.db.QueryRow(`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, fromID).Scan(&fromDomain); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("node not found: %s", fromID)
+		}
+		return nil, err
+	}
+	// Check to node exists.
+	var toCount int
+	s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NULL`, toID).Scan(&toCount)
+	if toCount == 0 {
+		return nil, fmt.Errorf("node not found: %q was not found (searched domain %q). If this node is in a different domain, cross-domain connections are not yet supported — search for it first to confirm its domain", toID, fromDomain)
+	}
+	id := "edge-" + shortID()
+	now := time.Now().UTC()
+	_, err := s.db.Exec(
+		`INSERT INTO edges (id, from_node, to_node, relationship, narrative, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		id, fromID, toID, relationship, narrative, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &Edge{id, fromID, toID, relationship, narrative, now}, nil
+}
+
+// AddEdgesBatch inserts all edges in a single transaction.
+// If any edge references a non-existent node the transaction is rolled back.
+func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	edges := make([]*Edge, 0, len(inputs))
+	for _, inp := range inputs {
+		for _, nodeID := range []string{inp.FromNode, inp.ToNode} {
+			var count int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ?`, nodeID).Scan(&count); err != nil {
+				tx.Rollback()
+				return nil, err
+			}
+			if count == 0 {
+				tx.Rollback()
+				return nil, fmt.Errorf("node not found: %s", nodeID)
+			}
+		}
+		id := "edge-" + shortID()
+		if _, err := tx.Exec(
+			`INSERT INTO edges (id, from_node, to_node, relationship, narrative, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			id, inp.FromNode, inp.ToNode, inp.Relationship, inp.Narrative, now,
+		); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		edges = append(edges, &Edge{
+			ID:           id,
+			FromNode:     inp.FromNode,
+			ToNode:       inp.ToNode,
+			Relationship: inp.Relationship,
+			Narrative:    inp.Narrative,
+			CreatedAt:    now,
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return edges, nil
+}
+
+// ── disconnect ────────────────────────────────────────────────────────────────
+
+// DeleteEdge hard-deletes an edge by ID. Returns an error if the edge does not exist.
+func (s *Store) DeleteEdge(id string) error {
+	res, err := s.db.Exec(`DELETE FROM edges WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("edge not found: %s", id)
+	}
+	return nil
+}
+
+// collectEdges returns edges whose both endpoints appear in nodes.
+func collectEdges(db *sql.DB, nodes []Node) []Edge {
+	if len(nodes) <= 1 {
+		return nil
+	}
+	nodeIDs := mapSlice(nodes, func(n Node) string { return n.ID })
+	ph, ids := inClause(nodeIDs)
+	edgeQ := "SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges WHERE from_node IN (" +
+		ph + ") AND to_node IN (" + ph + ")"
+	eRows, err := db.Query(edgeQ, append(ids, ids...)...)
+	if err != nil {
+		return nil
+	}
+	defer eRows.Close()
+	var edges []Edge
+	for eRows.Next() {
+		var e Edge
+		if err := eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+			log.Printf("[memoryweb] collectEdges scan: %v", err)
+			continue
+		}
+		edges = append(edges, e)
+	}
+	return edges
+}

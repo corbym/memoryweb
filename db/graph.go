@@ -1,0 +1,614 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+// PathResult holds the shortest path between two nodes and all edges
+// incident to any node on that path (spine edges + context branches).
+type PathResult struct {
+	Path  []Node `json:"path"`
+	Edges []Edge `json:"edges"`
+}
+
+// FindPath returns the shortest path between fromID and toID using a BFS
+// traversal of edges. Only live (non-archived) nodes are traversed; archived
+// nodes act as walls. maxDepth caps the search at that many hops (hard limit: 6).
+// Returns an empty PathResult (no error) when no path exists.
+func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error) {
+	if maxDepth <= 0 || maxDepth > 6 {
+		maxDepth = 6
+	}
+	if fromID == toID {
+		// Trivial: source == destination.
+		n, err := s.GetNode(fromID)
+		if err != nil {
+			return nil, err
+		}
+		return &PathResult{Path: []Node{n.Node}, Edges: nil}, nil
+	}
+
+	// BFS: each entry is a path (slice of node IDs) from fromID to the frontier.
+	type path struct {
+		nodes []string
+		edges []string // edge IDs in order
+	}
+	queue := []path{{nodes: []string{fromID}}}
+	visited := map[string]bool{fromID: true}
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		tail := cur.nodes[len(cur.nodes)-1]
+		if len(cur.nodes)-1 >= maxDepth {
+			continue // depth limit reached without finding target
+		}
+
+		// Fetch all edges from or to the current tail node (undirected traversal).
+		rows, err := s.db.Query(`
+			SELECT e.id, e.from_node, e.to_node, e.relationship, e.narrative, e.created_at
+			FROM edges e
+			JOIN nodes nf ON nf.id = e.from_node AND nf.archived_at IS NULL
+			JOIN nodes nt ON nt.id = e.to_node   AND nt.archived_at IS NULL
+			WHERE e.from_node = ? OR e.to_node = ?`, tail, tail)
+		if err != nil {
+			return nil, err
+		}
+		var neighbours []struct {
+			edge      Edge
+			neighbour string
+		}
+		for rows.Next() {
+			var e Edge
+			if err := rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			next := e.ToNode
+			if next == tail {
+				next = e.FromNode
+			}
+			neighbours = append(neighbours, struct {
+				edge      Edge
+				neighbour string
+			}{e, next})
+		}
+		rows.Close()
+
+		for _, nb := range neighbours {
+			if visited[nb.neighbour] {
+				continue
+			}
+			newPath := path{
+				nodes: append(append([]string{}, cur.nodes...), nb.neighbour),
+				edges: append(append([]string{}, cur.edges...), nb.edge.ID),
+			}
+			if nb.neighbour == toID {
+				// Found it — materialise the result.
+				return s.materialisePath(newPath.nodes, newPath.edges)
+			}
+			visited[nb.neighbour] = true
+			queue = append(queue, newPath)
+		}
+	}
+	return &PathResult{}, nil // no path found
+}
+
+// materialisePath fetches full Node structs for the path and all edges
+// incident to any node on the path (spine edges + context branches).
+func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) {
+	_ = edgeIDs // we now fetch all incident edges instead of just spine edges
+	nodes := make([]Node, 0, len(nodeIDs))
+	for _, id := range nodeIDs {
+		nwe, err := s.GetNode(id)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, nwe.Node)
+	}
+
+	// Build placeholder list for IN clause.
+	ph, phArgs := inClause(nodeIDs)
+	args := append(phArgs, phArgs...)
+
+	rows, err := s.db.Query(
+		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
+		 WHERE from_node IN (`+ph+`) OR to_node IN (`+ph+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var edges []Edge
+	for rows.Next() {
+		var e Edge
+		if err := rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		edges = append(edges, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &PathResult{Path: nodes, Edges: edges}, nil
+}
+
+type ConnectionResult struct {
+	From  *Node  `json:"from"`
+	To    *Node  `json:"to"`
+	Edges []Edge `json:"edges"`
+}
+
+// bestMatch returns the first node whose label or description best matches the term.
+func (s *Store) bestMatch(term, domain string) (*Node, error) {
+	domain = s.ResolveAlias(domain)
+	q := "%" + term + "%"
+	var row *sql.Row
+	if domain != "" {
+		row = s.db.QueryRow(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
+			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
+			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
+			domain, q, q, q, q, q,
+		)
+	} else {
+		row = s.db.QueryRow(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
+			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
+			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
+			q, q, q, q, q,
+		)
+	}
+	var n Node
+	var oa sql.NullTime
+	var aa sql.NullTime
+	err := row.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	n.OccurredAt = nullTimeToPtr(oa)
+	n.ArchivedAt = nullTimeToPtr(aa)
+	return &n, nil
+}
+
+func (s *Store) FindConnections(fromTerm, toTerm, domain string) (*ConnectionResult, error) {
+	from, err := s.bestMatch(fromTerm, domain)
+	if err != nil {
+		return nil, err
+	}
+	to, err := s.bestMatch(toTerm, domain)
+	if err != nil {
+		return nil, err
+	}
+	if from == nil || to == nil {
+		return &ConnectionResult{From: from, To: to, Edges: nil}, nil
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
+		 WHERE (from_node = ? AND to_node = ?) OR (from_node = ? AND to_node = ?)`,
+		from.ID, to.ID, to.ID, from.ID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var edges []Edge
+	for rows.Next() {
+		var e Edge
+		rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
+		edges = append(edges, e)
+	}
+	return &ConnectionResult{From: from, To: to, Edges: edges}, nil
+}
+
+// GetDomainGraph returns the live nodes and the edges between them for a domain.
+// Nodes are sorted by edge count descending so the most-connected appear first;
+// the result is capped at limit (default 40, max 100). truncated is true when
+// the full node set was larger than limit. nodesTotal is the full domain node
+// count before any truncation; edgesTotal is the count of intra-domain edges
+// across all nodes (not just the shown subset).
+func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []Edge, truncated bool, nodesTotal int, edgesTotal int, err error) {
+	domain = s.ResolveAlias(domain)
+	if limit <= 0 {
+		limit = 40
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Step 1: all live nodes in the domain.
+	rows, err := s.db.Query(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
+		 FROM nodes WHERE archived_at IS NULL AND domain = ?`, domain)
+	if err != nil {
+		return
+	}
+	var allNodes []Node
+	allNodes, err = scanNodeRows(rows)
+	rows.Close()
+	if err != nil {
+		return
+	}
+	if len(allNodes) == 0 {
+		return
+	}
+
+	// Step 2: count edges (from + to) per node to rank by connectivity.
+	ids := mapSlice(allNodes, func(n Node) string { return n.ID })
+	ph, phArgs := inClause(ids)
+	rankArgs := append(phArgs, phArgs...)
+	ecRows, ecErr := s.db.Query(
+		`SELECT id_val, COUNT(*) FROM (`+
+			`SELECT from_node AS id_val FROM edges WHERE from_node IN (`+ph+`) `+
+			`UNION ALL `+
+			`SELECT to_node AS id_val FROM edges WHERE to_node IN (`+ph+`)`+
+			`) GROUP BY id_val`,
+		rankArgs...,
+	)
+	counts := make(map[string]int)
+	if ecErr == nil {
+		for ecRows.Next() {
+			var id string
+			var cnt int
+			if ecRows.Scan(&id, &cnt) == nil {
+				counts[id] = cnt
+			}
+		}
+		ecRows.Close()
+	}
+
+	// Step 3: record totals before any truncation, then sort and truncate.
+	nodesTotal = len(allNodes)
+	// Count intra-domain edges (both endpoints in domain) across the full node set.
+	if nodesTotal > 0 {
+		_ = s.db.QueryRow(
+			`SELECT COUNT(*) FROM edges WHERE from_node IN (`+ph+`) AND to_node IN (`+ph+`)`,
+			rankArgs...,
+		).Scan(&edgesTotal)
+	}
+
+	sort.Slice(allNodes, func(i, j int) bool {
+		return counts[allNodes[i].ID] > counts[allNodes[j].ID]
+	})
+	if len(allNodes) > limit {
+		allNodes = allNodes[:limit]
+		truncated = true
+	}
+	nodes = allNodes
+
+	// Step 4: fetch edges whose both endpoints are in the result set.
+	ph2, nodePhArgs := inClause(mapSlice(nodes, func(n Node) string { return n.ID }))
+	edgeArgs := append(nodePhArgs, nodePhArgs...)
+	eRows, eErr := s.db.Query(
+		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges `+
+			`WHERE from_node IN (`+ph2+`) AND to_node IN (`+ph2+`)`,
+		edgeArgs...,
+	)
+	if eErr != nil {
+		err = eErr
+		return
+	}
+	for eRows.Next() {
+		var e Edge
+		if eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt) == nil {
+			edges = append(edges, e)
+		}
+	}
+	eRows.Close()
+	err = eRows.Err()
+	return
+}
+
+// ── edge suggestions ──────────────────────────────────────────────────────────
+
+// EdgeSuggestion is a candidate connection returned by SuggestEdges.
+type EdgeSuggestion struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Reason string `json:"reason"`
+	Domain string `json:"domain"`
+}
+
+// SuggestEdges returns up to limit candidate connections for the given node:
+// live nodes in the same domain that share tags or significant label words.
+// It never creates edges — the caller must use AddEdge to act on suggestions.
+func (s *Store) SuggestEdges(id string, limit int) ([]EdgeSuggestion, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+
+	// Fetch the target node.
+	var targetLabel, targetDomain, targetTags string
+	if err := s.db.QueryRow(
+		`SELECT label, domain, tags FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
+	).Scan(&targetLabel, &targetDomain, &targetTags); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("node not found: %s", id)
+		}
+		return nil, err
+	}
+
+	// Extract meaningful keywords from label + tags (lowercased, deduplicated,
+	// stop-words and very short words removed).
+	keywords := suggestKeywords(targetLabel, targetTags)
+	if len(keywords) == 0 {
+		return []EdgeSuggestion{}, nil
+	}
+
+	// Fetch all other live nodes in the same domain (cap at 200 to bound work).
+	rows, err := s.db.Query(
+		`SELECT id, label, tags FROM nodes
+		 WHERE id != ? AND domain = ? AND archived_at IS NULL
+		 ORDER BY updated_at DESC LIMIT 200`,
+		id, targetDomain,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type scored struct {
+		id     string
+		label  string
+		score  int
+		reason string
+	}
+
+	var candidates []scored
+	for rows.Next() {
+		var cid, clabel, ctags string
+		rows.Scan(&cid, &clabel, &ctags)
+
+		cLabelLower := strings.ToLower(clabel)
+		cTagsLower := strings.ToLower(ctags)
+
+		var matchedTags, matchedLabels []string
+		seen := map[string]bool{}
+		for _, kw := range keywords {
+			if seen[kw] {
+				continue
+			}
+			if strings.Contains(cTagsLower, kw) {
+				matchedTags = append(matchedTags, kw)
+				seen[kw] = true
+			} else if strings.Contains(cLabelLower, kw) {
+				matchedLabels = append(matchedLabels, kw)
+				seen[kw] = true
+			}
+		}
+
+		score := len(matchedTags)*2 + len(matchedLabels)
+		if score == 0 {
+			continue
+		}
+
+		var reasons []string
+		if len(matchedTags) > 0 {
+			reasons = append(reasons, "shares tags: "+strings.Join(matchedTags, " "))
+		}
+		if len(matchedLabels) > 0 {
+			reasons = append(reasons, "similar label words: "+strings.Join(matchedLabels, " "))
+		}
+		candidates = append(candidates, scored{
+			id:     cid,
+			label:  clabel,
+			score:  score,
+			reason: strings.Join(reasons, "; "),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Sort by score descending.
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+
+	result := make([]EdgeSuggestion, len(candidates))
+	for i, c := range candidates {
+		result[i] = EdgeSuggestion{ID: c.id, Label: c.label, Reason: c.reason, Domain: targetDomain}
+	}
+	return result, nil
+}
+
+// suggestKeywords extracts lowercase, deduplicated, meaningful words from label
+// and tags, skipping common stop words and words shorter than 3 characters.
+func suggestKeywords(label, tags string) []string {
+	stopWords := map[string]bool{
+		"a": true, "an": true, "the": true, "and": true, "or": true,
+		"of": true, "in": true, "to": true, "is": true, "it": true,
+		"be": true, "for": true, "on": true, "at": true, "by": true,
+		"we": true, "as": true, "so": true, "do": true, "not": true,
+		"are": true, "was": true, "has": true, "had": true, "its": true,
+	}
+	seen := map[string]bool{}
+	var keywords []string
+	addWords := func(text string) {
+		for _, w := range strings.Fields(strings.ToLower(text)) {
+			// Strip any leading/trailing punctuation or symbol, not just the
+			// ASCII set — em-dash, en-dash, curly quotes, ellipsis, etc. would
+			// otherwise survive as a standalone "word" of 3+ UTF-8 bytes.
+			w = strings.TrimFunc(w, func(r rune) bool {
+				return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+			})
+			if utf8.RuneCountInString(w) < 3 || stopWords[w] || seen[w] {
+				continue
+			}
+			seen[w] = true
+			keywords = append(keywords, w)
+		}
+	}
+	addWords(tags) // tags first — higher signal
+	addWords(label)
+	return keywords
+}
+
+// GetNodeNeighbourhood returns the target node, all live nodes directly
+// connected to it (depth 1), and all edges between those nodes.
+// Returns an error if the node does not exist or is archived.
+func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge, err error) {
+	var target Node
+	var oa, aa sql.NullTime
+	err = s.db.QueryRow(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
+		 FROM nodes WHERE id = ? AND archived_at IS NULL`, nodeID,
+	).Scan(&target.ID, &target.Label, &target.Description, &target.WhyMatters, &target.Domain,
+		&target.CreatedAt, &target.UpdatedAt, &oa, &aa, &target.Tags, &target.NodeKind)
+	if err == sql.ErrNoRows {
+		return nil, nil, fmt.Errorf("node not found: %s", nodeID)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	target.OccurredAt = nullTimeToPtr(oa)
+	target.ArchivedAt = nullTimeToPtr(aa)
+
+	// Collect IDs of all direct neighbours via edges.
+	eRows, err := s.db.Query(
+		`SELECT CASE WHEN from_node = ? THEN to_node ELSE from_node END AS neighbour_id
+		 FROM edges WHERE from_node = ? OR to_node = ?`, nodeID, nodeID, nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	neighbourIDs := map[string]bool{}
+	for eRows.Next() {
+		var id string
+		if scanErr := eRows.Scan(&id); scanErr != nil {
+			eRows.Close()
+			return nil, nil, scanErr
+		}
+		neighbourIDs[id] = true
+	}
+	eRows.Close()
+	if err = eRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// Build the full neighbourhood ID list (target + neighbours).
+	allIDs := make([]string, 0, len(neighbourIDs)+1)
+	allIDs = append(allIDs, nodeID)
+	for id := range neighbourIDs {
+		allIDs = append(allIDs, id)
+	}
+
+	// Fetch all live nodes in the neighbourhood.
+	ph, nArgs := inClause(allIDs)
+	nRows, err := s.db.Query(
+		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
+		 FROM nodes WHERE archived_at IS NULL AND id IN (`+ph+`)`, nArgs...)
+	if err != nil {
+		return nil, nil, err
+	}
+	var neighbourhood []Node
+	neighbourhood, err = scanNodeRows(nRows)
+	nRows.Close()
+	if err != nil {
+		return nil, nil, err
+	}
+	nodes = append(nodes, neighbourhood...)
+
+	// Fetch all edges where both endpoints are in the live neighbourhood set.
+	eArgs := append(nArgs, nArgs...)
+	edgeRows, err := s.db.Query(
+		`SELECT id, from_node, to_node, relationship, narrative, created_at
+		 FROM edges WHERE from_node IN (`+ph+`) AND to_node IN (`+ph+`)`, eArgs...)
+	if err != nil {
+		return nil, nil, err
+	}
+	for edgeRows.Next() {
+		var e Edge
+		if scanErr := edgeRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); scanErr != nil {
+			edgeRows.Close()
+			return nil, nil, scanErr
+		}
+		edges = append(edges, e)
+	}
+	edgeRows.Close()
+	err = edgeRows.Err()
+	return
+}
+
+// neighbourhoodIDs performs a BFS from nodeID for depth hops, clipping at the
+// anchor node's domain boundary (cross-domain edges are not followed). Returns
+// all visited IDs (including the anchor) and the anchor's domain.
+func (s *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, error) {
+	var anchorDomain string
+	err := s.db.QueryRow(
+		`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, nodeID,
+	).Scan(&anchorDomain)
+	if err == sql.ErrNoRows {
+		return nil, "", fmt.Errorf("memory not found: %s", nodeID)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+
+	visited := map[string]bool{nodeID: true}
+	frontier := []string{nodeID}
+
+	for d := 0; d < depth && len(frontier) > 0; d++ {
+		ph := strings.Repeat("?,", len(frontier))
+		ph = ph[:len(ph)-1]
+		// args: frontier IDs (for from_node IN), frontier IDs again (for to_node IN), domain
+		args := make([]interface{}, len(frontier)*2+1)
+		for i, id := range frontier {
+			args[i] = id
+			args[len(frontier)+i] = id
+		}
+		args[len(frontier)*2] = anchorDomain
+
+		rows, err := s.db.Query(
+			`SELECT DISTINCT n.id
+			 FROM edges e
+			 JOIN nodes n ON (
+			     (e.from_node IN (`+ph+`) AND n.id = e.to_node)
+			     OR
+			     (e.to_node IN (`+ph+`) AND n.id = e.from_node)
+			 )
+			 WHERE n.domain = ?
+			   AND n.archived_at IS NULL`, args...)
+		if err != nil {
+			return nil, "", err
+		}
+		var next []string
+		for rows.Next() {
+			var id string
+			if scanErr := rows.Scan(&id); scanErr != nil {
+				rows.Close()
+				return nil, "", scanErr
+			}
+			if !visited[id] {
+				visited[id] = true
+				next = append(next, id)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, "", err
+		}
+		frontier = next
+	}
+
+	ids := make([]string, 0, len(visited))
+	for id := range visited {
+		ids = append(ids, id)
+	}
+	return ids, anchorDomain, nil
+}
