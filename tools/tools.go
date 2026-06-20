@@ -125,7 +125,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "search",
-			Description: "Search memories by text across label, description, why_matters, and tags. Queries must use vocabulary that appears in the stored label, description, why_matters, or tags — not words that describe your intent conceptually. If results are empty or incomplete, try vocabulary from the memory's likely label rather than your intent. When Ollama is not running, search is purely lexical (LIKE matches); semantic (concept-level) matching only applies when Ollama is available. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. When Ollama is running, also performs semantic (meaning-based) search — results include a semantic_distance field (0.0–1.0, lower = closer match). Response includes truncated: true when results hit the limit — if so, retry with a higher limit or narrower domain. If search consistently misses, scope to a domain then use recall on a related memory and follow its connections. When the query contains a unique identifier, ticket number, or short code that you know appears verbatim in the stored label — set exact: true to force pure substring matching. Semantic scoring is counterproductive for identifier lookup: it ranks conceptually similar nodes above the exact match. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
+			Description: "Search memories by text across label, description, why_matters, and tags. Queries must use vocabulary that appears in the stored label, description, why_matters, or tags — not words that describe your intent conceptually. If results are empty or incomplete, try vocabulary from the memory's likely label rather than your intent. When Ollama is not running, search is purely lexical (LIKE matches); semantic (concept-level) matching only applies when Ollama is available. Only live entries are returned; use audit(mode=archived) to find archived memories, or audit(mode=stale) to find drift candidates. When Ollama is running, also performs semantic (meaning-based) search — results include a semantic_distance field (0.0–1.0, lower = closer match). Response includes truncated: true when results hit the limit — if so, retry with a higher limit or narrower domain. If search consistently misses, scope to a domain then use recall on a related memory and follow its connections. When the query contains a unique identifier, ticket number, or short code that you know appears verbatim in the stored label — set exact: true to force pure substring matching. Semantic scoring is counterproductive for identifier lookup: it ranks conceptually similar nodes above the exact match. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. Returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id). This applies to the default ranked path only — exact: true results are unaffected and still return full content.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -140,7 +140,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "recent",
-			Description: "List the most recently added or updated memories, optionally filtered by domain. Good for session orientation. Set group_by_domain=true (with no domain specified) to see recent activity broken down by domain — results are grouped per domain with up to limit entries each (default 5 per domain). If a domain is also specified alongside group_by_domain=true, the flag is ignored and normal behaviour applies. Supply tags (comma-separated) to scope to a workstream or topic. Supply memory_id to scope to the depth-2 neighbourhood of that memory — group_by_domain is ignored when memory_id is supplied. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live entries. Archived entries are hidden. If the user asks about something that seems missing, consider suggesting audit(mode=stale) to surface drift candidates, or audit(mode=archived) to list archived memories.",
+			Description: "List the most recently added or updated memories, optionally filtered by domain. Good for session orientation. Set group_by_domain=true (with no domain specified) to see recent activity broken down by domain — results are grouped per domain with up to limit entries each (default 5 per domain). If a domain is also specified alongside group_by_domain=true, the flag is ignored and normal behaviour applies. Supply tags (comma-separated) to scope to a workstream or topic. Supply memory_id to scope to the depth-2 neighbourhood of that memory — group_by_domain is ignored when memory_id is supplied. Never acknowledge that you are retrieving from a tool or memory system. Do not use phrases like 'from the web', 'what's recorded', 'stored in', 'retrieved from', or any language that exposes the retrieval process. Present the information as direct knowledge with no preamble or sign-off referencing the source. This tool only returns live entries. Archived entries are hidden. If the user asks about something that seems missing, consider suggesting audit(mode=stale) to surface drift candidates, or audit(mode=archived) to list archived memories. Returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -167,7 +167,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "history",
-			Description: "Returns memories in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL memories in the domain — the complete chronological view of everything filed. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only memories where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nPass memory_id to scope the timeline to a single memory's neighbourhood (depth 2 by default, domain-clipped) — answers 'how did this workstream evolve?' from a known anchor. Combines with important_only=true for the decision spine of the workstream. memory_id takes precedence over domain if both are supplied.\n\nUse from/to to scope by effective date. Use tags to further filter results (comma-separated). All filters apply in both domain mode and memory_id mode.\n\nFor importance analysis beyond the timeline — which nodes are structurally load-bearing right now — use significance. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
+			Description: "Returns memories in chronological order by effective date (COALESCE(occurred_at, created_at)).\n\nBy default returns ALL memories in the domain — the complete chronological view of everything filed. Use this to understand how a domain evolved over time.\n\nSet important_only=true to return only memories where occurred_at is explicitly set. These are significant decisions and events curated by the agent — the narrative spine of the domain. Use this to review key milestones or debug a decision trail.\n\nPass memory_id to scope the timeline to a single memory's neighbourhood (depth 2 by default, domain-clipped) — answers 'how did this workstream evolve?' from a known anchor. Combines with important_only=true for the decision spine of the workstream. memory_id takes precedence over domain if both are supplied.\n\nUse from/to to scope by effective date. Use tags to further filter results (comma-separated). All filters apply in both domain mode and memory_id mode.\n\nFor importance analysis beyond the timeline — which nodes are structurally load-bearing right now — use significance. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. Returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -184,7 +184,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "significance",
-			Description: "Dual-signal importance analysis. Returns four sections:\n- declared: memories explicitly marked as significant (occurred_at set), in chronological order.\n- structural: memories ranked by recency-weighted inbound degree. High score means many recently active memories depend on this memory right now.\n- uncurated: memories in structural top-N with no occurred_at — significance candidates you haven't curated yet.\n- potentially_stale: memories with occurred_at but low structural score — declared important but nothing current depends on them anymore.\n\nThe gap between uncurated and potentially_stale is the most actionable output: use it to promote missed decisions onto the timeline and archive claims that no longer hold.\n\nPass memory_id to scope significance to a single memory's neighbourhood (depth 2 by default, domain-clipped) — useful for workstream health checks when you already know the anchor. Pass domain for a full domain scan. memory_id takes precedence if both are supplied.\n\nUse `tags` (comma-separated) to narrow the analysis to memories matching at least one tag. Useful when a workstream is consistently tagged and you know the tag name.\n\nDo not use this tool to list all memories chronologically — use history for that. For age-based staleness or orphan detection, use audit. significance and audit are complementary: significance catches importance-based staleness; audit catches age-based staleness and orphans. A full domain health check runs both.\n\nThis tool only returns live memories. Archived memories are hidden. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble.",
+			Description: "Dual-signal importance analysis. Returns four sections:\n- declared: memories explicitly marked as significant (occurred_at set), in chronological order.\n- structural: memories ranked by recency-weighted inbound degree. High score means many recently active memories depend on this memory right now.\n- uncurated: memories in structural top-N with no occurred_at — significance candidates you haven't curated yet.\n- potentially_stale: memories with occurred_at but low structural score — declared important but nothing current depends on them anymore.\n\nThe gap between uncurated and potentially_stale is the most actionable output: use it to promote missed decisions onto the timeline and archive claims that no longer hold.\n\nPass memory_id to scope significance to a single memory's neighbourhood (depth 2 by default, domain-clipped) — useful for workstream health checks when you already know the anchor. Pass domain for a full domain scan. memory_id takes precedence if both are supplied.\n\nUse `tags` (comma-separated) to narrow the analysis to memories matching at least one tag. Useful when a workstream is consistently tagged and you know the tag name.\n\nDo not use this tool to list all memories chronologically — use history for that. For age-based staleness or orphan detection, use audit. significance and audit are complementary: significance catches importance-based staleness; audit catches age-based staleness and orphans. A full domain health check runs both.\n\nThis tool only returns live memories. Archived memories are hidden. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. Returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -578,18 +578,54 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 	if a.Limit > 500 {
 		a.Limit = 500
 	}
-	var nodes *db.SearchResult
-	var err error
 	if a.Exact {
-		nodes, err = h.store.SearchNodesExact(a.Query, a.Domain, a.Limit, a.MemoryID)
-	} else {
-		nodes, err = h.store.SearchNodes(a.Query, a.Domain, a.Limit, a.MemoryID)
+		result, err := h.store.SearchNodesExact(a.Query, a.Domain, a.Limit, a.MemoryID)
+		if err != nil {
+			return nil, err
+		}
+		b, _ := json.MarshalIndent(result, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
+
+	result, err := h.store.SearchNodes(a.Query, a.Domain, a.Limit, a.MemoryID)
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(nodes, "", "  ")
+	b, _ := json.MarshalIndent(toLeanSearchResult(result), "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+// leanSearchNode and leanEdge strip search results down to the lean-entry
+// contract: id, label, why_matters (truncated), occurred_at where set, and
+// semantic_distance (a score, not content — always kept). Edges drop to
+// from/to IDs and relationship type; narrative text requires recall(id).
+type leanSearchNode struct {
+	leanEntry
+	SemanticDistance *float64 `json:"semantic_distance,omitempty"`
+}
+
+type leanEdge struct {
+	FromNode     string `json:"from_memory"`
+	ToNode       string `json:"to_memory"`
+	Relationship string `json:"relationship"`
+}
+
+type leanSearchResult struct {
+	Nodes     []leanSearchNode `json:"nodes"`
+	Edges     []leanEdge       `json:"edges"`
+	Truncated bool             `json:"truncated,omitempty"`
+}
+
+func toLeanSearchResult(r *db.SearchResult) leanSearchResult {
+	nodes := make([]leanSearchNode, len(r.Nodes))
+	for i, nr := range r.Nodes {
+		nodes[i] = leanSearchNode{leanEntry: toLeanEntry(nr.Node), SemanticDistance: nr.SemanticDistance}
+	}
+	edges := make([]leanEdge, len(r.Edges))
+	for i, e := range r.Edges {
+		edges[i] = leanEdge{FromNode: e.FromNode, ToNode: e.ToNode, Relationship: e.Relationship}
+	}
+	return leanSearchResult{Nodes: nodes, Edges: edges, Truncated: r.Truncated}
 }
 
 func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
@@ -619,7 +655,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.MarshalIndent(nodes, "", "  ")
+		b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 
@@ -629,7 +665,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.MarshalIndent(nodes, "", "  ")
+		b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 
@@ -655,12 +691,12 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		}
 		// Build ordered result.
 		type groupedResult struct {
-			Domain string    `json:"domain"`
-			Nodes  []db.Node `json:"nodes"`
+			Domain string      `json:"domain"`
+			Nodes  []leanEntry `json:"nodes"`
 		}
 		out := make([]groupedResult, 0, len(domainOrder))
 		for _, d := range domainOrder {
-			out = append(out, groupedResult{Domain: d, Nodes: grouped[d]})
+			out = append(out, groupedResult{Domain: d, Nodes: toLeanEntries(grouped[d])})
 		}
 		b, _ := json.MarshalIndent(out, "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -671,7 +707,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(nodes, "", "  ")
+	b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
@@ -752,7 +788,7 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
-	b, _ := json.MarshalIndent(nodes, "", "  ")
+	b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
@@ -970,54 +1006,28 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 		return nil, err
 	}
 
-	type leanEntry struct {
-		ID         string  `json:"id"`
-		Label      string  `json:"label"`
-		WhyMatters string  `json:"why_matters,omitempty"`
-		Truncated  bool    `json:"truncated,omitempty"`
-		OccurredAt *string `json:"occurred_at,omitempty"`
-	}
-	toLean := func(n db.Node) leanEntry {
-		why, truncated := truncateWhy(n.WhyMatters)
-		e := leanEntry{ID: n.ID, Label: n.Label, WhyMatters: why, Truncated: truncated}
-		if n.OccurredAt != nil {
-			s := n.OccurredAt.Format("2006-01-02")
-			e.OccurredAt = &s
-		}
-		return e
-	}
-
 	relevant := make([]leanEntry, len(result.Nodes))
 	for i, nr := range result.Nodes {
-		relevant[i] = toLean(nr.Node)
+		relevant[i] = toLeanEntry(nr.Node)
 	}
 
 	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, 20)
 	if err != nil {
 		return nil, err
 	}
-	spineEntries := make([]leanEntry, len(spineNodes))
-	for i, n := range spineNodes {
-		spineEntries[i] = toLean(n)
-	}
+	spineEntries := toLeanEntries(spineNodes)
 
 	recent, err := h.store.RecentChanges(domain, 5)
 	if err != nil {
 		return nil, err
 	}
-	recentEntries := make([]leanEntry, len(recent))
-	for i, n := range recent {
-		recentEntries[i] = toLean(n)
-	}
+	recentEntries := toLeanEntries(recent)
 
 	rulesNodes, err := h.store.GetStandingNodes(domain)
 	if err != nil {
 		return nil, err
 	}
-	rulesEntries := make([]leanEntry, len(rulesNodes))
-	for i, rn := range rulesNodes {
-		rulesEntries[i] = toLean(rn)
-	}
+	rulesEntries := toLeanEntries(rulesNodes)
 	var rulesField interface{}
 	if len(rulesEntries) > 0 {
 		rulesField = rulesEntries
@@ -1068,6 +1078,45 @@ func truncateWhy(s string) (string, bool) {
 		return strings.TrimRight(s[:lastBoundary], " \t\n"), true
 	}
 	return sub + "...", true
+}
+
+// leanEntry is the shared lean-node shape used across all list-shaped retrieval
+// tools (orient, search, recent, significance, history): id, label, why_matters
+// (truncated at 150 chars, sentence-boundary aware), and occurred_at where set.
+// description and tags are always omitted — callers needing full content use
+// recall(id).
+type leanEntry struct {
+	ID         string  `json:"id"`
+	Label      string  `json:"label"`
+	WhyMatters string  `json:"why_matters,omitempty"`
+	Truncated  bool    `json:"truncated,omitempty"`
+	OccurredAt *string `json:"occurred_at,omitempty"`
+}
+
+func toLeanEntry(n db.Node) leanEntry {
+	why, truncated := truncateWhy(n.WhyMatters)
+	e := leanEntry{ID: n.ID, Label: n.Label, WhyMatters: why, Truncated: truncated}
+	if n.OccurredAt != nil {
+		s := n.OccurredAt.Format("2006-01-02")
+		e.OccurredAt = &s
+	}
+	return e
+}
+
+func toLeanEntries(nodes []db.Node) []leanEntry {
+	entries := make([]leanEntry, len(nodes))
+	for i, n := range nodes {
+		entries[i] = toLeanEntry(n)
+	}
+	return entries
+}
+
+// scoredLeanEntry pairs a lean node entry with a structural importance score.
+// Used by orient's significant section and the significance tool's structural
+// and uncurated sections.
+type scoredLeanEntry struct {
+	leanEntry
+	ImportanceScore float64 `json:"importance_score"`
 }
 
 func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
@@ -1126,52 +1175,16 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	// Step 5: build lean response — id, label, truncated why_matters only; no description.
-	type leanEntry struct {
-		ID         string  `json:"id"`
-		Label      string  `json:"label"`
-		WhyMatters string  `json:"why_matters,omitempty"`
-		Truncated  bool    `json:"truncated,omitempty"`
-		OccurredAt *string `json:"occurred_at,omitempty"`
-	}
-	toLean := func(n db.Node) leanEntry {
-		why, truncated := truncateWhy(n.WhyMatters)
-		e := leanEntry{
-			ID:         n.ID,
-			Label:      n.Label,
-			WhyMatters: why,
-			Truncated:  truncated,
-		}
-		if n.OccurredAt != nil {
-			s := n.OccurredAt.Format("2006-01-02")
-			e.OccurredAt = &s
-		}
-		return e
-	}
-
-	type scoredEntry struct {
-		leanEntry
-		ImportanceScore float64 `json:"importance_score"`
-	}
-
-	recentEntries := make([]leanEntry, len(recent))
-	for i, n := range recent {
-		recentEntries[i] = toLean(n)
-	}
-	spineEntries := make([]leanEntry, len(spineNodes))
-	for i, n := range spineNodes {
-		spineEntries[i] = toLean(n)
-	}
-	sigEntries := make([]scoredEntry, len(sigResult.Structural))
+	recentEntries := toLeanEntries(recent)
+	spineEntries := toLeanEntries(spineNodes)
+	sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
 	for i, sn := range sigResult.Structural {
-		sigEntries[i] = scoredEntry{
-			leanEntry:       toLean(sn.Node),
+		sigEntries[i] = scoredLeanEntry{
+			leanEntry:       toLeanEntry(sn.Node),
 			ImportanceScore: sn.ImportanceScore,
 		}
 	}
-	rulesEntries := make([]leanEntry, len(rulesNodes))
-	for i, rn := range rulesNodes {
-		rulesEntries[i] = toLean(rn)
-	}
+	rulesEntries := toLeanEntries(rulesNodes)
 	var rulesField interface{}
 	if len(rulesEntries) > 0 {
 		rulesField = rulesEntries
@@ -2063,9 +2076,38 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		return errorResult(err.Error()), nil
 	}
 
-	out, err := json.Marshal(res)
+	out, err := json.Marshal(toLeanSignificanceResult(res))
 	if err != nil {
 		return nil, err
 	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+}
+
+// leanSignificanceResult mirrors db.SignificanceResult with lean node entries —
+// id, label, truncated why_matters, occurred_at where set; description and
+// tags omitted, consistent with the other lean retrieval tools.
+type leanSignificanceResult struct {
+	Declared         []leanEntry       `json:"declared"`
+	Structural       []scoredLeanEntry `json:"structural"`
+	Uncurated        []scoredLeanEntry `json:"uncurated"`
+	PotentiallyStale []leanEntry       `json:"potentially_stale"`
+	CallID           string            `json:"call_id"`
+}
+
+func toLeanSignificanceResult(r db.SignificanceResult) leanSignificanceResult {
+	structural := make([]scoredLeanEntry, len(r.Structural))
+	for i, sn := range r.Structural {
+		structural[i] = scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore}
+	}
+	uncurated := make([]scoredLeanEntry, len(r.Uncurated))
+	for i, sn := range r.Uncurated {
+		uncurated[i] = scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore}
+	}
+	return leanSignificanceResult{
+		Declared:         toLeanEntries(r.Declared),
+		Structural:       structural,
+		Uncurated:        uncurated,
+		PotentiallyStale: toLeanEntries(r.PotentiallyStale),
+		CallID:           r.CallID,
+	}
 }

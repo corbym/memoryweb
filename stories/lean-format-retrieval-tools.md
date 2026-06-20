@@ -1,6 +1,6 @@
 # Extend orient's lean-format payload to search, recent, significance, history
 
-**Status:** OPEN
+**Status:** COMPLETE (memoryweb)
 
 **Shared-surface story node:** `story-extend-orient-s-lean-forma-30f10ae9`
 **Caused by:** `token-reduction-gap-search-recen-6a034752` (memoryweb-meta finding)
