@@ -1,6 +1,6 @@
 # Computed Trust — epistemic weight derived from node_kind topology
 
-**Status:** OPEN — unblocked; `stories/node-kind.md` shipped in v1.30.0
+**Status:** COMPLETE — implemented 2026-06-20 as `significance(mode=trust)`
 
 **Shared-surface node:** `trust-as-computed-property-deriv-76098ec7`
 
@@ -71,19 +71,15 @@ Normalise to [0, 1] within a result set before returning.
 
 ## Proposed tool
 
-Add a `trust` tool (or extend `significance` with a `mode=trust` parameter — decide
-at implementation time which is less noisy in the tool list).
+Extend `significance` with a `mode` parameter: `mode=significance` (default, unchanged
+— the existing four-section dual-signal output) or `mode=trust` (the new ranked-list
+output below). No new tool, no change to default behaviour.
 
-Parameters mirror `significance`:
+All of `significance`'s existing parameters carry over unchanged for `mode=trust`:
+`domain`, `memory_id`, `limit`, `tags`, `recency_window` (the trust formula is
+explicitly recency-discounted by the same window as significance).
 
-| Parameter | Description |
-|-----------|-------------|
-| `domain` | Scope to a domain |
-| `memory_id` | Scope to a memory's neighbourhood |
-| `limit` | Top-N (default 10) |
-| `tags` | Tag filter (OR semantics) |
-
-Response per node:
+Response per node (replaces the four-section shape only when `mode=trust`):
 
 ```json
 {
@@ -101,20 +97,44 @@ this is the audit trail that makes the signal interpretable rather than opaque.
 
 ---
 
-## Open questions (resolve at implementation)
+## Resolved design questions
 
-1. **Separate tool vs `significance` mode?** A separate `trust` tool is cleaner for
-   description clarity; a mode parameter keeps the tool count down. Check tool count
-   before deciding — if at or near 21, use mode.
-2. **`reference` node handling:** `reference` nodes have no intrinsic epistemic
-   weight. Exclude them from scoring? Or score as N/A and omit from ranked output?
-3. **`contradicts` edge weight:** Should be negative. Quantify: −1× the intrinsic
-   weight of the contradicting node? Or a fixed penalty?
-4. **Cross-domain edges:** Trust topology can span domains. Clip to domain or follow
-   edges? Recommendation: clip by default (same as significance), allow opt-out via
-   a `cross_domain` flag.
-5. **DB layer vs tools layer:** Significance computation is in `db/db.go`. Trust
-   should follow the same pattern.
+1. **Separate tool vs `significance` mode?** Resolved: `mode=trust` on `significance`,
+   not a new tool. The live tool count is exactly 21 right now — at the threshold this
+   question itself set for preferring a mode parameter. This also matches `audit`'s
+   existing precedent: one tool, a `mode` enum, and each mode already returns a
+   genuinely different response shape (`stale` → drift candidates, `orphans` → plain
+   node list, `archived` → archived node list). `mode=trust` returning the ranked
+   trust list instead of the four-section breakdown is the same pattern, not a new one.
+2. **`reference` (and `transient`) node handling:** Resolved, and already implied by
+   the acceptance criteria below: excluded from the ranked *output* (no `trust_score`
+   row of their own — they're not epistemic claims, there's nothing to rank), but
+   still counted as a *neighbour* when computing another node's `trust_basis` (their
+   intrinsic weight there is simply 0, since N/A contributes nothing to the sum either
+   way). This mirrors `audit(mode=orphans)`'s existing exclusion of `reference` nodes
+   from orphan detection — the same "not a claim" reasoning already governs that case.
+3. **`contradicts` edge weight:** Resolved: `−1 × intrinsic_weight(neighbour.node_kind)`,
+   not a fixed penalty. Keeps the formula symmetric (a supporting neighbour contributes
+   `+1 × intrinsic_weight(neighbour)`; a contradicting one contributes the same
+   magnitude, negated) and keeps every number in the formula derived from `node_kind`
+   rather than introducing a standalone magic constant. Concretely: being contradicted
+   by a `finding` (high intrinsic weight) costs more trust than being contradicted by
+   an `assumption` (low intrinsic weight) — which is the epistemically correct
+   direction. `is_example_of` and `governed_by` use the same default `+1` as any other
+   supporting relationship; nothing in this story requires them to be weighted higher
+   than a generic connection, so they aren't, unless real usage later shows otherwise.
+4. **Cross-domain edges:** Resolved: clip to domain by default, **no** `cross_domain`
+   opt-out flag. `significance`'s own `memory_id` mode is already domain-clipped with
+   no escape hatch today, so adding one for `trust` alone would be new, unrequested
+   flexibility inconsistent with its closest sibling.
+5. **DB layer vs tools layer:** Resolved, and superseded by the file-split refactor
+   (`db/db.go` no longer exists): trust computation goes in a new `db/trust.go` —
+   parallel to `db/significance.go` but a distinct file, since it's a genuinely
+   different computation (node-kind + edge-kind weighted, not inbound-edge-count
+   weighted), consistent with "one file per concern" in CLAUDE.md's package layout.
+   The handler-side `mode=trust` branch goes in the existing `tools/significance.go`,
+   next to `handleSignificance`, since `mode=trust` is reached through the same
+   `significance` tool entry point.
 
 ---
 
@@ -137,9 +157,10 @@ this is the audit trail that makes the signal interpretable rather than opaque.
 
 ## Files (expected)
 
-- `db/db.go` — `GetTrust(domain, memoryID, limit, tags string) (*TrustResult, error)`
-- `tools/tools.go` — `trust` tool definition + `handleTrust`
-- `tools/tools_test.go` — new tests
+- `db/trust.go` (new) — `GetTrust(domain, memoryID string, limit, recencyWindowDays int, tags []string) (TrustResult, error)`, mirroring `GetSignificance`'s signature in `db/significance.go`
+- `tools/significance.go` — add the `mode` dispatch in `handleSignificance`; `significance` tool's `InputSchema` (in `tools/definitions.go`) gains the `mode` enum property
+- `tools/significance_test.go` — new tests
+- `db/significance_test.go` — new tests for `GetTrust` (mirroring the existing `GetSignificance` test pattern in the same file)
 
 ---
 

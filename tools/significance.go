@@ -15,6 +15,7 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		Limit         int    `json:"limit"`
 		RecencyWindow int    `json:"recency_window"`
 		Tags          string `json:"tags"`
+		Mode          string `json:"mode"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, err
@@ -35,6 +36,27 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		if tag != "" {
 			tags = append(tags, tag)
 		}
+	}
+
+	if a.Mode == "trust" {
+		var res db.TrustResult
+		var err error
+		if a.MemoryID != "" {
+			if a.Depth <= 0 {
+				a.Depth = 2
+			}
+			res, err = h.store.GetTrustForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow)
+		} else {
+			res, err = h.store.GetTrust(a.Domain, a.Limit, a.RecencyWindow, tags)
+		}
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		out, err := json.Marshal(toLeanTrustResult(res))
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
 	}
 
 	var res db.SignificanceResult

@@ -488,4 +488,142 @@ func TestSignificance_TagsFilter_DeclaredRespected(t *testing.T) {
 	}
 }
 
-// ── NodeKind ──────────────────────────────────────────────────────────────────
+// ── significance: mode=trust ──────────────────────────────────────────────────
+
+func TestSignificance_ModeTrust_ReturnsRankedList(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "A decision", "proj", map[string]any{"node_kind": "decision"})
+
+	tr := call(t, h, "significance", map[string]any{"domain": "proj", "mode": "trust"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			ID         string  `json:"id"`
+			TrustScore float64 `json:"trust_score"`
+			TrustBasis string  `json:"trust_basis"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected at least one trust-ranked node")
+	}
+}
+
+func TestSignificance_ModeTrust_NoDescriptionOrTags(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "A decision", "proj", map[string]any{
+		"node_kind":   "decision",
+		"description": "this must not appear in lean trust output",
+		"tags":        "sometag",
+	})
+
+	tr := call(t, h, "significance", map[string]any{"domain": "proj", "mode": "trust"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []map[string]json.RawMessage `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	for _, n := range resp.Nodes {
+		if _, ok := n["description"]; ok {
+			t.Error("trust node must not contain 'description' field — lean format required")
+		}
+		if _, ok := n["tags"]; ok {
+			t.Error("trust node must not contain 'tags' field — lean format required")
+		}
+	}
+}
+
+func TestSignificance_ModeOmitted_BehaviourUnchanged(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "A decision", "proj", nil)
+
+	tr := call(t, h, "significance", map[string]any{"domain": "proj"})
+	mustNotError(t, tr)
+
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	for _, key := range []string{"declared", "structural", "uncurated", "potentially_stale", "call_id"} {
+		if _, ok := resp[key]; !ok {
+			t.Errorf("default mode response missing key %q — mode=trust must not change default behaviour", key)
+		}
+	}
+}
+
+func TestSignificance_ModeTrust_MemoryIDMode(t *testing.T) {
+	_, h := newEnv(t)
+	anchor := addNode(t, h, "Anchor decision", "proj", map[string]any{"node_kind": "decision"})
+	neighbour := addNode(t, h, "Neighbour finding", "proj", map[string]any{"node_kind": "finding"})
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": neighbour, "to_memory": anchor,
+		"relationship": "connects_to", "narrative": "supports",
+	}))
+
+	tr := call(t, h, "significance", map[string]any{"memory_id": anchor, "mode": "trust"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	found := false
+	for _, n := range resp.Nodes {
+		if n.ID == anchor {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("anchor should appear in its own neighbourhood trust result")
+	}
+}
+
+func TestListTools_SignificanceSchemaHasModeProperty(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string   `json:"description"`
+					Enum        []string `json:"enum"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "significance" {
+			continue
+		}
+		p, ok := td.InputSchema.Properties["mode"]
+		if !ok {
+			t.Fatal("significance tool missing 'mode' property in schema")
+		}
+		if p.Description == "" {
+			t.Error("mode property must have a description")
+		}
+		if len(p.Enum) != 2 {
+			t.Errorf("mode enum should have 2 values (significance, trust), got %v", p.Enum)
+		}
+		return
+	}
+	t.Fatal("significance tool not found in ListTools")
+}

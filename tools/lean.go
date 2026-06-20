@@ -110,6 +110,35 @@ type leanSignificanceResult struct {
 	CallID           string            `json:"call_id"`
 }
 
+// leanTrustNode mirrors db.TrustNode with a lean entry — id, label, truncated
+// why_matters, occurred_at where set; description and tags omitted, consistent
+// with the other lean retrieval tools. node_kind, trust_score, and trust_basis
+// are content the trust signal exists to surface, so they're always kept.
+type leanTrustNode struct {
+	leanEntry
+	NodeKind   string  `json:"node_kind,omitempty"`
+	TrustScore float64 `json:"trust_score"`
+	TrustBasis string  `json:"trust_basis"`
+}
+
+type leanTrustResult struct {
+	Nodes  []leanTrustNode `json:"nodes"`
+	CallID string          `json:"call_id"`
+}
+
+func toLeanTrustResult(r db.TrustResult) leanTrustResult {
+	nodes := make([]leanTrustNode, len(r.Nodes))
+	for i, n := range r.Nodes {
+		nodes[i] = leanTrustNode{
+			leanEntry:  toLeanEntry(n.Node),
+			NodeKind:   n.NodeKind,
+			TrustScore: n.TrustScore,
+			TrustBasis: n.TrustBasis,
+		}
+	}
+	return leanTrustResult{Nodes: nodes, CallID: r.CallID}
+}
+
 func toLeanSignificanceResult(r db.SignificanceResult) leanSignificanceResult {
 	structural := make([]scoredLeanEntry, len(r.Structural))
 	for i, sn := range r.Structural {
