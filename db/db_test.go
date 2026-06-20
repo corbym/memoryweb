@@ -1443,6 +1443,69 @@ func TestSuggestEdges_DomainScoping_DB(t *testing.T) {
 	}
 }
 
+// TestSuggestEdges_EmDashNotMatchedAsSharedWord: two labels whose only common
+// character is an em-dash must not be suggested as connected — the em-dash is
+// not a word.
+func TestSuggestEdges_EmDashNotMatchedAsSharedWord(t *testing.T) {
+	s := newStore(t)
+	nA, _ := s.AddNode("Alpha — gizmo", "d", "w", "proj", nil, "", "")
+	nB, _ := s.AddNode("Beta — widget", "d", "w", "proj", nil, "", "")
+
+	suggestions, err := s.SuggestEdges(nA.ID, 5)
+	if err != nil {
+		t.Fatalf("SuggestEdges: %v", err)
+	}
+	for _, sg := range suggestions {
+		if sg.ID == nB.ID {
+			t.Errorf("em-dash must not be treated as a shared word; got suggestion %+v", sg)
+		}
+	}
+}
+
+// TestSuggestEdges_EnDashAndEllipsisNotMatchedAsSharedWord: same shape as the
+// em-dash case, using en-dash and ellipsis — any standalone punctuation/symbol
+// token must be excluded, not just the em-dash.
+func TestSuggestEdges_EnDashAndEllipsisNotMatchedAsSharedWord(t *testing.T) {
+	s := newStore(t)
+	nA, _ := s.AddNode("Alpha – gizmo…", "d", "w", "proj", nil, "", "")
+	nB, _ := s.AddNode("Beta – widget…", "d", "w", "proj", nil, "", "")
+
+	suggestions, err := s.SuggestEdges(nA.ID, 5)
+	if err != nil {
+		t.Fatalf("SuggestEdges: %v", err)
+	}
+	for _, sg := range suggestions {
+		if sg.ID == nB.ID {
+			t.Errorf("en-dash/ellipsis must not be treated as shared words; got suggestion %+v", sg)
+		}
+	}
+}
+
+// TestSuggestEdges_RealWordsStillMatch: regression guard — a genuine shared
+// label word must still produce a suggestion with that word in the reason.
+func TestSuggestEdges_RealWordsStillMatch(t *testing.T) {
+	s := newStore(t)
+	nA, _ := s.AddNode("Alpha gizmo widget", "d", "w", "proj", nil, "", "")
+	nB, _ := s.AddNode("Beta gizmo thing", "d", "w", "proj", nil, "", "")
+
+	suggestions, err := s.SuggestEdges(nA.ID, 5)
+	if err != nil {
+		t.Fatalf("SuggestEdges: %v", err)
+	}
+	found := false
+	for _, sg := range suggestions {
+		if sg.ID == nB.ID {
+			found = true
+			if !strings.Contains(sg.Reason, "gizmo") {
+				t.Errorf("reason should mention 'gizmo'; got %q", sg.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("node B (%s) sharing a real word should appear in suggestions", nB.ID)
+	}
+}
+
 func TestAddNode_Tags_RoundTrip(t *testing.T) {
 	s := newStore(t)
 	n, err := s.AddNode("my node", "desc", "why", "proj", nil, "alpha beta gamma", "")

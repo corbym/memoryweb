@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -1310,6 +1312,9 @@ func (s *Store) CountArchived(domain string) (int, error) {
 	return count, err
 }
 
+// RecentChanges orders by updated_at DESC, breaking ties on rowid DESC so two
+// nodes written within the same clock tick (observed on Windows) still come
+// back in insertion order instead of in SQLite's unspecified tie order.
 func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 	var rows *sql.Rows
@@ -1318,13 +1323,13 @@ func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 	if domain != "" {
 		rows, err = s.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
-			 WHERE domain = ? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
+			 WHERE domain = ? AND archived_at IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
 			domain, limit,
 		)
 	} else {
 		rows, err = s.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
-			 WHERE archived_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
+			 WHERE archived_at IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
 			limit,
 		)
 	}
@@ -1382,7 +1387,7 @@ func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, t
 	args = append(args, limit)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
-		strings.Join(conds, " AND ") + " ORDER BY updated_at DESC LIMIT ?"
+		strings.Join(conds, " AND ") + " ORDER BY updated_at DESC, rowid DESC LIMIT ?"
 
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -2535,8 +2540,13 @@ func suggestKeywords(label, tags string) []string {
 	var keywords []string
 	addWords := func(text string) {
 		for _, w := range strings.Fields(strings.ToLower(text)) {
-			w = strings.Trim(w, ".,!?;:-\"'()")
-			if len(w) < 3 || stopWords[w] || seen[w] {
+			// Strip any leading/trailing punctuation or symbol, not just the
+			// ASCII set — em-dash, en-dash, curly quotes, ellipsis, etc. would
+			// otherwise survive as a standalone "word" of 3+ UTF-8 bytes.
+			w = strings.TrimFunc(w, func(r rune) bool {
+				return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+			})
+			if utf8.RuneCountInString(w) < 3 || stopWords[w] || seen[w] {
 				continue
 			}
 			seen[w] = true
