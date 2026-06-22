@@ -25,7 +25,7 @@ file for its concern; create a new file only for a genuinely new concern.
 ```
 main.go               JSON-RPC 2.0 wire loop (stdin → dispatch → stdout)
 
-db/store.go           Store type, New/Close, schema/version/stats queries, init()
+db/store.go           Store type, New/Close (checkpoints WAL on close), Backup (VACUUM INTO snapshot), schema/version/stats queries, init()
 db/migrations.go      migration type, the migrations slice, migrate() — append-only, see below
 db/embeddings.go      Ollama embedding client, storeEmbedding, BackfillEmbeddings
 db/nodes.go           Node struct, AddNode/GetNode/UpdateNode/ArchiveNode/RestoreNode/ListArchived, batch variants

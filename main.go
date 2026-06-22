@@ -69,6 +69,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "  dream          Print a digest of recent nodes and drift candidates")
 			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one")
 			fmt.Fprintln(os.Stdout, "  merge-domains  Merge all nodes from one domain into another")
+			fmt.Fprintln(os.Stdout, "  backup         Write a consistent standalone snapshot of the database")
 			fmt.Fprintln(os.Stdout, "  purge          Hard-delete archived nodes (requires --confirm or --dry-run)")
 			fmt.Fprintln(os.Stdout, "  version        Print the version and exit")
 			fmt.Fprintln(os.Stdout, "")
@@ -92,12 +93,15 @@ func main() {
 		case "merge-domains":
 			mergeDomainsCmd()
 			return
+		case "backup":
+			backupCmd()
+			return
 		case "purge":
 			purgeCmd()
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "memoryweb: unknown subcommand %q\n\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "Subcommands: setup, doctor, dream, backfill, merge-domains, purge, version")
+			fmt.Fprintln(os.Stderr, "Subcommands: setup, doctor, dream, backfill, merge-domains, backup, purge, version")
 			fmt.Fprintln(os.Stderr, "Run 'memoryweb --help' for usage.")
 			os.Exit(1)
 		}
@@ -1091,6 +1095,34 @@ func mergeDomainsCmd() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func backupCmd() {
+	flags := flag.NewFlagSet("backup", flag.ExitOnError)
+	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
+	flags.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: memoryweb backup [--db <path>] <destination>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Writes a consistent standalone snapshot (single file, no -wal/-shm sidecars)")
+		fmt.Fprintln(os.Stderr, "that is safe to copy or sync even while memoryweb is running. Never copy the")
+		fmt.Fprintln(os.Stderr, "live .db folder directly — the .db and -wal can desync and corrupt.")
+		fmt.Fprintln(os.Stderr, "")
+		flags.PrintDefaults()
+	}
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	rest := flags.Args()
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "error: exactly one destination path is required")
+		flags.Usage()
+		os.Exit(1)
+	}
+
+	if err := db.Backup(*dbFlag, rest[0]); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("backup written to %s\n", rest[0])
 }
 
 // runMergeDomains performs or previews the domain merge. Separated from

@@ -232,6 +232,19 @@ memoryweb merge-domains --source <domain> --target <domain> [--dry-run]
 - Detects label collisions between the two domains — reported as warnings, not blocking
 - Automatically creates an alias from source → target
 
+The `backup` subcommand writes a consistent standalone snapshot of the database using `VACUUM INTO`:
+
+```bash
+memoryweb backup /path/to/snapshot.db                 # snapshot ~/.memoryweb.db
+memoryweb backup --db /path/to/your.db /path/to/snapshot.db
+```
+
+- Produces a **single self-contained file** with no `-wal`/`-shm` sidecars
+- Safe to run **while memoryweb is in use** — it reads a transactionally-consistent snapshot
+- Refuses to overwrite an existing destination
+
+> **Backup safety.** Do not back up by copying the live database *folder* (e.g. via a cloud-sync client). In WAL mode the recent data lives in the `-wal` sidecar until checkpointed; a folder copy can capture the `.db` and `-wal` at different instants, and recombining a mismatched pair corrupts the database. Always back up the output of `memoryweb backup` (or `sqlite3 source.db ".backup dest.db"`), and only sync that standalone file. memoryweb checkpoints the WAL into the main file on clean shutdown, but a snapshot is the only safe way to capture a *running* instance.
+
 The `check-for-updates` subcommand checks GitHub for a newer release:
 
 ```bash

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net/url"
 	"os"
@@ -40,7 +41,36 @@ func New(path string) (*Store, error) {
 }
 
 func (s *Store) Close() {
+	// Checkpoint the WAL back into the main .db file before closing so the file
+	// is self-sufficient at rest. Without this, recently-written data can live
+	// in the -wal sidecar, making naive file-copy backups (which may miss or
+	// desync the -wal) lossy or corrupting. Best-effort: a failed checkpoint
+	// must not prevent the connection from closing.
+	s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`) //nolint:errcheck
 	s.db.Close()
+}
+
+// Backup writes a transactionally-consistent standalone snapshot of the database
+// at srcPath to destPath using VACUUM INTO. The result is a single self-contained
+// file with no -wal/-shm sidecars, safe to copy or sync even while the source DB
+// is in use. It refuses to overwrite an existing destination.
+func Backup(srcPath, destPath string) error {
+	if _, err := os.Stat(destPath); err == nil {
+		return fmt.Errorf("destination already exists: %s", destPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat destination: %w", err)
+	}
+
+	s, err := New(srcPath)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	if _, err := s.db.Exec(`VACUUM INTO ?`, destPath); err != nil {
+		return fmt.Errorf("vacuum into %s: %w", destPath, err)
+	}
+	return nil
 }
 
 // VecAvailable reports whether sqlite-vec is loaded and the node_embeddings
