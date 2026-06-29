@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/corbym/memoryweb/db"
@@ -155,4 +156,156 @@ func toLeanSignificanceResult(r db.SignificanceResult) leanSignificanceResult {
 		PotentiallyStale: toLeanEntries(r.PotentiallyStale),
 		CallID:           r.CallID,
 	}
+}
+
+// ── digest mode — single-line text per node (opt-in, default off) ─────────────
+
+func sanitiseDigestField(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func digestLineFromEntry(e leanEntry) string {
+	label := sanitiseDigestField(e.Label)
+	line := fmt.Sprintf("[%s] %s", e.ID, label)
+	if e.WhyMatters != "" {
+		line += " — " + sanitiseDigestField(e.WhyMatters)
+	}
+	if e.OccurredAt != nil {
+		line += fmt.Sprintf(" (%s)", *e.OccurredAt)
+	}
+	return line
+}
+
+func digestLinesFromEntries(entries []leanEntry) []string {
+	return digestLines(entries, digestLineFromEntry)
+}
+
+func digestLineFromScored(e scoredLeanEntry) string {
+	return fmt.Sprintf("%s (score: %.2f)", digestLineFromEntry(e.leanEntry), e.ImportanceScore)
+}
+
+func digestLineFromSearchNode(n leanSearchNode) string {
+	line := digestLineFromEntry(n.leanEntry)
+	if n.SemanticDistance != nil {
+		line += fmt.Sprintf(" (dist: %.3f)", *n.SemanticDistance)
+	}
+	return line
+}
+
+func digestLineFromTrust(n leanTrustNode) string {
+	basis := sanitiseDigestField(n.TrustBasis)
+	return fmt.Sprintf("%s (trust: %.2f) %s", digestLineFromEntry(n.leanEntry), n.TrustScore, basis)
+}
+
+type digestSearchResult struct {
+	Lines     []string   `json:"lines"`
+	Edges     []leanEdge `json:"edges,omitempty"`
+	Truncated bool       `json:"truncated,omitempty"`
+}
+
+func toDigestSearchResult(r *db.SearchResult) digestSearchResult {
+	lines := make([]string, len(r.Nodes))
+	for i, nr := range r.Nodes {
+		lines[i] = digestLineFromSearchNode(leanSearchNode{leanEntry: toLeanEntry(nr.Node), SemanticDistance: nr.SemanticDistance})
+	}
+	edges := make([]leanEdge, len(r.Edges))
+	for i, e := range r.Edges {
+		edges[i] = leanEdge{FromNode: e.FromNode, ToNode: e.ToNode, Relationship: e.Relationship}
+	}
+	return digestSearchResult{Lines: lines, Edges: edges, Truncated: r.Truncated}
+}
+
+type digestSignificanceResult struct {
+	Declared         []string `json:"declared"`
+	Structural       []string `json:"structural"`
+	Uncurated        []string `json:"uncurated"`
+	PotentiallyStale []string `json:"potentially_stale"`
+	CallID           string   `json:"call_id"`
+}
+
+func toDigestSignificanceResult(r db.SignificanceResult) digestSignificanceResult {
+	structural := make([]string, len(r.Structural))
+	for i, sn := range r.Structural {
+		structural[i] = digestLineFromScored(scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore})
+	}
+	uncurated := make([]string, len(r.Uncurated))
+	for i, sn := range r.Uncurated {
+		uncurated[i] = digestLineFromScored(scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore})
+	}
+	return digestSignificanceResult{
+		Declared:         digestLinesFromEntries(toLeanEntries(r.Declared)),
+		Structural:       structural,
+		Uncurated:        uncurated,
+		PotentiallyStale: digestLinesFromEntries(toLeanEntries(r.PotentiallyStale)),
+		CallID:           r.CallID,
+	}
+}
+
+type digestTrustResult struct {
+	Lines  []string `json:"lines"`
+	CallID string   `json:"call_id"`
+}
+
+func toDigestTrustResult(r db.TrustResult) digestTrustResult {
+	lines := make([]string, len(r.Nodes))
+	for i, n := range r.Nodes {
+		lines[i] = digestLineFromTrust(leanTrustNode{
+			leanEntry:  toLeanEntry(n.Node),
+			NodeKind:   n.NodeKind,
+			TrustScore: n.TrustScore,
+			TrustBasis: n.TrustBasis,
+		})
+	}
+	return digestTrustResult{Lines: lines, CallID: r.CallID}
+}
+
+type digestGroupedRecent struct {
+	Domain string   `json:"domain"`
+	Lines  []string `json:"lines"`
+}
+
+// digestLines maps items to compact single-line strings for digest mode.
+func digestLines[T any](items []T, render func(T) string) []string {
+	lines := make([]string, len(items))
+	for i, item := range items {
+		lines[i] = render(item)
+	}
+	return lines
+}
+
+func digestSection(entries []leanEntry, digest bool) interface{} {
+	if !digest {
+		return entries
+	}
+	return digestLinesFromEntries(entries)
+}
+
+func digestScoredSection(entries []scoredLeanEntry, digest bool) interface{} {
+	if !digest {
+		return entries
+	}
+	return digestLines(entries, digestLineFromScored)
+}
+
+func digestLineFromDrift(c db.DriftCandidate) string {
+	reason := sanitiseDigestField(c.Reason)
+	line := digestLineFromEntry(toLeanEntry(c.Node))
+	return fmt.Sprintf("%s (%s, edges: %d)", line, reason, c.EdgeCount)
+}
+
+func digestAuditResults(candidates []db.DriftCandidate, digest bool) interface{} {
+	if !digest {
+		return candidates
+	}
+	return digestLines(candidates, digestLineFromDrift)
+}
+
+func digestNodeList(nodes []db.Node, digest bool) interface{} {
+	if !digest {
+		return nodes
+	}
+	return digestLinesFromEntries(toLeanEntries(nodes))
 }

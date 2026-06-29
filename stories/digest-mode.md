@@ -1,6 +1,6 @@
 # Digest mode — render multi-node responses as single-line text, not arrays of JSON objects
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `digest-mode-render-multi-node-re-8fa64dcf`
 **Depends on:** `stories/lean-format-retrieval-tools.md` (COMPLETE for memoryweb) — digest mode

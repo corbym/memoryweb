@@ -1,6 +1,6 @@
 # Digest mode — orient and audit (remainder after STORY-120)
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface nodes:**
 - `cross-cutting-gap-digest-mode-not-shipped-on-orient-or-audit-04aa0ae4`

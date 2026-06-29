@@ -16,6 +16,7 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		RecencyWindow int    `json:"recency_window"`
 		Tags          string `json:"tags"`
 		Mode          string `json:"mode"`
+		Digest        bool   `json:"digest"`
 	}
 	if err := decodeParams(args, &a, "significance"); err != nil {
 		return nil, err
@@ -52,7 +53,12 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
-		out, err := json.Marshal(toLeanTrustResult(res))
+		var out []byte
+		if a.Digest {
+			out, err = json.Marshal(toDigestTrustResult(res))
+		} else {
+			out, err = json.Marshal(toLeanTrustResult(res))
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -73,7 +79,12 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		return errorResult(err.Error()), nil
 	}
 
-	out, err := json.Marshal(toLeanSignificanceResult(res))
+	var out []byte
+	if a.Digest {
+		out, err = json.Marshal(toDigestSignificanceResult(res))
+	} else {
+		out, err = json.Marshal(toLeanSignificanceResult(res))
+	}
 	if err != nil {
 		return nil, err
 	}

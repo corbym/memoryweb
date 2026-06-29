@@ -13,6 +13,7 @@ type auditArgs struct {
 	Tags     string `json:"tags"`
 	MemoryID string `json:"memory_id"`
 	Depth    int    `json:"depth"`
+	Digest   bool   `json:"digest"`
 }
 
 func (h *Handler) forgetNode(args json.RawMessage) (*ToolResult, error) {
@@ -54,7 +55,8 @@ func (h *Handler) listArchived(a auditArgs) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(nodes, "", "  ")
+	out := digestNodeList(nodes, a.Digest)
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
@@ -125,7 +127,8 @@ func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(candidates, "", "  ")
+	out := digestAuditResults(candidates, a.Digest)
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
@@ -138,6 +141,7 @@ func (h *Handler) findDisconnected(a auditArgs) (*ToolResult, error) {
 	if len(nodes) == 0 {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "No disconnected memories found."}}}, nil
 	}
-	b, _ := json.MarshalIndent(nodes, "", "  ")
+	out := digestNodeList(nodes, a.Digest)
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

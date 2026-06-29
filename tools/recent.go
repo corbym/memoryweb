@@ -14,6 +14,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		GroupByDomain bool   `json:"group_by_domain"`
 		Tags          string `json:"tags"`
 		MemoryID      string `json:"memory_id"`
+		Digest        bool   `json:"digest"`
 	}
 	if err := decodeParams(args, &a, "recent"); err != nil {
 		return nil, err
@@ -28,38 +29,30 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 
 	tags := splitTags(a.Tags)
 
-	// memory_id scoping: neighbourhood-restricted, group_by_domain ignored.
 	if a.MemoryID != "" {
 		nodes, err := h.store.RecentChangesScoped(a.MemoryID, 2, "", tags, a.Limit)
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		return marshalRecentList(toLeanEntries(nodes), a.Digest)
 	}
 
-	// Tags only (no memory_id): domain-scoped with tag filter.
 	if len(tags) > 0 {
 		nodes, err := h.store.RecentChangesScoped("", 2, a.Domain, tags, a.Limit)
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		return marshalRecentList(toLeanEntries(nodes), a.Digest)
 	}
 
-	// group_by_domain only makes sense when no domain is specified.
 	if a.GroupByDomain && a.Domain == "" {
 		perDomain := a.Limit
-		// Fetch a broad slice of recent nodes across all domains, then group.
-		// 1000 is a generous upper bound; real deployments are unlikely to exceed it.
 		all, err := h.store.RecentChanges("", 1000)
 		if err != nil {
 			return nil, err
 		}
-		// Group by domain, preserving updated_at DESC order within each group.
 		grouped := make(map[string][]db.Node)
-		domainOrder := []string{} // track insertion order for stable output
+		domainOrder := []string{}
 		for _, n := range all {
 			if _, seen := grouped[n.Domain]; !seen {
 				domainOrder = append(domainOrder, n.Domain)
@@ -68,7 +61,17 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 				grouped[n.Domain] = append(grouped[n.Domain], n)
 			}
 		}
-		// Build ordered result.
+		if a.Digest {
+			out := make([]digestGroupedRecent, 0, len(domainOrder))
+			for _, d := range domainOrder {
+				out = append(out, digestGroupedRecent{
+					Domain: d,
+					Lines:  digestLinesFromEntries(toLeanEntries(grouped[d])),
+				})
+			}
+			b, _ := json.MarshalIndent(out, "", "  ")
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		}
 		type groupedResult struct {
 			Domain string      `json:"domain"`
 			Nodes  []leanEntry `json:"nodes"`
@@ -81,11 +84,21 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 
-	// Normal (non-grouped) behaviour.
 	nodes, err := h.store.RecentChanges(a.Domain, a.Limit)
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
+	return marshalRecentList(toLeanEntries(nodes), a.Digest)
+}
+
+func marshalRecentList(entries []leanEntry, digest bool) (*ToolResult, error) {
+	if digest {
+		out := struct {
+			Lines []string `json:"lines"`
+		}{Lines: digestLinesFromEntries(entries)}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	}
+	b, _ := json.MarshalIndent(entries, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

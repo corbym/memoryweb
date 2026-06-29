@@ -55,7 +55,7 @@ func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
+func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResult, error) {
 	liveNodes, err := h.store.CountNodes(domain)
 	if err != nil {
 		return nil, err
@@ -93,9 +93,10 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 		return nil, err
 	}
 	rulesEntries := toLeanEntries(rulesNodes)
+
 	var rulesField interface{}
 	if len(rulesEntries) > 0 {
-		rulesField = rulesEntries
+		rulesField = digestSection(rulesEntries, digest)
 	}
 
 	resp := struct {
@@ -115,9 +116,9 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 		ArchivedNodes: archivedNodes,
 		StaleCount:    staleCount,
 		Rules:         rulesField,
-		DeclaredSpine: spineEntries,
-		Relevant:      relevant,
-		Recent:        recentEntries,
+		DeclaredSpine: digestSection(spineEntries, digest),
+		Relevant:      digestSection(relevant, digest),
+		Recent:        digestSection(recentEntries, digest),
 	}
 
 	b, _ := json.MarshalIndent(resp, "", "  ")
@@ -131,6 +132,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		Domain string `json:"domain"`
 		Topic  string `json:"topic"`
+		Digest bool   `json:"digest"`
 	}
 	if err := decodeParams(args, &a, "orient"); err != nil {
 		return nil, err
@@ -141,7 +143,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	if a.Topic != "" {
-		return h.orientWithTopic(a.Domain, a.Topic)
+		return h.orientWithTopic(a.Domain, a.Topic, a.Digest)
 	}
 
 	// Step 1: count live and archived nodes for the domain.
@@ -193,9 +195,10 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		}
 	}
 	rulesEntries := toLeanEntries(rulesNodes)
+
 	var rulesField interface{}
 	if len(rulesEntries) > 0 {
-		rulesField = rulesEntries
+		rulesField = digestSection(rulesEntries, a.Digest)
 	}
 
 	resp := struct {
@@ -215,9 +218,9 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		ArchivedNodes: archivedNodes,
 		StaleCount:    staleCount,
 		Rules:         rulesField,
-		DeclaredSpine: spineEntries,
-		Significant:   sigEntries,
-		Recent:        recentEntries,
+		DeclaredSpine: digestSection(spineEntries, a.Digest),
+		Significant:   digestScoredSection(sigEntries, a.Digest),
+		Recent:        digestSection(recentEntries, a.Digest),
 	}
 
 	b, _ := json.MarshalIndent(resp, "", "  ")

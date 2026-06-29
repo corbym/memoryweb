@@ -9,6 +9,7 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		Limit    int    `json:"limit"`
 		Exact    bool   `json:"exact"`
 		MemoryID string `json:"memory_id"`
+		Digest   bool   `json:"digest"`
 	}
 	if err := decodeParams(args, &a, "search"); err != nil {
 		return nil, err
@@ -35,6 +36,11 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(toLeanSearchResult(result), "", "  ")
+	var b []byte
+	if a.Digest {
+		b, _ = json.MarshalIndent(toDigestSearchResult(result), "", "  ")
+	} else {
+		b, _ = json.MarshalIndent(toLeanSearchResult(result), "", "  ")
+	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

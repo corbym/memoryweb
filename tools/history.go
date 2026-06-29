@@ -20,6 +20,7 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 		From          string `json:"from"`
 		To            string `json:"to"`
 		Limit         int    `json:"limit"`
+		Digest        bool   `json:"digest"`
 	}
 	if err := decodeParams(args, &a, "history"); err != nil {
 		return nil, err
@@ -69,6 +70,13 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 	}
 	if err != nil {
 		return errorResult(err.Error()), nil
+	}
+	if a.Digest {
+		out := struct {
+			Lines []string `json:"lines"`
+		}{Lines: digestLinesFromEntries(toLeanEntries(nodes))}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 	b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
