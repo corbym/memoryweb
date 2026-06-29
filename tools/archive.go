@@ -6,12 +6,21 @@ import (
 	"strings"
 )
 
+type auditArgs struct {
+	Mode     string `json:"mode"`
+	Domain   string `json:"domain"`
+	Limit    int    `json:"limit"`
+	Tags     string `json:"tags"`
+	MemoryID string `json:"memory_id"`
+	Depth    int    `json:"depth"`
+}
+
 func (h *Handler) forgetNode(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		ID     string `json:"id"`
 		Reason string `json:"reason"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "forget"); err != nil {
 		return nil, err
 	}
 	if err := h.store.ArchiveNode(a.ID, a.Reason); err != nil {
@@ -27,7 +36,7 @@ func (h *Handler) restoreNode(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "restore"); err != nil {
 		return nil, err
 	}
 	if err := h.store.RestoreNode(a.ID); err != nil {
@@ -39,14 +48,7 @@ func (h *Handler) restoreNode(args json.RawMessage) (*ToolResult, error) {
 	}}}, nil
 }
 
-func (h *Handler) listArchived(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Domain string `json:"domain"`
-		Tags   string `json:"tags"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return nil, err
-	}
+func (h *Handler) listArchived(a auditArgs) (*ToolResult, error) {
 	tags := splitTags(a.Tags)
 	nodes, err := h.store.ListArchived(a.Domain, tags)
 	if err != nil {
@@ -65,7 +67,7 @@ func (h *Handler) forgetAll(args json.RawMessage) (*ToolResult, error) {
 			Reason string `json:"reason"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "forget_all"); err != nil {
 		return nil, err
 	}
 	if len(a.Items) == 0 {
@@ -92,35 +94,23 @@ func (h *Handler) forgetAll(args json.RawMessage) (*ToolResult, error) {
 // auditTool dispatches mode=stale to drift, mode=orphans to findDisconnected,
 // and mode=archived to listArchived.
 func (h *Handler) auditTool(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Mode string `json:"mode"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	var a auditArgs
+	if err := decodeParams(args, &a, "audit"); err != nil {
 		return nil, err
 	}
 	switch a.Mode {
 	case "stale":
-		return h.drift(args)
+		return h.drift(a)
 	case "orphans":
-		return h.findDisconnected(args)
+		return h.findDisconnected(a)
 	case "archived":
-		return h.listArchived(args)
+		return h.listArchived(a)
 	default:
 		return errorResult(fmt.Sprintf("unknown audit mode %q — use stale, orphans, or archived", a.Mode)), nil
 	}
 }
 
-func (h *Handler) drift(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Domain   string `json:"domain"`
-		Limit    int    `json:"limit"`
-		Tags     string `json:"tags"`
-		MemoryID string `json:"memory_id"`
-		Depth    int    `json:"depth"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return nil, err
-	}
+func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 	if a.Limit <= 0 {
 		a.Limit = 10
 	}
@@ -139,18 +129,7 @@ func (h *Handler) drift(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func (h *Handler) findDisconnected(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Domain string `json:"domain"`
-		Tags   string `json:"tags"`
-		// MemoryID is parsed but intentionally ignored for orphans:
-		// orphans have no connections by definition, so BFS from an anchor
-		// would never reach them.
-		MemoryID string `json:"memory_id"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return nil, err
-	}
+func (h *Handler) findDisconnected(a auditArgs) (*ToolResult, error) {
 	tags := splitTags(a.Tags)
 	nodes, err := h.store.FindDisconnected(a.Domain, tags)
 	if err != nil {

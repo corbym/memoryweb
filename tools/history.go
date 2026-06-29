@@ -10,6 +10,7 @@ import (
 )
 
 func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
+	args = argsOrEmptyObject(args)
 	var a struct {
 		Domain        string `json:"domain"`
 		MemoryID      string `json:"memory_id"`
@@ -20,7 +21,7 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 		To            string `json:"to"`
 		Limit         int    `json:"limit"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "history"); err != nil {
 		return nil, err
 	}
 	if a.Limit <= 0 {

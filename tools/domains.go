@@ -5,54 +5,6 @@ import (
 	"fmt"
 )
 
-func (h *Handler) addAlias(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Alias  string `json:"alias"`
-		Domain string `json:"domain"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return nil, err
-	}
-	if err := h.store.AddAlias(a.Alias, a.Domain); err != nil {
-		return nil, err
-	}
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q → %q registered", a.Alias, a.Domain)}}}, nil
-}
-
-func (h *Handler) listAliases(_ json.RawMessage) (*ToolResult, error) {
-	aliases, err := h.store.ListAliases()
-	if err != nil {
-		return nil, err
-	}
-	b, _ := json.MarshalIndent(aliases, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
-}
-
-func (h *Handler) removeAlias(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Alias string `json:"alias"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return nil, err
-	}
-	if err := h.store.RemoveAlias(a.Alias); err != nil {
-		return nil, err
-	}
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q removed", a.Alias)}}}, nil
-}
-
-func (h *Handler) resolveDomain(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return nil, err
-	}
-	canonical := h.store.ResolveAlias(a.Name)
-	msg := fmt.Sprintf("%q resolves to %q", a.Name, canonical)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
-}
-
 // aliasTool dispatches on action: add, remove, resolve, or list.
 func (h *Handler) aliasTool(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
@@ -61,24 +13,40 @@ func (h *Handler) aliasTool(args json.RawMessage) (*ToolResult, error) {
 		Domain string `json:"domain"`
 		Name   string `json:"name"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "alias"); err != nil {
 		return nil, err
 	}
 	switch a.Action {
 	case "add":
-		return h.addAlias(args)
+		if err := h.store.AddAlias(a.Alias, a.Domain); err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q → %q registered", a.Alias, a.Domain)}}}, nil
 	case "remove":
-		return h.removeAlias(args)
+		if err := h.store.RemoveAlias(a.Alias); err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q removed", a.Alias)}}}, nil
 	case "resolve":
-		return h.resolveDomain(args)
+		canonical := h.store.ResolveAlias(a.Name)
+		msg := fmt.Sprintf("%q resolves to %q", a.Name, canonical)
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
 	case "list":
-		return h.listAliases(args)
+		aliases, err := h.store.ListAliases()
+		if err != nil {
+			return nil, err
+		}
+		b, _ := json.MarshalIndent(aliases, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	default:
 		return errorResult(fmt.Sprintf("unknown alias action %q — use add, remove, resolve, or list", a.Action)), nil
 	}
 }
 
-func (h *Handler) listDomains(_ json.RawMessage) (*ToolResult, error) {
+func (h *Handler) listDomains(args json.RawMessage) (*ToolResult, error) {
+	if err := rejectExtraArgs(args, "domains"); err != nil {
+		return nil, err
+	}
 	domains, err := h.store.ListDomains()
 	if err != nil {
 		return nil, err
@@ -88,7 +56,10 @@ func (h *Handler) listDomains(_ json.RawMessage) (*ToolResult, error) {
 }
 
 // domainsTool returns a combined response with both the domain list and alias list.
-func (h *Handler) domainsTool(_ json.RawMessage) (*ToolResult, error) {
+func (h *Handler) domainsTool(args json.RawMessage) (*ToolResult, error) {
+	if err := rejectExtraArgs(args, "domains"); err != nil {
+		return nil, err
+	}
 	domains, err := h.store.ListDomains()
 	if err != nil {
 		return nil, err
@@ -110,7 +81,7 @@ func (h *Handler) renameDomain(args json.RawMessage) (*ToolResult, error) {
 		OldDomain string `json:"old_domain"`
 		NewDomain string `json:"new_domain"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "rename_domain"); err != nil {
 		return nil, err
 	}
 	if a.OldDomain == "" || a.NewDomain == "" {

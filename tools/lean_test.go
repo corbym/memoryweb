@@ -76,7 +76,7 @@ func TestSearch_LeanFormat_EdgesOmitNarrative(t *testing.T) {
 		"relationship": "connects_to", "narrative": "this narrative must not appear in lean search output",
 	}))
 
-	tr := call(t, h, "search", map[string]any{"query": "", "domain": "search-lean-edges"})
+	tr := call(t, h, "search", map[string]any{"query": "lean edge", "domain": "search-lean-edges"})
 	mustNotError(t, tr)
 
 	var resp struct {

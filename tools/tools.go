@@ -154,7 +154,10 @@ func (h *Handler) getNode(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "recall"); err != nil {
+		return nil, err
+	}
+	if err := requireNonEmpty(map[string]string{"id": a.ID}); err != nil {
 		return nil, err
 	}
 	nwe, err := h.store.GetNode(a.ID)

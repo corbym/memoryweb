@@ -312,8 +312,8 @@ func TestSignificance_TagsFilter_IncludesMatchingNodes(t *testing.T) {
 	linker1 := addNode(t, h, "Linker for tagged", "proj", nil)
 	linker2 := addNode(t, h, "Linker for untagged", "proj", nil)
 
-	call(t, h, "connect", map[string]interface{}{"from_memory": linker1, "to_memory": tagged, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]interface{}{"from_memory": linker2, "to_memory": untagged, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker1, "to_memory": tagged, "relationship": "connects_to", "narrative": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker2, "to_memory": untagged, "relationship": "connects_to", "narrative": "link"})
 
 	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "mytag"})
 	mustNotError(t, tr)
@@ -357,9 +357,9 @@ func TestSignificance_TagsFilter_MultiTag_OR(t *testing.T) {
 	linker2 := addNode(t, h, "Linker bar", "proj", nil)
 	linker3 := addNode(t, h, "Linker neither", "proj", nil)
 
-	call(t, h, "connect", map[string]interface{}{"from_memory": linker1, "to_memory": fooNode, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]interface{}{"from_memory": linker2, "to_memory": barNode, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]interface{}{"from_memory": linker3, "to_memory": neither, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker1, "to_memory": fooNode, "relationship": "connects_to", "narrative": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker2, "to_memory": barNode, "relationship": "connects_to", "narrative": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker3, "to_memory": neither, "relationship": "connects_to", "narrative": "link"})
 
 	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "foo,bar"})
 	mustNotError(t, tr)
@@ -397,7 +397,7 @@ func TestSignificance_TagsFilter_NoMatch_EmptyStructural(t *testing.T) {
 
 	node := addNode(t, h, "Some node", "proj", nil)
 	linker := addNode(t, h, "Linker", "proj", nil)
-	call(t, h, "connect", map[string]interface{}{"from_memory": linker, "to_memory": node, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker, "to_memory": node, "relationship": "connects_to", "narrative": "link"})
 
 	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "nonexistent-tag"})
 	mustNotError(t, tr)
@@ -425,7 +425,7 @@ func TestSignificance_TagsFilter_WholeWordMatch(t *testing.T) {
 
 	foobar := addNode(t, h, "Foobar node", "proj", map[string]interface{}{"tags": "foobar"})
 	linker := addNode(t, h, "Linker", "proj", nil)
-	call(t, h, "connect", map[string]interface{}{"from_memory": linker, "to_memory": foobar, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]interface{}{"from_memory": linker, "to_memory": foobar, "relationship": "connects_to", "narrative": "link"})
 
 	tr := call(t, h, "significance", map[string]interface{}{"domain": "proj", "tags": "foo"})
 	mustNotError(t, tr)

@@ -10,7 +10,10 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		Exact    bool   `json:"exact"`
 		MemoryID string `json:"memory_id"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "search"); err != nil {
+		return nil, err
+	}
+	if err := requireNonEmpty(map[string]string{"query": a.Query}); err != nil {
 		return nil, err
 	}
 	if a.Limit <= 0 {

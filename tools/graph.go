@@ -14,7 +14,13 @@ func (h *Handler) findConnections(args json.RawMessage) (*ToolResult, error) {
 		ToLabel   string `json:"to_label"`
 		Domain    string `json:"domain"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "why_connected"); err != nil {
+		return nil, err
+	}
+	if err := requireNonEmpty(map[string]string{
+		"from_label": a.FromLabel,
+		"to_label":   a.ToLabel,
+	}); err != nil {
 		return nil, err
 	}
 	result, err := h.store.FindConnections(a.FromLabel, a.ToLabel, a.Domain)
@@ -30,7 +36,7 @@ func (h *Handler) tracePath(args json.RawMessage) (*ToolResult, error) {
 		FromID string `json:"from_id"`
 		ToID   string `json:"to_id"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "trace"); err != nil {
 		return nil, err
 	}
 	if a.FromID == "" || a.ToID == "" {
@@ -67,7 +73,7 @@ func (h *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 		MemoryID string `json:"memory_id"`
 		Limit    int    `json:"limit"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "visualise"); err != nil {
 		return nil, err
 	}
 

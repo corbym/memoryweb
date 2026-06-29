@@ -22,7 +22,7 @@ func detectLegacyNodeUpdateKeys(raw json.RawMessage) string {
 }
 
 func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
-	return dispatchBatch(args, h.updateNodeSingle, h.updateNodesBatch)
+	return dispatchBatch(args, "revise", h.updateNodeSingle, h.updateNodesBatch)
 }
 
 func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
@@ -44,7 +44,7 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		Transient   *bool   `json:"transient"`
 		NodeKind    *string `json:"node_kind"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "revise"); err != nil {
 		return nil, err
 	}
 	if a.ID == "" {
@@ -93,16 +93,7 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 
 // updateNodesBatch handles the batch mode of revise: items is the raw JSON array of update objects.
 func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
-	var rawItems []json.RawMessage
-	if err := json.Unmarshal(items, &rawItems); err != nil {
-		return nil, err
-	}
-	for i, raw := range rawItems {
-		if msg := detectLegacyDecisionTypeKey(raw); msg != "" {
-			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
-		}
-	}
-	var updateList []struct {
+	type updateItem struct {
 		ID          string  `json:"id"`
 		Label       *string `json:"label"`
 		Description *string `json:"description"`
@@ -112,7 +103,17 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		Transient   *bool   `json:"transient"`
 		NodeKind    *string `json:"node_kind"`
 	}
-	if err := json.Unmarshal(items, &updateList); err != nil {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(items, &rawItems); err != nil {
+		return nil, err
+	}
+	for i, raw := range rawItems {
+		if msg := detectLegacyDecisionTypeKey(raw); msg != "" {
+			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
+		}
+	}
+	updateList, err := decodeBatchItems[updateItem](items, "revise")
+	if err != nil {
 		return nil, err
 	}
 	inputs := make([]db.NodeUpdateInput, len(updateList))
@@ -187,7 +188,7 @@ func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
 			OccurredAt  *string `json:"occurred_at"`
 		} `json:"updates"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "revise"); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(a.Updates)

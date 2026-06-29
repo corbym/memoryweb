@@ -17,7 +17,7 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		Tags          string `json:"tags"`
 		Mode          string `json:"mode"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "significance"); err != nil {
 		return nil, err
 	}
 	if a.Domain == "" && a.MemoryID == "" {

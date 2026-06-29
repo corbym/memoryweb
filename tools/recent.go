@@ -7,6 +7,7 @@ import (
 )
 
 func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
+	args = argsOrEmptyObject(args)
 	var a struct {
 		Domain        string `json:"domain"`
 		Limit         int    `json:"limit"`
@@ -14,7 +15,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		Tags          string `json:"tags"`
 		MemoryID      string `json:"memory_id"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "recent"); err != nil {
 		return nil, err
 	}
 

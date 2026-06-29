@@ -125,11 +125,14 @@ func (h *Handler) orientWithTopic(domain, topic string) (*ToolResult, error) {
 }
 
 func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
+	if argsEmpty(args) {
+		return h.orientCrossDomain()
+	}
 	var a struct {
 		Domain string `json:"domain"`
 		Topic  string `json:"topic"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "orient"); err != nil {
 		return nil, err
 	}
 

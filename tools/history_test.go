@@ -220,8 +220,8 @@ func TestHistory_MemoryIDMode_ReturnsChronological(t *testing.T) {
 	anchor := addNode(t, h, "Anchor", "hmid", map[string]any{"occurred_at": "2026-01-01", "why_matters": "anchor node"})
 	n1 := addNode(t, h, "March node", "hmid", map[string]any{"occurred_at": "2026-03-01", "why_matters": "march event"})
 	n2 := addNode(t, h, "June node", "hmid", map[string]any{"occurred_at": "2026-06-01", "why_matters": "june event"})
-	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": n1, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": n2, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": n1, "relationship": "connects_to", "narrative": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": n2, "relationship": "connects_to", "narrative": "link"})
 
 	tr := call(t, h, "history", map[string]any{"memory_id": anchor})
 	mustNotError(t, tr)
@@ -246,7 +246,7 @@ func TestHistory_MemoryIDMode_DomainClipped(t *testing.T) {
 
 	anchor := addNode(t, h, "Anchor", "hmid2", nil)
 	foreign := addNode(t, h, "Foreign", "other-domain", nil)
-	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": foreign, "relationship": "connects_to", "because": "cross"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": foreign, "relationship": "connects_to", "narrative": "cross"})
 
 	tr := call(t, h, "history", map[string]any{"memory_id": anchor})
 	mustNotError(t, tr)
@@ -268,8 +268,8 @@ func TestHistory_MemoryIDMode_ImportantOnly(t *testing.T) {
 	anchor := addNode(t, h, "Anchor", "hmid3", nil)
 	dated := addNode(t, h, "Dated", "hmid3", map[string]any{"occurred_at": "2026-04-01", "why_matters": "dated decision"})
 	undated := addNode(t, h, "Undated", "hmid3", nil)
-	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": dated, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": undated, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": dated, "relationship": "connects_to", "narrative": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": undated, "relationship": "connects_to", "narrative": "link"})
 
 	tr := call(t, h, "history", map[string]any{"memory_id": anchor, "important_only": true})
 	mustNotError(t, tr)
@@ -295,8 +295,8 @@ func TestHistory_MemoryIDMode_TagsFilter(t *testing.T) {
 	anchor := addNode(t, h, "Anchor", "hmid4", nil)
 	tagged := addNode(t, h, "Tagged", "hmid4", map[string]any{"tags": "release"})
 	untagged := addNode(t, h, "Untagged", "hmid4", nil)
-	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": tagged, "relationship": "connects_to", "because": "link"})
-	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": untagged, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": tagged, "relationship": "connects_to", "narrative": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": untagged, "relationship": "connects_to", "narrative": "link"})
 
 	tr := call(t, h, "history", map[string]any{"memory_id": anchor, "tags": "release"})
 	mustNotError(t, tr)
@@ -321,7 +321,7 @@ func TestHistory_MemoryIDMode_TakesPrecedenceOverDomain(t *testing.T) {
 	anchor := addNode(t, h, "Anchor", "hmid5", nil)
 	connected := addNode(t, h, "Connected", "hmid5", nil)
 	notConnected := addNode(t, h, "NotConnected", "hmid5", nil)
-	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": connected, "relationship": "connects_to", "because": "link"})
+	call(t, h, "connect", map[string]any{"from_memory": anchor, "to_memory": connected, "relationship": "connects_to", "narrative": "link"})
 
 	tr := call(t, h, "history", map[string]any{"memory_id": anchor, "domain": "hmid5"})
 	mustNotError(t, tr)

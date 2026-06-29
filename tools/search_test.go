@@ -44,18 +44,16 @@ func TestSearchNodes_FindsByWhyMatters(t *testing.T) {
 	}
 }
 
-func TestSearchNodes_EmptyQueryReturnsAll(t *testing.T) {
+func TestSearchNodes_EmptyQueryRejects(t *testing.T) {
 	_, h := newEnv(t)
-	id1 := addNode(t, h, "Node Alpha", "project-x", nil)
-	id2 := addNode(t, h, "Node Beta", "project-x", nil)
+	addNode(t, h, "Node Alpha", "project-x", nil)
 
 	tr := call(t, h, "search", map[string]any{
 		"query": "", "domain": "project-x", "limit": 10,
 	})
-	mustNotError(t, tr)
-	ids := searchIDs(t, tr)
-	if !contains(ids, id1) || !contains(ids, id2) {
-		t.Errorf("empty query should return all nodes; got %v", ids)
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "query is required") {
+		t.Errorf("expected query required error, got: %s", text(t, tr))
 	}
 }
 

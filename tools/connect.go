@@ -9,7 +9,7 @@ import (
 )
 
 func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
-	return dispatchBatch(args, h.addEdgeSingle, h.addEdgesBatch)
+	return dispatchBatch(args, "connect", h.addEdgeSingle, h.addEdgesBatch)
 }
 
 func (h *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
@@ -24,7 +24,13 @@ func (h *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
 		Relationship string `json:"relationship"`
 		Narrative    string `json:"narrative"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "connect"); err != nil {
+		return nil, err
+	}
+	if err := requireNonEmpty(map[string]string{
+		"from_memory": a.FromMemory,
+		"to_memory":   a.ToMemory,
+	}); err != nil {
 		return nil, err
 	}
 	edge, err := h.store.AddEdge(a.FromMemory, a.ToMemory, a.Relationship, a.Narrative)
@@ -62,23 +68,23 @@ func detectLegacyEdgeKeys(raw json.RawMessage) string {
 
 // addEdgesBatch handles the batch mode of connect: items is the raw JSON array of edge objects.
 func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
-	var rawItems []json.RawMessage
-	if err := json.Unmarshal(items, &rawItems); err != nil {
-		return nil, err
-	}
-	// Check each item for retired parameter names before any DB work.
-	for i, raw := range rawItems {
-		if msg := detectLegacyEdgeKeys(raw); msg != "" {
-			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
-		}
-	}
-	var edgeList []struct {
+	type edgeItem struct {
 		FromMemory   string `json:"from_memory"`
 		ToMemory     string `json:"to_memory"`
 		Relationship string `json:"relationship"`
 		Narrative    string `json:"narrative"`
 	}
-	if err := json.Unmarshal(items, &edgeList); err != nil {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(items, &rawItems); err != nil {
+		return nil, err
+	}
+	for i, raw := range rawItems {
+		if msg := detectLegacyEdgeKeys(raw); msg != "" {
+			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
+		}
+	}
+	edgeList, err := decodeBatchItems[edgeItem](items, "connect")
+	if err != nil {
 		return nil, err
 	}
 	inputs := make([]db.EdgeInput, len(edgeList))
@@ -103,7 +109,7 @@ func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 		ID    string `json:"id"`
 		Limit int    `json:"limit"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "suggest_connections"); err != nil {
 		return nil, err
 	}
 	if a.ID == "" {
@@ -127,7 +133,7 @@ func (h *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "disconnect"); err != nil {
 		return nil, err
 	}
 	if a.ID == "" {

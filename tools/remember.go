@@ -9,7 +9,7 @@ import (
 )
 
 func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
-	return dispatchBatch(args, h.addNodeSingle, h.addNodesBatch)
+	return dispatchBatch(args, "remember", h.addNodeSingle, h.addNodesBatch)
 }
 
 func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
@@ -28,7 +28,13 @@ func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		Transient   bool              `json:"transient"`
 		NodeKind    string            `json:"node_kind"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "remember"); err != nil {
+		return nil, err
+	}
+	if err := requireNonEmpty(map[string]string{
+		"label":  a.Label,
+		"domain": a.Domain,
+	}); err != nil {
 		return nil, err
 	}
 	var occurredAt *time.Time
@@ -133,16 +139,7 @@ func processRelatedTo(h *Handler, fromID string, entries []json.RawMessage) []sk
 
 // addNodesBatch handles the batch mode of remember: items is the raw JSON array of node objects.
 func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
-	var rawItems []json.RawMessage
-	if err := json.Unmarshal(items, &rawItems); err != nil {
-		return nil, err
-	}
-	for i, raw := range rawItems {
-		if msg := detectLegacyDecisionTypeKey(raw); msg != "" {
-			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
-		}
-	}
-	var nodeList []struct {
+	type nodeItem struct {
 		Label       string            `json:"label"`
 		Description string            `json:"description"`
 		WhyMatters  string            `json:"why_matters"`
@@ -153,8 +150,26 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		NodeKind    string            `json:"node_kind"`
 		RelatedTo   []json.RawMessage `json:"related_to"`
 	}
-	if err := json.Unmarshal(items, &nodeList); err != nil {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(items, &rawItems); err != nil {
 		return nil, err
+	}
+	for i, raw := range rawItems {
+		if msg := detectLegacyDecisionTypeKey(raw); msg != "" {
+			return errorResult(fmt.Sprintf("item %d: %s", i, msg)), nil
+		}
+	}
+	nodeList, err := decodeBatchItems[nodeItem](items, "remember")
+	if err != nil {
+		return nil, err
+	}
+	for i, n := range nodeList {
+		if err := requireNonEmpty(map[string]string{
+			"label":  n.Label,
+			"domain": n.Domain,
+		}); err != nil {
+			return nil, fmt.Errorf("item %d: %w", i, err)
+		}
 	}
 	inputs := make([]db.NodeInput, len(nodeList))
 	for i, n := range nodeList {
@@ -240,7 +255,7 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 			Transient   bool   `json:"transient"`
 		} `json:"nodes"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := decodeParams(args, &a, "remember"); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(a.Nodes)

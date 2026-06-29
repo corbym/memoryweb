@@ -549,7 +549,7 @@ func TestRevise_TransientUpdatable(t *testing.T) {
 		id1 := addNode(t, h, "Node with edge", "transient-test", nil)
 		id2 := addNode(t, h, "Connected node", "transient-test", nil)
 		mustNotError(t, call(t, h, "connect", map[string]any{
-			"from_memory": id1, "to_memory": id2, "relationship": "connects_to", "because": "test edge",
+			"from_memory": id1, "to_memory": id2, "relationship": "connects_to", "narrative": "test edge",
 		}))
 
 		mustNotError(t, call(t, h, "revise", map[string]any{"id": id1, "node_kind": "transient"}))
