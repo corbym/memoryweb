@@ -1,6 +1,6 @@
 # node_kind filter — search, recent, audit, history, significance
 
-**Status:** OPEN (memoryweb half)
+**Status:** COMPLETE
 
 **Shared-surface nodes:**
 - `cross-cutting-gap-neither-product-s-search-list-tools-support-filtering-or-listing-by-node-kind-11f49cfb`

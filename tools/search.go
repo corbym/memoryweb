@@ -9,13 +9,17 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		Limit    int    `json:"limit"`
 		Exact    bool   `json:"exact"`
 		MemoryID string `json:"memory_id"`
+		NodeKind string `json:"node_kind"`
 		Digest   bool   `json:"digest"`
 	}
 	if err := decodeParams(args, &a, "search"); err != nil {
 		return nil, err
 	}
-	if err := requireNonEmpty(map[string]string{"query": a.Query}); err != nil {
-		return nil, err
+	nodeKinds := splitNodeKinds(a.NodeKind)
+	if a.Query == "" && len(nodeKinds) == 0 {
+		if err := requireNonEmpty(map[string]string{"query": a.Query}); err != nil {
+			return nil, err
+		}
 	}
 	if a.Limit <= 0 {
 		a.Limit = 10
@@ -24,7 +28,7 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		a.Limit = 500
 	}
 	if a.Exact {
-		result, err := h.store.SearchNodesExact(a.Query, a.Domain, a.Limit, a.MemoryID)
+		result, err := h.store.SearchNodesExact(a.Query, a.Domain, a.Limit, a.MemoryID, nodeKinds)
 		if err != nil {
 			return nil, err
 		}
@@ -32,7 +36,7 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 
-	result, err := h.store.SearchNodes(a.Query, a.Domain, a.Limit, a.MemoryID)
+	result, err := h.store.SearchNodes(a.Query, a.Domain, a.Limit, a.MemoryID, nodeKinds)
 	if err != nil {
 		return nil, err
 	}

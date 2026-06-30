@@ -63,6 +63,31 @@ func nodeMatchesTags(tagString string, tags []string) bool {
 	return false
 }
 
+// nodeKindFilter appends `col IN (?,?,...)` when kinds is non-empty.
+func nodeKindFilter(col string, kinds []string, conds []string, args []interface{}) ([]string, []interface{}) {
+	if len(kinds) == 0 {
+		return conds, args
+	}
+	ph, phArgs := inClause(kinds)
+	conds = append(conds, col+" IN ("+ph+")")
+	args = append(args, phArgs...)
+	return conds, args
+}
+
+// nodeMatchesNodeKind reports whether nodeKind is in kinds (OR semantics).
+// Empty kinds matches everything.
+func nodeMatchesNodeKind(nodeKind string, kinds []string) bool {
+	if len(kinds) == 0 {
+		return true
+	}
+	for _, k := range kinds {
+		if nodeKind == k {
+			return true
+		}
+	}
+	return false
+}
+
 // nullTimeToPtr returns a pointer to nt.Time when valid, nil otherwise.
 func nullTimeToPtr(nt sql.NullTime) *time.Time {
 	if nt.Valid {

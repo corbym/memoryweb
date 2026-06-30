@@ -8,7 +8,7 @@ import (
 func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 	// Fetch a broad slice of recent nodes across all domains then group,
 	// reusing the same logic as recentChanges(group_by_domain=true).
-	all, err := h.store.RecentChanges("", 1000)
+	all, err := h.store.RecentChanges("", 1000, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 	}
 	staleCount, _ := h.store.CountStaleDrift(domain)
 
-	result, err := h.store.SearchNodes(topic, domain, 5, "")
+	result, err := h.store.SearchNodes(topic, domain, 5, "", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -76,13 +76,13 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 		relevant[i] = toLeanEntry(nr.Node)
 	}
 
-	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, 20)
+	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, 20)
 	if err != nil {
 		return nil, err
 	}
 	spineEntries := toLeanEntries(spineNodes)
 
-	recent, err := h.store.RecentChanges(domain, 5)
+	recent, err := h.store.RecentChanges(domain, 5, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -161,19 +161,19 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	staleCount, _ := h.store.CountStaleDrift(a.Domain)
 
 	// Step 2: fetch significant nodes (structurally load-bearing, recency-weighted inbound degree).
-	sigResult, err := h.store.GetSignificance(a.Domain, 10, 90, nil)
+	sigResult, err := h.store.GetSignificance(a.Domain, 10, 90, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 3: fetch recent changes — capped at 5.
-	recent, err := h.store.RecentChanges(a.Domain, 5)
+	recent, err := h.store.RecentChanges(a.Domain, 5, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 4: fetch declared decision spine (nodes with occurred_at set, chronological).
-	spineNodes, err := h.store.Timeline(a.Domain, true, nil, nil, nil, 20)
+	spineNodes, err := h.store.Timeline(a.Domain, true, nil, nil, nil, nil, 20)
 	if err != nil {
 		return nil, err
 	}

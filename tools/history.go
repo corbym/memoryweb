@@ -17,6 +17,7 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 		Depth         int    `json:"depth"`
 		ImportantOnly bool   `json:"important_only"`
 		Tags          string `json:"tags"`
+		NodeKind      string `json:"node_kind"`
 		From          string `json:"from"`
 		To            string `json:"to"`
 		Limit         int    `json:"limit"`
@@ -59,14 +60,15 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 			tags = append(tags, tag)
 		}
 	}
+	nodeKinds := splitNodeKinds(a.NodeKind)
 	var nodes []db.Node
 	if a.MemoryID != "" {
 		if a.Depth <= 0 {
 			a.Depth = 2
 		}
-		nodes, err = h.store.GetHistoryForMemoryID(a.MemoryID, a.Depth, a.ImportantOnly, tags, from, to, a.Limit)
+		nodes, err = h.store.GetHistoryForMemoryID(a.MemoryID, a.Depth, a.ImportantOnly, tags, nodeKinds, from, to, a.Limit)
 	} else {
-		nodes, err = h.store.Timeline(a.Domain, a.ImportantOnly, tags, from, to, a.Limit)
+		nodes, err = h.store.Timeline(a.Domain, a.ImportantOnly, tags, nodeKinds, from, to, a.Limit)
 	}
 	if err != nil {
 		return errorResult(err.Error()), nil

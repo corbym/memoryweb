@@ -214,7 +214,7 @@ func runDream(store *db.Store, out io.Writer) error {
 	fmt.Fprintln(out)
 
 	// ── recent nodes ──────────────────────────────────────────────────────────
-	recent, err := store.RecentChanges("", 10)
+	recent, err := store.RecentChanges("", 10, nil)
 	if err != nil {
 		return fmt.Errorf("recent changes: %w", err)
 	}
@@ -229,7 +229,7 @@ func runDream(store *db.Store, out io.Writer) error {
 	fmt.Fprintln(out)
 
 	// ── drift candidates ──────────────────────────────────────────────────────
-	drift, err := store.FindDrift("", 5, nil, "", 2)
+	drift, err := store.FindDrift("", 5, nil, nil, "", 2)
 	if err != nil {
 		return fmt.Errorf("find drift: %w", err)
 	}
@@ -244,7 +244,7 @@ func runDream(store *db.Store, out io.Writer) error {
 	fmt.Fprintln(out)
 
 	// ── disconnected nodes ────────────────────────────────────────────────────
-	disconnected, err := store.FindDisconnected("", nil)
+	disconnected, err := store.FindDisconnected("", nil, nil)
 	if err != nil {
 		return fmt.Errorf("find disconnected: %w", err)
 	}
@@ -885,7 +885,7 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 	}
 
 	// ── 8. Drift snapshot (informational) ─────────────────────────────────────
-	drift, driftErr := store.FindDrift("", 100, nil, "", 2)
+	drift, driftErr := store.FindDrift("", 100, nil, nil, "", 2)
 	if driftErr != nil {
 		add("Drift", "info", fmt.Sprintf("error reading drift candidates: %v", driftErr))
 	} else if len(drift) == 0 {

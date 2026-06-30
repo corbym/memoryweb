@@ -500,7 +500,7 @@ func (s *Store) RestoreNode(id string) error {
 }
 
 // ListArchived returns all archived nodes, optionally filtered by domain.
-func (s *Store) ListArchived(domain string, tags []string) ([]Node, error) {
+func (s *Store) ListArchived(domain string, tags, nodeKinds []string) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 
 	conds := []string{"archived_at IS NOT NULL"}
@@ -511,6 +511,7 @@ func (s *Store) ListArchived(domain string, tags []string) ([]Node, error) {
 		args = append(args, domain)
 	}
 	conds, args = tagFilter("tags", tags, conds, args)
+	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY archived_at DESC"

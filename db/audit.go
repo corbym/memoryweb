@@ -24,7 +24,7 @@ type DriftCandidate struct {
 //  4. Duplicate label: identical lowercased label in the same domain.
 //  5. Transient node older than 7 days.
 //  6. Standing node with fewer than 2 inbound edges and older than 30 days.
-func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID string, depth int) ([]DriftCandidate, error) {
+func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, memoryID string, depth int) ([]DriftCandidate, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -290,6 +290,11 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 		out = filter(out, func(c DriftCandidate) bool { return nodeMatchesTags(c.Node.Tags, tags) })
 	}
 
+	// Post-filter by node_kind (OR match).
+	if len(nodeKinds) > 0 {
+		out = filter(out, func(c DriftCandidate) bool { return nodeMatchesNodeKind(c.Node.NodeKind, nodeKinds) })
+	}
+
 	if len(out) > limit {
 		out = out[:limit]
 	}
@@ -330,7 +335,7 @@ func (s *Store) FindDrift(domain string, limit int, tags []string, memoryID stri
 // audit(mode=stale) — i.e. the union of all FindDrift rules. Used to populate
 // the stale_count field in the orient response.
 func (s *Store) CountStaleDrift(domain string) (int, error) {
-	candidates, err := s.FindDrift(domain, 1000, nil, "", 2)
+	candidates, err := s.FindDrift(domain, 1000, nil, nil, "", 2)
 	if err != nil {
 		return 0, err
 	}
@@ -338,7 +343,7 @@ func (s *Store) CountStaleDrift(domain string) (int, error) {
 }
 
 // FindDisconnected returns live, non-transient nodes that have no edges// (neither as from_node nor as to_node), optionally scoped to a domain.
-func (s *Store) FindDisconnected(domain string, tags []string) ([]Node, error) {
+func (s *Store) FindDisconnected(domain string, tags, nodeKinds []string) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 
 	conds := []string{
@@ -353,6 +358,7 @@ func (s *Store) FindDisconnected(domain string, tags []string) ([]Node, error) {
 		args = append(args, domain)
 	}
 	conds, args = tagFilter("tags", tags, conds, args)
+	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	args = append(args, 50)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +

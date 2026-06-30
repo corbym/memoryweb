@@ -10,7 +10,7 @@ func TestRecentChanges_MostRecentFirst(t *testing.T) {
 	n1 := mustAddNode(t, s, "First", "proj")
 	n2 := mustAddNode(t, s, "Second", "proj")
 
-	nodes, err := s.RecentChanges("proj", 10)
+	nodes, err := s.RecentChanges("proj", 10, nil)
 	if err != nil {
 		t.Fatalf("RecentChanges: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestRecentChanges_ExcludesArchived(t *testing.T) {
 	mustAddNode(t, s, "stays live", "proj")
 	s.ArchiveNode(n.ID, "reason")
 
-	nodes, err := s.RecentChanges("proj", 10)
+	nodes, err := s.RecentChanges("proj", 10, nil)
 	if err != nil {
 		t.Fatalf("RecentChanges: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestRecentChanges_NoDomain_AllLiveNodes(t *testing.T) {
 	mustAddNode(t, s, "A", "domain-a")
 	mustAddNode(t, s, "B", "domain-b")
 
-	nodes, err := s.RecentChanges("", 10)
+	nodes, err := s.RecentChanges("", 10, nil)
 	if err != nil {
 		t.Fatalf("RecentChanges: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestTimeline_AscendingOrder(t *testing.T) {
 	n1, _ := s.AddNode("Early", "d", "w", "proj", ptr(early), "", "")
 	n2, _ := s.AddNode("Late", "d", "w", "proj", ptr(late), "", "")
 
-	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
+	nodes, err := s.Timeline("proj", false, nil, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestTimeline_DefaultModeIncludesNullOccurredAt(t *testing.T) {
 	ts := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", "")
 
-	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
+	nodes, err := s.Timeline("proj", false, nil, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestTimeline_ImportantOnlyExcludesNullOccurredAt(t *testing.T) {
 	ts := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	dated, _ := s.AddNode("dated", "d", "w", "proj", ptr(ts), "", "")
 
-	nodes, err := s.Timeline("proj", true, nil, nil, nil, 10)
+	nodes, err := s.Timeline("proj", true, nil, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestTimeline_ExcludesArchived(t *testing.T) {
 	n, _ := s.AddNode("archived event", "d", "w", "proj", ptr(ts), "", "")
 	s.ArchiveNode(n.ID, "reason")
 
-	nodes, err := s.Timeline("proj", false, nil, nil, nil, 10)
+	nodes, err := s.Timeline("proj", false, nil, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestTimeline_DateRangeFilter(t *testing.T) {
 	from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
 
-	nodes, err := s.Timeline("proj", false, nil, &from, &to, 10)
+	nodes, err := s.Timeline("proj", false, nil, nil, &from, &to, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestTimeline_FromToFiltersByCoalesceDate(t *testing.T) {
 	from := time.Now().UTC().Add(-time.Hour)
 	to := time.Now().UTC().Add(time.Hour)
 
-	nodes, err := s.Timeline("proj", false, nil, &from, &to, 10)
+	nodes, err := s.Timeline("proj", false, nil, nil, &from, &to, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestTimeline_TagFilter_WholeWordMatch(t *testing.T) {
 	_, _ = s.AddNode("node C", "d", "w", "proj", ptr(ts), "release", "")
 	_, _ = s.AddNode("node D", "d", "w", "proj", ptr(ts), "", "")
 
-	nodes, err := s.Timeline("proj", false, []string{"architecture"}, nil, nil, 10)
+	nodes, err := s.Timeline("proj", false, []string{"architecture"}, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestGetHistoryForMemoryID_ReturnsChronological(t *testing.T) {
 	s.AddEdge(anchor.ID, n1.ID, "connects_to", "")
 	s.AddEdge(anchor.ID, n2.ID, "connects_to", "")
 
-	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, nil, nil, nil, 10)
+	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, nil, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("GetHistoryForMemoryID: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestGetHistoryForMemoryID_DomainClipped(t *testing.T) {
 	foreign := mustAddNode(t, s, "Foreign", "other")
 	s.AddEdge(anchor.ID, foreign.ID, "connects_to", "")
 
-	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, nil, nil, nil, 10)
+	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, nil, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("GetHistoryForMemoryID: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestGetHistoryForMemoryID_ImportantOnly(t *testing.T) {
 	s.AddEdge(anchor.ID, dated.ID, "connects_to", "")
 	s.AddEdge(anchor.ID, undated.ID, "connects_to", "")
 
-	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, true, nil, nil, nil, 10)
+	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, true, nil, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("GetHistoryForMemoryID: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestGetHistoryForMemoryID_TagsFilter(t *testing.T) {
 	s.AddEdge(anchor.ID, tagged.ID, "connects_to", "")
 	s.AddEdge(anchor.ID, untagged.ID, "connects_to", "")
 
-	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, []string{"mytag"}, nil, nil, 10)
+	nodes, err := s.GetHistoryForMemoryID(anchor.ID, 2, false, []string{"mytag"}, nil, nil, nil, 10)
 	if err != nil {
 		t.Fatalf("GetHistoryForMemoryID: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestGetHistoryForMemoryID_TagsFilter(t *testing.T) {
 
 func TestGetHistoryForMemoryID_UnknownMemoryID(t *testing.T) {
 	s := newStore(t)
-	_, err := s.GetHistoryForMemoryID("nonexistent-id", 2, false, nil, nil, nil, 10)
+	_, err := s.GetHistoryForMemoryID("nonexistent-id", 2, false, nil, nil, nil, nil, 10)
 	if err == nil {
 		t.Error("expected error for unknown memory_id, got nil")
 	}
@@ -362,7 +362,7 @@ func TestRecentChangesByTags_MatchesOneTag(t *testing.T) {
 	tagged := mustAddNodeWithTags(t, s, "TDD story", "proj", "TDD testing")
 	mustAddNode(t, s, "untagged story", "proj")
 
-	nodes, err := s.RecentChangesScoped("", 2, "proj", []string{"TDD"}, 10)
+	nodes, err := s.RecentChangesScoped("", 2, "proj", []string{"TDD"}, nil, 10)
 	if err != nil {
 		t.Fatalf("RecentChangesScoped: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestRecentChangesByTags_OR_Semantics(t *testing.T) {
 	a := mustAddNodeWithTags(t, s, "alpha", "proj", "TDD")
 	b := mustAddNodeWithTags(t, s, "beta", "proj", "refactor")
 
-	nodes, err := s.RecentChangesScoped("", 2, "proj", []string{"TDD", "refactor"}, 10)
+	nodes, err := s.RecentChangesScoped("", 2, "proj", []string{"TDD", "refactor"}, nil, 10)
 	if err != nil {
 		t.Fatalf("RecentChangesScoped: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestRecentChangesByTags_DomainScoped(t *testing.T) {
 	inDomain := mustAddNodeWithTags(t, s, "in domain", "proj-a", "TDD")
 	mustAddNodeWithTags(t, s, "other domain", "proj-b", "TDD")
 
-	nodes, err := s.RecentChangesScoped("", 2, "proj-a", []string{"TDD"}, 10)
+	nodes, err := s.RecentChangesScoped("", 2, "proj-a", []string{"TDD"}, nil, 10)
 	if err != nil {
 		t.Fatalf("RecentChangesScoped: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestRecentChangesForMemoryID_NeighbourhoodOnly(t *testing.T) {
 	unrelated := mustAddNode(t, s, "unrelated", "proj")
 	s.AddEdge(anchor.ID, neighbour.ID, "connects_to", "")
 
-	nodes, err := s.RecentChangesScoped(anchor.ID, 2, "", nil, 10)
+	nodes, err := s.RecentChangesScoped(anchor.ID, 2, "", nil, nil, 10)
 	if err != nil {
 		t.Fatalf("RecentChangesScoped: %v", err)
 	}

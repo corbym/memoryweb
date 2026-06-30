@@ -90,7 +90,7 @@ func TestArchiveNode_SetsArchivedAt(t *testing.T) {
 	}
 
 	// ListArchived should now include this node
-	archived, err := s.ListArchived("", nil)
+	archived, err := s.ListArchived("", nil, nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestRestoreNode_ReappearsInSearch(t *testing.T) {
 	s.ArchiveNode(n.ID, "reason")
 
 	// hidden
-	res, _ := s.SearchNodes("restore me", "proj", 10, "")
+	res, _ := s.SearchNodes("restore me", "proj", 10, "", nil)
 	for _, node := range res.Nodes {
 		if node.ID == n.ID {
 			t.Fatal("should be hidden before restore")
@@ -145,7 +145,7 @@ func TestRestoreNode_ReappearsInSearch(t *testing.T) {
 	}
 
 	// visible again
-	res, _ = s.SearchNodes("restore me", "proj", 10, "")
+	res, _ = s.SearchNodes("restore me", "proj", 10, "", nil)
 	found := false
 	for _, node := range res.Nodes {
 		if node.ID == n.ID {
@@ -163,7 +163,7 @@ func TestRestoreNode_RemovedFromListArchived(t *testing.T) {
 	s.ArchiveNode(n.ID, "reason")
 	s.RestoreNode(n.ID)
 
-	archived, err := s.ListArchived("", nil)
+	archived, err := s.ListArchived("", nil, nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestListArchived_DomainFilter(t *testing.T) {
 	s.ArchiveNode(nA.ID, "")
 	s.ArchiveNode(nB.ID, "")
 
-	archived, err := s.ListArchived("domain-a", nil)
+	archived, err := s.ListArchived("domain-a", nil, nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestListArchived_Empty(t *testing.T) {
 	s := newStore(t)
 	mustAddNode(t, s, "live node", "proj")
 
-	archived, err := s.ListArchived("", nil)
+	archived, err := s.ListArchived("", nil, nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestListArchived_NoDomainReturnsAll(t *testing.T) {
 	s.ArchiveNode(nA.ID, "")
 	s.ArchiveNode(nB.ID, "")
 
-	archived, err := s.ListArchived("", nil)
+	archived, err := s.ListArchived("", nil, nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestListArchived_LiveNodesNotIncluded(t *testing.T) {
 	archived := mustAddNode(t, s, "archived", "proj")
 	s.ArchiveNode(archived.ID, "reason")
 
-	listed, err := s.ListArchived("", nil)
+	listed, err := s.ListArchived("", nil, nil)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestAddNode_WithTags_SearchableByTag(t *testing.T) {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	res, err := s.SearchNodes("testing approval parameterised", "proj", 10, "")
+	res, err := s.SearchNodes("testing approval parameterised", "proj", 10, "", nil)
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -617,7 +617,7 @@ func TestListArchived_TagsFilter(t *testing.T) {
 	s.ArchiveNode(n1.ID, "test archive")
 	s.ArchiveNode(n2.ID, "test archive")
 
-	nodes, err := s.ListArchived("", []string{"spike"})
+	nodes, err := s.ListArchived("", []string{"spike"}, nil)
 	if err != nil {
 		t.Fatalf("ListArchived with tags: %v", err)
 	}

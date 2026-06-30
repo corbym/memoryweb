@@ -175,18 +175,31 @@ func errorResult(msg string) *ToolResult {
 	}
 }
 
+// splitTrimmed returns trimmed, non-empty tokens from parts.
+func splitTrimmed(parts []string) []string {
+	var out []string
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // splitTags splits a comma-separated tags string into trimmed, non-empty tokens.
 func splitTags(s string) []string {
 	if s == "" {
 		return nil
 	}
-	var out []string
-	for _, t := range strings.Split(s, ",") {
-		if t = strings.TrimSpace(t); t != "" {
-			out = append(out, t)
-		}
+	return splitTrimmed(strings.Split(s, ","))
+}
+
+// splitNodeKinds splits a space-separated node_kind filter into tokens (OR match).
+func splitNodeKinds(s string) []string {
+	if s == "" {
+		return nil
 	}
-	return out
+	return splitTrimmed(strings.Fields(s))
 }
 
 func (h *Handler) checkForUpdates(_ json.RawMessage) (*ToolResult, error) {

@@ -32,6 +32,15 @@ func mustAddNode(t *testing.T, s *db.Store, label, domain string) *db.Node {
 	return n
 }
 
+func mustAddNodeWithKind(t *testing.T, s *db.Store, label, domain, kind string) *db.Node {
+	t.Helper()
+	n, err := s.AddNode(label, "desc", "why", domain, nil, "", kind)
+	if err != nil {
+		t.Fatalf("AddNode(%q): %v", label, err)
+	}
+	return n
+}
+
 func mustAddNodeWithTags(t *testing.T, s *db.Store, label, domain, tags string) *db.Node {
 	t.Helper()
 	n, err := s.AddNode(label, "desc", "why", domain, nil, tags, "")

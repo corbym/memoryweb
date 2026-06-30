@@ -11,6 +11,7 @@ type auditArgs struct {
 	Domain   string `json:"domain"`
 	Limit    int    `json:"limit"`
 	Tags     string `json:"tags"`
+	NodeKind string `json:"node_kind"`
 	MemoryID string `json:"memory_id"`
 	Depth    int    `json:"depth"`
 	Digest   bool   `json:"digest"`
@@ -51,7 +52,8 @@ func (h *Handler) restoreNode(args json.RawMessage) (*ToolResult, error) {
 
 func (h *Handler) listArchived(a auditArgs) (*ToolResult, error) {
 	tags := splitTags(a.Tags)
-	nodes, err := h.store.ListArchived(a.Domain, tags)
+	nodeKinds := splitNodeKinds(a.NodeKind)
+	nodes, err := h.store.ListArchived(a.Domain, tags, nodeKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +125,8 @@ func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 		a.Depth = 2
 	}
 	tags := splitTags(a.Tags)
-	candidates, err := h.store.FindDrift(a.Domain, a.Limit, tags, a.MemoryID, a.Depth)
+	nodeKinds := splitNodeKinds(a.NodeKind)
+	candidates, err := h.store.FindDrift(a.Domain, a.Limit, tags, nodeKinds, a.MemoryID, a.Depth)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +137,8 @@ func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 
 func (h *Handler) findDisconnected(a auditArgs) (*ToolResult, error) {
 	tags := splitTags(a.Tags)
-	nodes, err := h.store.FindDisconnected(a.Domain, tags)
+	nodeKinds := splitNodeKinds(a.NodeKind)
+	nodes, err := h.store.FindDisconnected(a.Domain, tags, nodeKinds)
 	if err != nil {
 		return nil, err
 	}

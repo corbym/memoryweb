@@ -75,7 +75,7 @@ const trustJoins = `FROM nodes n
 // discounted by the same recency decay GetSignificance uses. Scores are
 // normalised to [0, 1] within the result set, ordered by trust_score DESC,
 // capped at limit.
-func (s *Store) GetTrust(domain string, limit, recencyWindowDays int, tags []string) (TrustResult, error) {
+func (s *Store) GetTrust(domain string, limit, recencyWindowDays int, tags, nodeKinds []string) (TrustResult, error) {
 	conds := []string{
 		"n.domain = ?",
 		"n.archived_at IS NULL",
@@ -83,6 +83,7 @@ func (s *Store) GetTrust(domain string, limit, recencyWindowDays int, tags []str
 	}
 	whereArgs := []interface{}{domain}
 	conds, whereArgs = tagFilter("n.tags", tags, conds, whereArgs)
+	conds, whereArgs = nodeKindFilter("n.node_kind", nodeKinds, conds, whereArgs)
 
 	args := append([]interface{}{recencyWindowDays}, whereArgs...)
 	q := `SELECT ` + trustSelectColumns + `
@@ -99,18 +100,19 @@ func (s *Store) GetTrust(domain string, limit, recencyWindowDays int, tags []str
 // getTrustByNodeIDs runs trust analysis scoped to a specific set of node IDs
 // (e.g. a neighbourhood). domain is used only for logging; it does not further
 // filter the node set. No limit truncation, matching getSignificanceByNodeIDs.
-func (s *Store) getTrustByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int) (TrustResult, error) {
+func (s *Store) getTrustByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int, nodeKinds []string) (TrustResult, error) {
 	if len(nodeIDs) == 0 {
 		return TrustResult{Nodes: []TrustNode{}, CallID: shortID()}, nil
 	}
 	ph, idArgs := inClause(nodeIDs)
+	conds := []string{"n.id IN (" + ph + ")", "n.archived_at IS NULL", "n.node_kind NOT IN ('reference', 'transient')"}
+	conds, kindArgs := nodeKindFilter("n.node_kind", nodeKinds, conds, nil)
 	args := append([]interface{}{recencyWindowDays}, idArgs...)
+	args = append(args, kindArgs...)
 
 	q := `SELECT ` + trustSelectColumns + `
 	      ` + trustJoins + `
-	      WHERE n.id IN (` + ph + `)
-	        AND n.archived_at IS NULL
-	        AND n.node_kind NOT IN ('reference', 'transient')`
+	      WHERE ` + strings.Join(conds, " AND ")
 
 	accum, order, err := s.scanTrustRows(q, args)
 	if err != nil {
@@ -121,12 +123,12 @@ func (s *Store) getTrustByNodeIDs(nodeIDs []string, domain string, recencyWindow
 
 // GetTrustForMemoryID returns trust analysis scoped to the depth-hop
 // neighbourhood of the given memory ID, clipped to the anchor's domain.
-func (s *Store) GetTrustForMemoryID(nodeID string, depth int, recencyWindowDays int) (TrustResult, error) {
+func (s *Store) GetTrustForMemoryID(nodeID string, depth int, recencyWindowDays int, nodeKinds []string) (TrustResult, error) {
 	ids, anchorDomain, err := s.neighbourhoodIDs(nodeID, depth)
 	if err != nil {
 		return TrustResult{}, err
 	}
-	return s.getTrustByNodeIDs(ids, anchorDomain, recencyWindowDays)
+	return s.getTrustByNodeIDs(ids, anchorDomain, recencyWindowDays, nodeKinds)
 }
 
 // scanTrustRows runs query and accumulates one trustAccum per target node,

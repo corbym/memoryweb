@@ -1,6 +1,6 @@
 # Orphan Warning Wording Fix — cross-domain connect misread as unsupported
 
-**Status:** OPEN
+**Status:** COMPLETE — shipped v1.29.3 (remember.go orphan_warning wording + tests)
 
 **Shared-surface node:** `correction-orphan-warning-wordin-30e8b461`
 

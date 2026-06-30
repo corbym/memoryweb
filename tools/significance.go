@@ -15,6 +15,7 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		Limit         int    `json:"limit"`
 		RecencyWindow int    `json:"recency_window"`
 		Tags          string `json:"tags"`
+		NodeKind      string `json:"node_kind"`
 		Mode          string `json:"mode"`
 		Digest        bool   `json:"digest"`
 	}
@@ -38,6 +39,7 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 			tags = append(tags, tag)
 		}
 	}
+	nodeKinds := splitNodeKinds(a.NodeKind)
 
 	if a.Mode == "trust" {
 		var res db.TrustResult
@@ -46,9 +48,9 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 			if a.Depth <= 0 {
 				a.Depth = 2
 			}
-			res, err = h.store.GetTrustForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow)
+			res, err = h.store.GetTrustForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow, nodeKinds)
 		} else {
-			res, err = h.store.GetTrust(a.Domain, a.Limit, a.RecencyWindow, tags)
+			res, err = h.store.GetTrust(a.Domain, a.Limit, a.RecencyWindow, tags, nodeKinds)
 		}
 		if err != nil {
 			return errorResult(err.Error()), nil
@@ -71,9 +73,9 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		if a.Depth <= 0 {
 			a.Depth = 2
 		}
-		res, err = h.store.GetSignificanceForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow)
+		res, err = h.store.GetSignificanceForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow, nodeKinds)
 	} else {
-		res, err = h.store.GetSignificance(a.Domain, a.Limit, a.RecencyWindow, tags)
+		res, err = h.store.GetSignificance(a.Domain, a.Limit, a.RecencyWindow, tags, nodeKinds)
 	}
 	if err != nil {
 		return errorResult(err.Error()), nil

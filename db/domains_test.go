@@ -10,7 +10,7 @@ func TestAddAlias_AffectsSearch(t *testing.T) {
 	n := mustAddNode(t, s, "Engine fact", "deep-engine")
 	s.AddAlias("engine", "deep-engine")
 
-	res, err := s.SearchNodes("Engine fact", "engine", 10, "")
+	res, err := s.SearchNodes("Engine fact", "engine", 10, "", nil)
 	if err != nil {
 		t.Fatalf("SearchNodes via alias: %v", err)
 	}

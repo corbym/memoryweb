@@ -38,7 +38,7 @@ type SignificanceResult struct {
 // Every call writes rows to significance_log (one per returned node in
 // structural, uncurated, potentially_stale) so the decay function can be
 // validated over time.
-func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int, tags []string) (SignificanceResult, error) {
+func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int, tags, nodeKinds []string) (SignificanceResult, error) {
 	callID := shortID()
 	var res SignificanceResult
 	res.CallID = callID
@@ -47,6 +47,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	declaredConds := []string{"domain = ?", "occurred_at IS NOT NULL", "archived_at IS NULL"}
 	declaredArgs := []interface{}{domain}
 	declaredConds, declaredArgs = tagFilter("tags", tags, declaredConds, declaredArgs)
+	declaredConds, declaredArgs = nodeKindFilter("node_kind", nodeKinds, declaredConds, declaredArgs)
 	declaredQ := `SELECT id, label, description, why_matters, tags, domain,
 		       created_at, updated_at, occurred_at, archived_at, node_kind
 		FROM nodes WHERE ` + strings.Join(declaredConds, " AND ") + ` ORDER BY occurred_at ASC`
@@ -78,6 +79,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	}
 	structArgs := []interface{}{domain, recencyWindowDays}
 	structConds, structArgs = tagFilter("n.tags", tags, structConds, structArgs)
+	structConds, structArgs = nodeKindFilter("n.node_kind", nodeKinds, structConds, structArgs)
 	structArgs = append(structArgs, limit)
 	structQ := `SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
 		       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.node_kind,
@@ -179,7 +181,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 // getSignificanceByNodeIDs runs dual-signal importance analysis scoped to a
 // specific set of node IDs (e.g. a neighbourhood). domain is used only for
 // logging; it does not further filter the node set.
-func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int) (SignificanceResult, error) {
+func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int, nodeKinds []string) (SignificanceResult, error) {
 	callID := shortID()
 	var res SignificanceResult
 	res.CallID = callID
@@ -194,15 +196,16 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 
 	ph, nodeArgs := inClause(nodeIDs)
 
+	declConds := []string{"id IN (" + ph + ")", "occurred_at IS NOT NULL", "archived_at IS NULL"}
+	declConds, declArgs := nodeKindFilter("node_kind", nodeKinds, declConds, append([]interface{}{}, nodeArgs...))
+
 	// ── declared ─────────────────────────────────────────────────────────────
 	declaredRows, err := s.db.Query(
 		`SELECT id, label, description, why_matters, tags, domain,
 		        created_at, updated_at, occurred_at, archived_at, node_kind
 		 FROM nodes
-		 WHERE id IN (`+ph+`)
-		   AND occurred_at IS NOT NULL
-		   AND archived_at IS NULL
-		 ORDER BY occurred_at ASC`, nodeArgs...)
+		 WHERE `+strings.Join(declConds, " AND ")+`
+		 ORDER BY occurred_at ASC`, declArgs...)
 	if err != nil {
 		return res, fmt.Errorf("getSignificanceByNodeIDs declared: %w", err)
 	}
@@ -222,7 +225,10 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 	}
 
 	// ── structural ────────────────────────────────────────────────────────────
+	structConds := []string{"n.id IN (" + ph + ")", "n.archived_at IS NULL", "n2.archived_at IS NULL", "(julianday('now') - julianday(n2.updated_at)) <= ?"}
+	structConds, structKindArgs := nodeKindFilter("n.node_kind", nodeKinds, structConds, nil)
 	structArgs := append(nodeArgs, recencyWindowDays)
+	structArgs = append(structArgs, structKindArgs...)
 
 	structRows, err := s.db.Query(
 		`SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
@@ -231,10 +237,7 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 		 FROM edges e
 		 JOIN nodes n  ON e.to_node   = n.id
 		 JOIN nodes n2 ON e.from_node = n2.id
-		 WHERE n.id IN (`+ph+`)
-		   AND n.archived_at IS NULL
-		   AND n2.archived_at IS NULL
-		   AND (julianday('now') - julianday(n2.updated_at)) <= ?
+		 WHERE `+strings.Join(structConds, " AND ")+`
 		 GROUP BY n.id
 		 ORDER BY importance_score DESC`, structArgs...)
 	if err != nil {
@@ -324,12 +327,12 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 // GetSignificanceForMemoryID returns dual-signal importance analysis scoped to
 // the depth-hop neighbourhood of the given memory ID, clipped to the anchor's
 // domain. Depth 2 is recommended; depth 1 produces near-uniform low scores.
-func (s *Store) GetSignificanceForMemoryID(nodeID string, depth int, recencyWindowDays int) (SignificanceResult, error) {
+func (s *Store) GetSignificanceForMemoryID(nodeID string, depth int, recencyWindowDays int, nodeKinds []string) (SignificanceResult, error) {
 	ids, anchorDomain, err := s.neighbourhoodIDs(nodeID, depth)
 	if err != nil {
 		return SignificanceResult{}, err
 	}
-	return s.getSignificanceByNodeIDs(ids, anchorDomain, recencyWindowDays)
+	return s.getSignificanceByNodeIDs(ids, anchorDomain, recencyWindowDays, nodeKinds)
 }
 
 // logSignificance inserts one row into significance_log.

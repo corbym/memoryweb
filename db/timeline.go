@@ -10,24 +10,21 @@ import (
 // RecentChanges orders by updated_at DESC, breaking ties on rowid DESC so two
 // nodes written within the same clock tick (observed on Windows) still come
 // back in insertion order instead of in SQLite's unspecified tie order.
-func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
+func (s *Store) RecentChanges(domain string, limit int, nodeKinds []string) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
-	var rows *sql.Rows
-	var err error
-
+	conds := []string{"archived_at IS NULL"}
+	args := []interface{}{}
 	if domain != "" {
-		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
-			 WHERE domain = ? AND archived_at IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
-			domain, limit,
-		)
-	} else {
-		rows, err = s.db.Query(
-			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
-			 WHERE archived_at IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
-			limit,
-		)
+		conds = append(conds, "domain = ?")
+		args = append(args, domain)
 	}
+	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
+	args = append(args, limit)
+
+	q := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE ` +
+		strings.Join(conds, " AND ") + ` ORDER BY updated_at DESC, rowid DESC LIMIT ?`
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +54,7 @@ func (s *Store) RecentChanges(domain string, limit int) ([]Node, error) {
 // neighbourhood of that memory; domain is ignored in that case.
 // When tags is non-nil and non-empty, only nodes whose tags column contains
 // at least one of the supplied tags (whole-word OR match) are returned.
-func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, tags []string, limit int) ([]Node, error) {
+func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 	conds := []string{"archived_at IS NULL"}
 	args := []interface{}{}
@@ -79,6 +76,7 @@ func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, t
 	}
 
 	conds, args = tagFilter("tags", tags, conds, args)
+	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	args = append(args, limit)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
@@ -97,7 +95,7 @@ func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, t
 // When importantOnly is true, only nodes with occurred_at explicitly set are returned.
 // tags filters to nodes matching at least one tag (whole-word match).
 // from/to filter by effective date (COALESCE(occurred_at, created_at)).
-func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from, to *time.Time, limit int) ([]Node, error) {
+func (s *Store) Timeline(domain string, importantOnly bool, tags, nodeKinds []string, from, to *time.Time, limit int) ([]Node, error) {
 	domain = s.ResolveAlias(domain)
 	if limit <= 0 {
 		limit = 20
@@ -122,6 +120,7 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from,
 		args = append(args, to)
 	}
 	conds, args = tagFilter("tags", tags, conds, args)
+	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	args = append(args, limit)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
@@ -139,7 +138,7 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags []string, from,
 // GetHistoryForMemoryID returns the chronological timeline of a memory's
 // neighbourhood (depth hops from nodeID, domain-clipped). Applies the same
 // filters as Timeline: importantOnly, tags, from/to date range.
-func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bool, tags []string, from, to *time.Time, limit int) ([]Node, error) {
+func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bool, tags, nodeKinds []string, from, to *time.Time, limit int) ([]Node, error) {
 	ids, _, err := s.neighbourhoodIDs(nodeID, depth)
 	if err != nil {
 		return nil, err
@@ -169,6 +168,7 @@ func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bo
 		args = append(args, to)
 	}
 	conds, args = tagFilter("tags", tags, conds, args)
+	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	if limit <= 0 {
 		limit = 20
 	}

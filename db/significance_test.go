@@ -13,7 +13,7 @@ import (
 
 func TestGetSignificance_Empty(t *testing.T) {
 	s := newStore(t)
-	res, err := s.GetSignificance("empty-domain", 10, 90, nil)
+	res, err := s.GetSignificance("empty-domain", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestGetSignificance_Declared(t *testing.T) {
 	n2, _ := s.AddNode("Late decision", "d", "w", "proj", ptr(late), "", "")
 	mustAddNode(t, s, "Undated node", "proj") // no occurred_at — should not appear in Declared
 
-	res, err := s.GetSignificance("proj", 10, 90, nil)
+	res, err := s.GetSignificance("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestGetSignificance_Structural(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetSignificance("proj", 10, 90, nil)
+	res, err := s.GetSignificance("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestGetSignificance_RecencyWindow(t *testing.T) {
 	}
 	rawDB.Close()
 
-	res, err := s.GetSignificance("proj", 10, 90, nil)
+	res, err := s.GetSignificance("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestGetSignificance_Uncurated(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetSignificance("proj", 10, 90, nil)
+	res, err := s.GetSignificance("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestGetSignificance_PotentiallyStale(t *testing.T) {
 	// Node with occurred_at but no inbound edges — structurally irrelevant.
 	isolated, _ := s.AddNode("Isolated declared node", "d", "w", "proj", ptr(ts), "", "")
 
-	res, err := s.GetSignificance("proj", 10, 90, nil)
+	res, err := s.GetSignificance("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestGetSignificance_Logging(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetSignificance("proj", 10, 90, nil)
+	res, err := s.GetSignificance("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestGetSignificance_ArchivedExcluded(t *testing.T) {
 	}
 	s.ArchiveNode(n2.ID, "testing")
 
-	res, err := s.GetSignificance("proj", 10, 90, nil)
+	res, err := s.GetSignificance("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSignificance: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestGetTrust_FindingBackedScoresHigherThanAssumptionBacked(t *testing.T) {
 		}
 	}
 
-	res, err := s.GetTrust("proj", 10, 90, nil)
+	res, err := s.GetTrust("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetTrust: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestGetTrust_ContradictsPenalty(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetTrust("proj", 10, 90, nil)
+	res, err := s.GetTrust("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetTrust: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestGetTrust_ReferenceExcludedFromOutput(t *testing.T) {
 	s := newStore(t)
 	ref, _ := s.AddNode("A person", "d", "w", "proj", nil, "", "reference")
 
-	res, err := s.GetTrust("proj", 10, 90, nil)
+	res, err := s.GetTrust("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetTrust: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestGetTrust_ReferenceCountsAsZeroWeightNeighbour(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetTrust("proj", 10, 90, nil)
+	res, err := s.GetTrust("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetTrust: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestGetTrust_TransientExcludedFromOutput(t *testing.T) {
 	s := newStore(t)
 	tn, _ := s.AddNode("A short-lived note", "d", "w", "proj", nil, "", "transient")
 
-	res, err := s.GetTrust("proj", 10, 90, nil)
+	res, err := s.GetTrust("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetTrust: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestGetTrust_TrustBasisNonEmptyWithNoNeighbours(t *testing.T) {
 	s := newStore(t)
 	isolated, _ := s.AddNode("Isolated decision", "d", "w", "proj", nil, "", "decision")
 
-	res, err := s.GetTrust("proj", 10, 90, nil)
+	res, err := s.GetTrust("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetTrust: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestGetTrust_ScoresNormalisedToZeroOne(t *testing.T) {
 	s.AddNode("Low", "d", "w", "proj", nil, "", "assumption")
 	s.AddNode("High", "d", "w", "proj", nil, "", "finding")
 
-	res, err := s.GetTrust("proj", 10, 90, nil)
+	res, err := s.GetTrust("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetTrust: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestGetTrust_RecencyWindowExcludesStaleNeighbours(t *testing.T) {
 	}
 	rawDB.Close()
 
-	res, err := s.GetTrust("proj", 10, 90, nil)
+	res, err := s.GetTrust("proj", 10, 90, nil, nil)
 	if err != nil {
 		t.Fatalf("GetTrust: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestGetTrustForMemoryID_ScopesToNeighbourhood(t *testing.T) {
 		t.Fatalf("AddEdge: %v", err)
 	}
 
-	res, err := s.GetTrustForMemoryID(anchor.ID, 2, 90)
+	res, err := s.GetTrustForMemoryID(anchor.ID, 2, 90, nil)
 	if err != nil {
 		t.Fatalf("GetTrustForMemoryID: %v", err)
 	}

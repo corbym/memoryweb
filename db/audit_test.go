@@ -36,7 +36,7 @@ func TestFindDrift_TransientOlderThan7Days_IsDriftCandidate(t *testing.T) {
 	}
 	rawDB.Close()
 
-	candidates, err := s.FindDrift("transient-drift", 10, nil, "", 2)
+	candidates, err := s.FindDrift("transient-drift", 10, nil, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestFindDrift_TransientNewerThan7Days_NotDriftCandidate(t *testing.T) {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	candidates, err := s.FindDrift("transient-new", 10, nil, "", 2)
+	candidates, err := s.FindDrift("transient-new", 10, nil, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestFindDrift_LowConnectionStandingNode(t *testing.T) {
 	}
 	rawDB.Close()
 
-	candidates, err := s.FindDrift("standing-low-conn", 10, nil, "", 2)
+	candidates, err := s.FindDrift("standing-low-conn", 10, nil, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestFindDrift_StandingNodeNotFlaggedWhenYoung(t *testing.T) {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	candidates, err := s.FindDrift("standing-young", 10, nil, "", 2)
+	candidates, err := s.FindDrift("standing-young", 10, nil, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestFindDrift_StandingNodeNotFlaggedWhenWellConnected(t *testing.T) {
 	}
 	rawDB.Close()
 
-	candidates, err := s.FindDrift("standing-connected", 10, nil, "", 2)
+	candidates, err := s.FindDrift("standing-connected", 10, nil, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestGetOrphans_ExcludesReference(t *testing.T) {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	orphans, err := s.FindDisconnected("orphans-ref", nil)
+	orphans, err := s.FindDisconnected("orphans-ref", nil, nil)
 	if err != nil {
 		t.Fatalf("FindDisconnected: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestGetStaleDrift_TransientNodes(t *testing.T) {
 	}
 	rawDB.Close()
 
-	drift, err := s.FindDrift("stale-transient", 10, nil, "", 2)
+	drift, err := s.FindDrift("stale-transient", 10, nil, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestFindDrift_TagsFilter(t *testing.T) {
 	mustAddNodeWithTags(t, s, "old plan TDD", "proj", "TDD")
 	mustAddNodeWithTags(t, s, "old approach other", "proj", "other")
 
-	candidates, err := s.FindDrift("proj", 10, []string{"TDD"}, "", 2)
+	candidates, err := s.FindDrift("proj", 10, []string{"TDD"}, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift with tags: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestFindDrift_MemoryID_NeighbourhoodOnly(t *testing.T) {
 	unrelated := mustAddNode(t, s, "old unrelated plan", "proj")
 	s.AddEdge(anchor.ID, inNeighbour.ID, "connects_to", "")
 
-	candidates, err := s.FindDrift("", 10, nil, anchor.ID, 2)
+	candidates, err := s.FindDrift("", 10, nil, nil, anchor.ID, 2)
 	if err != nil {
 		t.Fatalf("FindDrift with memory_id: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestFindDisconnected_TagsFilter(t *testing.T) {
 	inResult := mustAddNodeWithTags(t, s, "orphan review", "proj", "review")
 	mustAddNodeWithTags(t, s, "orphan other", "proj", "other")
 
-	nodes, err := s.FindDisconnected("", []string{"review"})
+	nodes, err := s.FindDisconnected("", []string{"review"}, nil)
 	if err != nil {
 		t.Fatalf("FindDisconnected with tags: %v", err)
 	}

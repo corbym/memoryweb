@@ -13,6 +13,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		Limit         int    `json:"limit"`
 		GroupByDomain bool   `json:"group_by_domain"`
 		Tags          string `json:"tags"`
+		NodeKind      string `json:"node_kind"`
 		MemoryID      string `json:"memory_id"`
 		Digest        bool   `json:"digest"`
 	}
@@ -28,17 +29,22 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	tags := splitTags(a.Tags)
+	nodeKinds := splitNodeKinds(a.NodeKind)
+
+	if a.GroupByDomain && len(nodeKinds) > 0 {
+		return errorResult("group_by_domain and node_kind cannot be used together"), nil
+	}
 
 	if a.MemoryID != "" {
-		nodes, err := h.store.RecentChangesScoped(a.MemoryID, 2, "", tags, a.Limit)
+		nodes, err := h.store.RecentChangesScoped(a.MemoryID, 2, "", tags, nodeKinds, a.Limit)
 		if err != nil {
 			return nil, err
 		}
 		return marshalRecentList(toLeanEntries(nodes), a.Digest)
 	}
 
-	if len(tags) > 0 {
-		nodes, err := h.store.RecentChangesScoped("", 2, a.Domain, tags, a.Limit)
+	if len(tags) > 0 || len(nodeKinds) > 0 {
+		nodes, err := h.store.RecentChangesScoped("", 2, a.Domain, tags, nodeKinds, a.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -47,7 +53,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 
 	if a.GroupByDomain && a.Domain == "" {
 		perDomain := a.Limit
-		all, err := h.store.RecentChanges("", 1000)
+		all, err := h.store.RecentChanges("", 1000, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -84,7 +90,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 
-	nodes, err := h.store.RecentChanges(a.Domain, a.Limit)
+	nodes, err := h.store.RecentChanges(a.Domain, a.Limit, nodeKinds)
 	if err != nil {
 		return nil, err
 	}
