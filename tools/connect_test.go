@@ -365,6 +365,72 @@ func TestConnect_GovernedBy(t *testing.T) {
 	mustNotError(t, tr)
 }
 
+// ── connect error message quality ────────────────────────────────────────────
+
+// TestConnect_CrossDomain_ValidIDs_Succeeds is the regression test ensuring
+// that cross-domain connect works when both IDs are valid.
+func TestConnect_CrossDomain_ValidIDs_Succeeds(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "alpha node", "domain-alpha", nil)
+	to := addNode(t, h, "beta node", "domain-beta", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory":  from,
+		"to_memory":    to,
+		"relationship": "depends_on",
+		"narrative":    "alpha depends on beta across domains",
+	})
+	mustNotError(t, tr)
+}
+
+// TestConnect_MissingToMemory_NoMentionOfCrossDomain asserts that when
+// to_memory is not found, the error does NOT say cross-domain is unsupported.
+func TestConnect_MissingToMemory_NoMentionOfCrossDomain(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "source node", "src-domain", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory":  from,
+		"to_memory":    "totally-nonexistent-id",
+		"relationship": "connects_to",
+	})
+	mustError(t, tr)
+	msg := text(t, tr)
+	if strings.Contains(msg, "cross-domain") {
+		t.Errorf("error message must not mention cross-domain for a missing ID;\ngot: %s", msg)
+	}
+	if strings.Contains(msg, "not yet supported") {
+		t.Errorf("error message must not say 'not yet supported';\ngot: %s", msg)
+	}
+	if !strings.Contains(msg, "not found") {
+		t.Errorf("error message should mention 'not found';\ngot: %s", msg)
+	}
+}
+
+// TestConnect_ArchivedToMemory_MentionsRestore asserts that when to_memory is
+// archived, the error specifically mentions "restore" so the agent can recover.
+func TestConnect_ArchivedToMemory_MentionsRestore(t *testing.T) {
+	s, h := newEnv(t)
+	from := addNode(t, h, "live node", "proj", nil)
+	to := addNode(t, h, "archived node", "proj", nil)
+
+	// Archive the target node via the DB layer.
+	if err := s.ArchiveNode(to, "test archival"); err != nil {
+		t.Fatalf("ArchiveNode: %v", err)
+	}
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory":  from,
+		"to_memory":    to,
+		"relationship": "connects_to",
+	})
+	mustError(t, tr)
+	msg := text(t, tr)
+	if !strings.Contains(msg, "restore") {
+		t.Errorf("error message should mention 'restore' for archived target;\ngot: %s", msg)
+	}
+}
+
 // ── search memory_id scoping ──────────────────────────────────────────────────
 
 // TestSearch_MemoryID_ScopesResults: when memory_id is supplied, only nodes in

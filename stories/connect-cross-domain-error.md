@@ -1,6 +1,6 @@
 # connect: actionable error when target memory not found
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `connect-fails-silently-when-targ-e86973ca`
 
