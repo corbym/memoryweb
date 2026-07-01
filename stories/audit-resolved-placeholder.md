@@ -1,6 +1,6 @@
 # audit: detect connected-but-resolved placeholder nodes
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `issue-audit-mode-stale-and-audit-mode-orphans-both-miss-connected-but-stale-placeholder-nodes-529635d0`
 

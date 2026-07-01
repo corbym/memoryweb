@@ -272,6 +272,67 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		add(n, nil, "standing rule with low connection count — may not be in use")
 	}
 
+	// ── Rule 7: connected placeholder whose target appears resolved ──────────────
+	// A candidate matches when ALL of:
+	//   a) node_kind='goal' OR label contains "Story needed:", "TODO:", or "Placeholder:" (case-insensitive)
+	//   b) Has at least one outbound edge (connects_to OR led_to) to a node whose
+	//      label OR description contains a completion signal
+	//   c) The placeholder node's own label/description does NOT itself contain a completion signal
+	const completionSignals = `(LOWER(n2.label) LIKE '%complete%' OR LOWER(n2.label) LIKE '%shipped%' OR ` +
+		`LOWER(n2.label) LIKE '%resolved%' OR LOWER(n2.label) LIKE '%done%' OR LOWER(n2.label) LIKE '%closed%' OR ` +
+		`LOWER(n2.description) LIKE '%complete%' OR LOWER(n2.description) LIKE '%shipped%' OR ` +
+		`LOWER(n2.description) LIKE '%resolved%' OR LOWER(n2.description) LIKE '%done%' OR LOWER(n2.description) LIKE '%closed%')`
+	const phKindOrLabel = `(n.node_kind = 'goal' OR LOWER(n.label) LIKE '%story needed:%' OR ` +
+		`LOWER(n.label) LIKE '%todo:%' OR LOWER(n.label) LIKE '%placeholder:%')`
+	const phNoSelfSignal = `NOT (LOWER(n.label) LIKE '%complete%' OR LOWER(n.label) LIKE '%shipped%' OR ` +
+		`LOWER(n.label) LIKE '%resolved%' OR LOWER(n.label) LIKE '%done%' OR LOWER(n.label) LIKE '%closed%' OR ` +
+		`LOWER(n.description) LIKE '%complete%' OR LOWER(n.description) LIKE '%shipped%' OR ` +
+		`LOWER(n.description) LIKE '%resolved%' OR LOWER(n.description) LIKE '%done%' OR LOWER(n.description) LIKE '%closed%')`
+	const hasResolvingOutbound = `EXISTS (
+		SELECT 1 FROM edges e7
+		JOIN nodes n2 ON n2.id = e7.to_node AND n2.archived_at IS NULL
+		WHERE e7.from_node = n.id
+		  AND (e7.relationship = 'connects_to' OR e7.relationship = 'led_to' OR e7.relationship = 'leads_to')
+		  AND ` + completionSignals + `)`
+
+	var rows7 *sql.Rows
+	if domain != "" {
+		rows7, err = s.db.Query(
+			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind
+			 FROM nodes n
+			 WHERE n.archived_at IS NULL
+			   AND n.domain = ?
+			   AND `+phKindOrLabel+`
+			   AND `+phNoSelfSignal+`
+			   AND `+hasResolvingOutbound,
+			domain)
+	} else {
+		rows7, err = s.db.Query(
+			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind
+			 FROM nodes n
+			 WHERE n.archived_at IS NULL
+			   AND ` + phKindOrLabel + `
+			   AND ` + phNoSelfSignal + `
+			   AND ` + hasResolvingOutbound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for rows7.Next() {
+		n, err := scanNodeRow(rows7)
+		if err != nil {
+			rows7.Close()
+			return nil, err
+		}
+		add(n, nil, "connected placeholder — target appears resolved; revise or archive placeholder")
+	}
+	rows7.Close()
+	if err = rows7.Err(); err != nil {
+		return nil, err
+	}
+
 	// Post-filter by neighbourhood (memory_id scoping).
 	if memoryID != "" {
 		allowedIDs, _, err := s.neighbourhoodIDs(memoryID, depth)

@@ -848,3 +848,146 @@ func TestAudit_ExistingBehaviourUnchanged(t *testing.T) {
 		t.Error("expected at least one stale candidate without tags/memory_id filter")
 	}
 }
+
+// ── placeholder resolution rule (CallTool path) ───────────────────────────────
+
+// TestAudit_Stale_GoalPlaceholder_ConnectsTo_CompletionNode:
+// A goal-kind placeholder wired to a completion node must surface in
+// audit(mode=stale) with the placeholder reason string.
+func TestAudit_Stale_GoalPlaceholder_ConnectsTo_CompletionNode(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	phID := addNode(t, h, "Story needed: wire up payment gateway", "ph-tool-domain", map[string]any{
+		"node_kind": "goal",
+	})
+	doneID := addNode(t, h, "STORY-42 payment gateway complete", "ph-tool-domain", map[string]any{
+		"description": "shipped and closed",
+	})
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  phID,
+		"to_memory":    doneID,
+		"relationship": "connects_to",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "stale",
+		"domain": "ph-tool-domain",
+	})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, phID) {
+		t.Errorf("goal placeholder (%s) should appear in stale audit; got:\n%s", phID, body)
+	}
+	if !strings.Contains(body, "placeholder") {
+		t.Errorf("reason should contain 'placeholder'; got:\n%s", body)
+	}
+}
+
+// TestAudit_Stale_GoalNode_NoCompletionSignal_NotFlagged:
+// A live goal node whose connections do not indicate completion must NOT
+// be flagged by the placeholder rule.
+func TestAudit_Stale_GoalNode_NoCompletionSignal_NotFlagged(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	goalID := addNode(t, h, "Improve CI pipeline speed", "goal-no-signal", nil)
+	wipID := addNode(t, h, "CI pipeline investigation", "goal-no-signal", map[string]any{
+		"description": "still being worked on",
+		"node_kind":   "goal",
+	})
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  goalID,
+		"to_memory":    wipID,
+		"relationship": "connects_to",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "stale",
+		"domain": "goal-no-signal",
+	})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	// Neither node should be flagged with the placeholder reason
+	var candidates []map[string]any
+	if err := json.Unmarshal([]byte(body), &candidates); err != nil {
+		t.Fatalf("parse audit result: %v", err)
+	}
+	for _, c := range candidates {
+		n, _ := c["node"].(map[string]any)
+		reason, _ := c["reason"].(string)
+		if n != nil && n["id"] == goalID && strings.Contains(reason, "placeholder") {
+			t.Errorf("goal node with no completion signal should NOT be flagged as placeholder; got reason: %q", reason)
+		}
+		if n != nil && n["id"] == wipID && strings.Contains(reason, "placeholder") {
+			t.Errorf("wip goal node with no completion signal should NOT be flagged as placeholder; got reason: %q", reason)
+		}
+	}
+}
+
+// TestAudit_Stale_OrphanGoal_NotDoubleFlaged:
+// A goal-kind node with NO edges must not be flagged by the placeholder rule
+// (it is an orphan, not a connected placeholder).
+func TestAudit_Stale_OrphanGoal_NotDoubleFlaged(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	orphanID := addNode(t, h, "Story needed: some future work", "orphan-goal-domain", map[string]any{
+		"node_kind": "goal",
+	})
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "stale",
+		"domain": "orphan-goal-domain",
+	})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	var candidates []map[string]any
+	if err := json.Unmarshal([]byte(body), &candidates); err != nil {
+		t.Fatalf("parse audit result: %v", err)
+	}
+	for _, c := range candidates {
+		n, _ := c["node"].(map[string]any)
+		reason, _ := c["reason"].(string)
+		if n != nil && n["id"] == orphanID && strings.Contains(reason, "placeholder") {
+			t.Errorf("orphan goal node should NOT be flagged by placeholder rule; got reason: %q", reason)
+		}
+	}
+}
+
+// TestAudit_Stale_Placeholder_ReasonString_InOutput:
+// The reason string "connected placeholder — target appears resolved" must
+// appear verbatim in the audit stale output when the rule fires.
+func TestAudit_Stale_Placeholder_ReasonString_InOutput(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	phID := addNode(t, h, "TODO: set up staging database", "reason-check-domain", map[string]any{
+		"node_kind": "goal",
+	})
+	doneID := addNode(t, h, "staging db setup", "reason-check-domain", map[string]any{
+		"description": "work is shipped and done",
+	})
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  phID,
+		"to_memory":    doneID,
+		"relationship": "leads_to",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "stale",
+		"domain": "reason-check-domain",
+	})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, "connected placeholder") {
+		t.Errorf("expected reason to contain 'connected placeholder'; got:\n%s", body)
+	}
+	if !strings.Contains(body, "revise or archive") {
+		t.Errorf("expected reason to contain 'revise or archive'; got:\n%s", body)
+	}
+}
