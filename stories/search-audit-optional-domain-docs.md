@@ -1,6 +1,6 @@
 # search/audit: document optional domain parameter
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `issue-search-audit-domain-parameter-undocumented-omitting-it-searches-scans-the-whole-workspace-90a93e57`
 
