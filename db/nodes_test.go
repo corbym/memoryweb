@@ -248,7 +248,7 @@ func TestUpdateNode_UpdatesDescription(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "update target", "proj")
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestUpdateNode_UpdatesLabel(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "old label", "proj")
 
-	updated, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestUpdateNode_UpdatesTags(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "tagged node", "proj")
 
-	updated, err := s.UpdateNode(n.ID, nil, nil, nil, ptrStr("kotlin gradle testing"), nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, ptrStr("kotlin gradle testing"), nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestUpdateNode_OnlyUpdatesProvidedFields(t *testing.T) {
 	s := newStore(t)
 	n, _ := s.AddNode("stable label", "original desc", "original why", "proj", nil, "original tags", "")
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("new desc only"), nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestUpdateNode_BumpsUpdatedAt(t *testing.T) {
 	// Sleep briefly to ensure time advances.
 	time.Sleep(2 * time.Millisecond)
 
-	updated, err := s.UpdateNode(n.ID, nil, ptrStr("changed"), nil, nil, nil, nil)
+	updated, err := s.UpdateNode(n.ID, nil, ptrStr("changed"), nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestUpdateNode_BumpsUpdatedAt(t *testing.T) {
 func TestUpdateNode_NotFoundReturnsError(t *testing.T) {
 	s := newStore(t)
 
-	_, err := s.UpdateNode("nonexistent-id-xxxx", ptrStr("x"), nil, nil, nil, nil, nil)
+	_, err := s.UpdateNode("nonexistent-id-xxxx", ptrStr("x"), nil, nil, nil, nil, nil, nil, nil)
 	if err == nil {
 		t.Error("expected error for missing node, got nil")
 	}
@@ -340,7 +340,7 @@ func TestUpdateNode_ArchivedNodeReturnsError(t *testing.T) {
 	n := mustAddNode(t, s, "soon archived", "proj")
 	s.ArchiveNode(n.ID, "test")
 
-	_, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil, nil)
+	_, err := s.UpdateNode(n.ID, ptrStr("new label"), nil, nil, nil, nil, nil, nil, nil)
 	if err == nil {
 		t.Error("expected error updating archived node, got nil")
 	}
@@ -380,7 +380,7 @@ func TestUpdateNode_WritesAuditLog(t *testing.T) {
 
 	n := mustAddNode(t, s, "audit target", "proj")
 
-	_, err = s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil, nil)
+	_, err = s.UpdateNode(n.ID, nil, ptrStr("new description"), nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestUpdateNode_NodeKind(t *testing.T) {
 	s := newStore(t)
 	n, _ := s.AddNode("will become standing", "d", "w", "proj", nil, "", "decision")
 
-	updated, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, ptrStr("standing"))
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, ptrStr("standing"), nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
@@ -601,12 +601,139 @@ func TestUpdateNode_NodeKind_InvalidValue(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "any node", "proj")
 
-	_, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, ptrStr("nonsense"))
+	_, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, ptrStr("nonsense"), nil, nil)
 	if err == nil {
 		t.Error("expected error for invalid node_kind, got nil")
 	}
 	if !strings.Contains(err.Error(), "transient") || !strings.Contains(err.Error(), "goal") {
 		t.Errorf("expected error to list valid kinds, got: %v", err)
+	}
+}
+
+func TestUpdateNode_MovesDomain(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "mis-filed node", "wrong-domain")
+
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, nil, ptrStr("right-domain"), ptrStr("was filed in wrong domain"))
+	if err != nil {
+		t.Fatalf("UpdateNode domain: %v", err)
+	}
+	if updated.Domain != "right-domain" {
+		t.Errorf("Domain: got %q, want %q", updated.Domain, "right-domain")
+	}
+	if updated.ID != n.ID {
+		t.Error("ID must not change on domain move")
+	}
+}
+
+func TestUpdateNode_DomainRequiresReason(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "some node", "proj")
+
+	_, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, nil, ptrStr("other-proj"), nil)
+	if err == nil {
+		t.Fatal("expected error when reason is nil, got nil")
+	}
+	if !strings.Contains(err.Error(), "reason") {
+		t.Errorf("error should mention 'reason', got: %v", err)
+	}
+
+	_, err = s.UpdateNode(n.ID, nil, nil, nil, nil, nil, nil, ptrStr("other-proj"), ptrStr("  "))
+	if err == nil {
+		t.Fatal("expected error when reason is blank, got nil")
+	}
+}
+
+func TestUpdateNode_DomainAuditRecord(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+	n := mustAddNode(t, s, "audit domain node", "domain-a")
+
+	_, err = s.UpdateNode(n.ID, nil, nil, nil, nil, nil, nil, ptrStr("domain-b"), ptrStr("moved for consolidation"))
+	if err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open rawDB: %v", err)
+	}
+	defer rawDB.Close()
+	var reason string
+	err = rawDB.QueryRow(
+		`SELECT reason FROM audit_log WHERE node_id = ? AND action = 'update' ORDER BY actioned_at DESC LIMIT 1`, n.ID,
+	).Scan(&reason)
+	if err != nil {
+		t.Fatalf("audit query: %v", err)
+	}
+	if !strings.Contains(reason, "domain-a") || !strings.Contains(reason, "domain-b") || !strings.Contains(reason, "moved for consolidation") {
+		t.Errorf("audit reason %q should contain old domain, new domain, and user reason", reason)
+	}
+}
+
+func TestUpdateNode_DomainToNewDomain(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "brand new domain target", "existing-domain")
+
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, nil, ptrStr("brand-new-domain"), ptrStr("first node in new domain"))
+	if err != nil {
+		t.Fatalf("UpdateNode to new domain: %v", err)
+	}
+	if updated.Domain != "brand-new-domain" {
+		t.Errorf("got domain %q, want %q", updated.Domain, "brand-new-domain")
+	}
+}
+
+func TestUpdateNode_DomainSameIsNoop(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "noop domain node", "proj")
+
+	// Setting domain to the same value — no error, no audit entry for domain.
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, nil, ptrStr("proj"), nil)
+	if err != nil {
+		t.Fatalf("same-domain revise should not error: %v", err)
+	}
+	if updated.Domain != "proj" {
+		t.Errorf("domain should still be %q, got %q", "proj", updated.Domain)
+	}
+}
+
+func TestUpdateNodesBatch_MovesDomain(t *testing.T) {
+	s := newStore(t)
+	a := mustAddNode(t, s, "batch node a", "src")
+	b := mustAddNode(t, s, "batch node b", "src")
+
+	nodes, err := s.UpdateNodesBatch([]db.NodeUpdateInput{
+		{ID: a.ID, Domain: ptrStr("dst"), Reason: ptrStr("bulk consolidation")},
+		{ID: b.ID, Domain: ptrStr("dst"), Reason: ptrStr("bulk consolidation")},
+	})
+	if err != nil {
+		t.Fatalf("UpdateNodesBatch domain: %v", err)
+	}
+	for _, n := range nodes {
+		if n.Domain != "dst" {
+			t.Errorf("node %s: domain = %q, want %q", n.ID, n.Domain, "dst")
+		}
+	}
+}
+
+func TestUpdateNodesBatch_DomainRequiresReason(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "batch reason required", "proj")
+
+	_, err := s.UpdateNodesBatch([]db.NodeUpdateInput{
+		{ID: n.ID, Domain: ptrStr("other"), Reason: nil},
+	})
+	if err == nil {
+		t.Fatal("expected error when batch item has domain but no reason")
+	}
+	if !strings.Contains(err.Error(), "reason") {
+		t.Errorf("error should mention reason, got: %v", err)
 	}
 }
 

@@ -279,7 +279,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.26.1)
+## What's implemented (v1.37.0)
 
 All 21 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
@@ -295,6 +295,8 @@ Key implemented features:
 - audit: stale/orphans/archived modes replacing whats_stale/disconnected/forgotten
 - forget_all: batch archive in a single atomic call
 - rename_domain + merge-domains CLI
+- node_kind filter on search/recent/history/significance/audit
+- revise(domain): non-destructive node-level domain reassignment with mandatory reason and audit log; batch supported
 - Stats: WKD session scoring logged to MEMORYWEB_STATS_FILE
 - Hooks: Stop (save) and PreCompact with orphan nudge and dream digest
 - Schema staleness defence: legacy key rejection, server_version in orient, tools/list_changed notification

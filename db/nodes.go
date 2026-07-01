@@ -133,7 +133,7 @@ func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
 // Writes an audit_log entry recording which fields changed and their old values.
 // Returns the full updated node. Returns an error if the node does not exist or
 // has been archived.
-func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time, nodeKind *string) (*Node, error) {
+func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time, nodeKind *string, domain *string, moveReason *string) (*Node, error) {
 	// Fetch current values for comparison and audit trail.
 	var cur Node
 	var curOA, curAA sql.NullTime
@@ -183,6 +183,14 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 		if *nodeKind != cur.NodeKind {
 			changes = append(changes, fmt.Sprintf("node_kind (was %q)", cur.NodeKind))
 		}
+	}
+	if domain != nil && *domain != cur.Domain {
+		if moveReason == nil || strings.TrimSpace(*moveReason) == "" {
+			return nil, fmt.Errorf("reason is required when changing domain")
+		}
+		sets = append(sets, "domain = ?")
+		args = append(args, *domain)
+		changes = append(changes, fmt.Sprintf("domain (was %s → %s): %s", cur.Domain, *domain, strings.TrimSpace(*moveReason)))
 	}
 	args = append(args, id)
 
@@ -242,6 +250,8 @@ type NodeUpdateInput struct {
 	Tags        *string
 	OccurredAt  *time.Time
 	NodeKind    *string
+	Domain      *string
+	Reason      *string
 }
 
 // UpdateNodesBatch updates multiple nodes in a single transaction.
@@ -296,6 +306,15 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			if *inp.NodeKind != cur.NodeKind {
 				changes = append(changes, fmt.Sprintf("node_kind (was %q)", cur.NodeKind))
 			}
+		}
+		if inp.Domain != nil && *inp.Domain != cur.Domain {
+			if inp.Reason == nil || strings.TrimSpace(*inp.Reason) == "" {
+				tx.Rollback()
+				return nil, fmt.Errorf("reason is required when changing domain")
+			}
+			sets = append(sets, "domain = ?")
+			args = append(args, *inp.Domain)
+			changes = append(changes, fmt.Sprintf("domain (was %s → %s): %s", cur.Domain, *inp.Domain, strings.TrimSpace(*inp.Reason)))
 		}
 		args = append(args, inp.ID)
 

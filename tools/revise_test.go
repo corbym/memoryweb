@@ -622,3 +622,149 @@ func TestUpdateNode_NodeKind_InvalidValue(t *testing.T) {
 		t.Errorf("expected error to list valid kinds, got: %s", text(t, tr))
 	}
 }
+
+func TestRevise_Domain_MovesNode(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "mis-filed node", "wrong-domain", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":     id,
+		"domain": "right-domain",
+		"reason": "was filed in wrong domain",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Domain string `json:"domain"`
+		ID     string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	if resp.Domain != "right-domain" {
+		t.Errorf("domain: got %q, want %q", resp.Domain, "right-domain")
+	}
+	if resp.ID != id {
+		t.Error("ID must not change on domain move")
+	}
+}
+
+func TestRevise_Domain_RequiresReason(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "some node", "proj", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":     id,
+		"domain": "other-proj",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "reason") {
+		t.Errorf("error should mention reason, got: %s", text(t, tr))
+	}
+}
+
+func TestRevise_Domain_EmptyReasonRejected(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "some node", "proj", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":     id,
+		"domain": "other-proj",
+		"reason": "   ",
+	})
+	mustError(t, tr)
+}
+
+func TestRevise_Domain_PreservesEdges(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	fromID := addNode(t, h, "source node", "proj", nil)
+	toID := addNode(t, h, "target node", "proj", nil)
+	call(t, h, "connect", map[string]any{
+		"from_memory":  fromID,
+		"to_memory":    toID,
+		"relationship": "connects_to",
+	})
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":     fromID,
+		"domain": "new-proj",
+		"reason": "consolidating",
+	})
+	mustNotError(t, tr)
+
+	// Edge should still exist — recall the moved node and check edges.
+	recallTr := call(t, h, "recall", map[string]any{"id": fromID})
+	mustNotError(t, recallTr)
+	if !strings.Contains(text(t, recallTr), toID) {
+		t.Error("edge to toID should survive domain move")
+	}
+}
+
+func TestRevise_Domain_ToNewDomain(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "first node in new domain", "existing-domain", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":     id,
+		"domain": "brand-new-domain",
+		"reason": "creating new domain",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		Domain string `json:"domain"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	if resp.Domain != "brand-new-domain" {
+		t.Errorf("got domain %q, want brand-new-domain", resp.Domain)
+	}
+}
+
+func TestRevise_Batch_Domain_RequiresReason(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "batch no reason", "proj", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"items": []map[string]any{
+			{"id": id, "domain": "other"},
+		},
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "reason") {
+		t.Errorf("batch error should mention reason, got: %s", text(t, tr))
+	}
+}
+
+func TestRevise_Batch_Domain_MovesAll(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id1 := addNode(t, h, "batch move a", "src", nil)
+	id2 := addNode(t, h, "batch move b", "src", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"items": []map[string]any{
+			{"id": id1, "domain": "dst", "reason": "consolidating"},
+			{"id": id2, "domain": "dst", "reason": "consolidating"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Updated []struct {
+			Domain string `json:"domain"`
+		} `json:"updated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse batch response: %v", err)
+	}
+	for i, u := range resp.Updated {
+		if u.Domain != "dst" {
+			t.Errorf("item %d: domain = %q, want dst", i, u.Domain)
+		}
+	}
+}

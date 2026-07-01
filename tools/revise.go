@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/corbym/memoryweb/db"
@@ -43,6 +44,8 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		OccurredAt  *string `json:"occurred_at"`
 		Transient   *bool   `json:"transient"`
 		NodeKind    *string `json:"node_kind"`
+		Domain      *string `json:"domain"`
+		Reason      *string `json:"reason"`
 	}
 	if err := decodeParams(args, &a, "revise"); err != nil {
 		return nil, err
@@ -73,6 +76,9 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 			}
 		}
 	}
+	if a.Domain != nil && (a.Reason == nil || strings.TrimSpace(*a.Reason) == "") {
+		return errorResult("reason is required when changing domain — confirm the target domain with the user before moving"), nil
+	}
 	// backcompat: transient=true maps to node_kind=transient
 	if a.Transient != nil && a.NodeKind == nil {
 		if *a.Transient {
@@ -83,7 +89,7 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 			a.NodeKind = &s
 		}
 	}
-	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt, a.NodeKind)
+	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt, a.NodeKind, a.Domain, a.Reason)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +108,8 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		OccurredAt  *string `json:"occurred_at"`
 		Transient   *bool   `json:"transient"`
 		NodeKind    *string `json:"node_kind"`
+		Domain      *string `json:"domain"`
+		Reason      *string `json:"reason"`
 	}
 	var rawItems []json.RawMessage
 	if err := json.Unmarshal(items, &rawItems); err != nil {
@@ -144,6 +152,9 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 				}
 			}
 		}
+		if u.Domain != nil && (u.Reason == nil || strings.TrimSpace(*u.Reason) == "") {
+			return errorResult(fmt.Sprintf("update %d: reason is required when changing domain", i)), nil
+		}
 		// backcompat: transient bool maps to node_kind
 		nodeKind := u.NodeKind
 		if u.Transient != nil && nodeKind == nil {
@@ -163,6 +174,8 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 			Tags:        u.Tags,
 			OccurredAt:  occurredAt,
 			NodeKind:    nodeKind,
+			Domain:      u.Domain,
+			Reason:      u.Reason,
 		}
 	}
 	nodes, err := h.store.UpdateNodesBatch(inputs)
