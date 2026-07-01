@@ -57,6 +57,7 @@ Remove "call orient once per domain" steer text.
 
 ```json
 {
+  "summary_hint": "...",
   "orientations": [
     {
       "domain": "...",
@@ -65,8 +66,8 @@ Remove "call orient once per domain" steer text.
       "significant": [...],
       "recent": [...],
       "total_nodes": N,
-      "stale_count": N,
-      "workspace_stats": {...}
+      "archived_nodes": N,
+      "stale_count": N
     }
   ],
   "server_version": "..."

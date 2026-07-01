@@ -202,6 +202,31 @@ func TestRunDoctor_DriftSnapshot_ShowsCandidate(t *testing.T) {
 	}
 }
 
+func TestRunDoctor_DriftSnapshot_CategorisesResolvedPlaceholder(t *testing.T) {
+	store, dbPath := newTestStore(t)
+	home := t.TempDir()
+
+	placeholder, err := store.AddNode("Story needed: api/openapi/admin.yaml", "", "", "test-domain", nil, "", "goal")
+	if err != nil {
+		t.Fatalf("AddNode placeholder: %v", err)
+	}
+	done, err := store.AddNode("STORY-139 complete", "shipped 2026-06-28", "", "test-domain", nil, "", "")
+	if err != nil {
+		t.Fatalf("AddNode done: %v", err)
+	}
+	if _, err := store.AddEdge(placeholder.ID, done.ID, "connects_to", "closes this placeholder"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	var buf bytes.Buffer
+	runDoctor(store, &buf, dbPath, home, false)
+	out := buf.String()
+
+	if !strings.Contains(out, "resolved placeholders") {
+		t.Errorf("expected the resolved-placeholder drift candidate to be categorised as 'resolved placeholders', not folded into 'transient'; got:\n%s", out)
+	}
+}
+
 func TestRunDoctor_AuditLog_ShowsLastActivity(t *testing.T) {
 	store, dbPath := newTestStore(t)
 	home := t.TempDir()

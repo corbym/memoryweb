@@ -10,6 +10,201 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
+// TestFindConflictCandidates_PairIDsAreDistinct guards against the pair-
+// normalisation swap collapsing a_id and b_id into the same value.
+func TestFindConflictCandidates_PairIDsAreDistinct(t *testing.T) {
+	s := newStore(t)
+	a := mustAddNode(t, s, "Node one marker-pair-a", "conf-pair-domain")
+	b := mustAddNode(t, s, "Node two marker-pair-b", "conf-pair-domain")
+
+	sharedVec := makeDenseVector(100)
+	withFakeEmbeddings(t, map[string][]float32{
+		"marker-pair-a": sharedVec,
+		"marker-pair-b": sharedVec, // identical embedding → distance 0
+	})
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	candidates, err := s.FindConflictCandidates("conf-pair-domain", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("FindConflictCandidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("expected exactly 1 candidate pair for 2 identical-embedding nodes, got %d: %+v", len(candidates), candidates)
+	}
+	c := candidates[0]
+	if c.AID == c.BID {
+		t.Errorf("self-pair detected: a_id == b_id == %s", c.AID)
+	}
+	gotIDs := map[string]bool{c.AID: true, c.BID: true}
+	if !gotIDs[a.ID] || !gotIDs[b.ID] {
+		t.Errorf("expected candidate pair to reference both %s and %s, got a_id=%s b_id=%s", a.ID, b.ID, c.AID, c.BID)
+	}
+}
+
+// TestFindConflictCandidates_ExcludesResolvedPairs guards against
+// FindConflictCandidates having no resolved_by/supersedes exclusion at all.
+// Per the story ("exists between the contradicting nodes"), the resolution
+// edge connects the two contradicting nodes directly.
+func TestFindConflictCandidates_ExcludesResolvedPairs(t *testing.T) {
+	s := newStore(t)
+	a := mustAddNode(t, s, "Cap the pool at 20 marker-res-a", "conf-res-domain")
+	b := mustAddNode(t, s, "Cap the pool at 35 marker-res-b", "conf-res-domain")
+
+	sharedVec := makeDenseVector(200)
+	withFakeEmbeddings(t, map[string][]float32{
+		"marker-res-a": sharedVec,
+		"marker-res-b": sharedVec,
+	})
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	// "B supersedes A" — direct edge between the two contradicting nodes.
+	if _, err := s.AddEdge(b.ID, a.ID, "supersedes", "final decision"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	candidates, err := s.FindConflictCandidates("conf-res-domain", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("FindConflictCandidates: %v", err)
+	}
+	for _, c := range candidates {
+		if (c.AID == a.ID && c.BID == b.ID) || (c.AID == b.ID && c.BID == a.ID) {
+			t.Errorf("resolved pair (%s, %s) should be excluded from conflicts mode after supersedes resolution", a.ID, b.ID)
+		}
+	}
+}
+
+// TestFindConflictCandidates_TagsFilterAppliesToBothSidesOfPair guards
+// against the inner distance query ignoring the caller's tags filter.
+func TestFindConflictCandidates_TagsFilterAppliesToBothSidesOfPair(t *testing.T) {
+	s := newStore(t)
+	taggedA := mustAddNodeWithTags(t, s, "Security node A marker-tags-a", "conf-tags-domain", "security")
+	taggedC := mustAddNodeWithTags(t, s, "Security node C marker-tags-c", "conf-tags-domain", "security")
+	untaggedB := mustAddNode(t, s, "Infra node marker-tags-b", "conf-tags-domain")
+
+	sharedVec := makeDenseVector(300)
+	withFakeEmbeddings(t, map[string][]float32{
+		"marker-tags-a": sharedVec,
+		"marker-tags-c": makeDenseVector(301), // unrelated — keeps A/C out of the floor, just pads nodes to length 2
+		"marker-tags-b": sharedVec,            // identical to A — would wrongly match if the inner query weren't tag-scoped
+	})
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	candidates, err := s.FindConflictCandidates("conf-tags-domain", 10, []string{"security"}, nil)
+	if err != nil {
+		t.Fatalf("FindConflictCandidates: %v", err)
+	}
+	for _, c := range candidates {
+		if c.AID == untaggedB.ID || c.BID == untaggedB.ID {
+			t.Errorf("untagged node %s should not appear in a tags=security scoped conflicts search", untaggedB.ID)
+		}
+	}
+	_ = taggedA
+	_ = taggedC
+}
+
+// TestFindConflictCandidates_ReturnsEmptySliceNotNilWhenNothingQualifies
+// guards against candidates being left nil (JSON null) instead of an empty
+// slice when the search loop completes without adding any candidate. Uses
+// two identical (reliably distance-0, always-qualifying) embeddings but an
+// existing contradicts edge between them, so the pair is filtered out by the
+// already-contradicting exclusion rather than the distance floor — this
+// exercises the exact same "loop finished, nothing appended" code path
+// without depending on a specific non-identical embedding distance.
+func TestFindConflictCandidates_ReturnsEmptySliceNotNilWhenNothingQualifies(t *testing.T) {
+	s := newStore(t)
+	a := mustAddNode(t, s, "Node A marker-empty-a", "conf-empty-domain")
+	b := mustAddNode(t, s, "Node B marker-empty-b", "conf-empty-domain")
+
+	sharedVec := makeDenseVector(400)
+	withFakeEmbeddings(t, map[string][]float32{
+		"marker-empty-a": sharedVec,
+		"marker-empty-b": sharedVec,
+	})
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	if _, err := s.AddEdge(a.ID, b.ID, "contradicts", "already flagged"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	candidates, err := s.FindConflictCandidates("conf-empty-domain", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("FindConflictCandidates: %v", err)
+	}
+	if candidates == nil {
+		t.Error("expected non-nil empty slice, got nil — JSON would marshal as null instead of []")
+	}
+	if len(candidates) != 0 {
+		t.Errorf("expected 0 candidates (pair already has a contradicts edge), got %d: %+v", len(candidates), candidates)
+	}
+}
+
+// TestFindDrift_ContradictsPair_ExcludedWhenResolvedByReverseDirection guards
+// against Rule 1's exclusion only checking one direction of the resolution
+// edge between the two contradicting nodes — "B supersedes A" (from=B, to=A)
+// is an equally natural phrasing to "A resolved_by B" and must also retire
+// the pair.
+func TestFindDrift_ContradictsPair_ExcludedWhenResolvedByReverseDirection(t *testing.T) {
+	s := newStore(t)
+	a := mustAddNode(t, s, "Option A", "drift-resolve-domain")
+	b := mustAddNode(t, s, "Option B", "drift-resolve-domain")
+
+	if _, err := s.AddEdge(a.ID, b.ID, "contradicts", "these conflict"); err != nil {
+		t.Fatalf("AddEdge contradicts: %v", err)
+	}
+	if _, err := s.AddEdge(b.ID, a.ID, "supersedes", "B supersedes A"); err != nil {
+		t.Fatalf("AddEdge supersedes: %v", err)
+	}
+
+	drift, err := s.FindDrift("drift-resolve-domain", 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, d := range drift {
+		if d.Node.ID == a.ID || d.Node.ID == b.ID {
+			t.Errorf("contradicts pair should be excluded after reverse-direction resolution; got %s flagged with reason %q", d.Node.ID, d.Reason)
+		}
+	}
+}
+
+// TestFindDrift_ContradictsPair_NotExcludedByUnrelatedPriorResolution guards
+// against Rule 1's exclusion being too broad — a resolution edge from A to
+// an unrelated node Z must not suppress a brand-new, unresolved A-vs-B
+// contradiction.
+func TestFindDrift_ContradictsPair_NotExcludedByUnrelatedPriorResolution(t *testing.T) {
+	s := newStore(t)
+	a := mustAddNode(t, s, "Node A", "drift-unrelated-domain")
+	z := mustAddNode(t, s, "Node Z", "drift-unrelated-domain")
+	if _, err := s.AddEdge(a.ID, z.ID, "supersedes", "resolved an unrelated earlier disagreement"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	b := mustAddNode(t, s, "Node B", "drift-unrelated-domain")
+	if _, err := s.AddEdge(a.ID, b.ID, "contradicts", "these conflict"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	drift, err := s.FindDrift("drift-unrelated-domain", 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, d := range drift {
+		if d.Node.ID == a.ID || d.Node.ID == b.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("new A-vs-B contradiction should still be flagged; an unrelated prior resolution on A (to node Z) must not suppress it")
+	}
+}
+
 func TestFindDrift_TransientOlderThan7Days_IsDriftCandidate(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
@@ -302,14 +497,15 @@ func TestFindDrift_ContradictsPair_ExcludedWhenResolvedBy(t *testing.T) {
 	s := newStore(t)
 	nA := mustAddNode(t, s, "approach A", "rules")
 	nB := mustAddNode(t, s, "approach B", "rules")
-	nR := mustAddNode(t, s, "resolution node", "rules")
 
 	// A contradicts B.
 	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", ""); err != nil {
 		t.Fatalf("AddEdge contradicts: %v", err)
 	}
-	// A is resolved_by R.
-	if _, err := s.AddEdge(nA.ID, nR.ID, "resolved_by", ""); err != nil {
+	// A is resolved_by B — the resolution edge connects the two
+	// contradicting nodes directly (per the story: "exists between the
+	// contradicting nodes"), not a third unrelated node.
+	if _, err := s.AddEdge(nA.ID, nB.ID, "resolved_by", ""); err != nil {
 		t.Fatalf("AddEdge resolved_by: %v", err)
 	}
 

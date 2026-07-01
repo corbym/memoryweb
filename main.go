@@ -902,12 +902,16 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 				cats["old open questions"]++
 			case strings.HasPrefix(d.Reason, "possible duplicate"):
 				cats["duplicates"]++
+			case strings.HasPrefix(d.Reason, "standing rule"):
+				cats["low-connection standing rules"]++
+			case strings.HasPrefix(d.Reason, "connected placeholder"):
+				cats["resolved placeholders"]++
 			default:
 				cats["transient"]++
 			}
 		}
 		var parts []string
-		for _, key := range []string{"contradicts", "stale labels", "old open questions", "duplicates", "transient"} {
+		for _, key := range []string{"contradicts", "stale labels", "old open questions", "duplicates", "low-connection standing rules", "resolved placeholders", "transient"} {
 			if n := cats[key]; n > 0 {
 				parts = append(parts, fmt.Sprintf("%d %s", n, key))
 			}

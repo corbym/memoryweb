@@ -126,8 +126,8 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-// orientDomainEntry builds the full orient data for one domain. Used by both the
-// single-domain path and the multi-domain (domains array) path.
+// orientDomainEntry builds the full orient data for one domain. Used by the
+// multi-domain (domains array) path.
 type orientDomainEntry struct {
 	Domain        string      `json:"domain"`
 	Rules         interface{} `json:"rules,omitempty"`
@@ -136,6 +136,7 @@ type orientDomainEntry struct {
 	Relevant      interface{} `json:"relevant,omitempty"`
 	Recent        interface{} `json:"recent"`
 	TotalNodes    int         `json:"total_nodes"`
+	ArchivedNodes int         `json:"archived_nodes"`
 	StaleCount    int         `json:"stale_count"`
 }
 
@@ -144,6 +145,10 @@ type orientDomainEntry struct {
 // unknown/empty domain the sections are empty slices rather than errors.
 func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDomainEntry, error) {
 	liveNodes, err := h.store.CountNodes(domain)
+	if err != nil {
+		return orientDomainEntry{}, err
+	}
+	archivedNodes, err := h.store.CountArchived(domain)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
@@ -180,6 +185,7 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 		DeclaredSpine: digestSection(spineEntries, digest),
 		Recent:        digestSection(recentEntries, digest),
 		TotalNodes:    liveNodes,
+		ArchivedNodes: archivedNodes,
 		StaleCount:    staleCount,
 	}
 
@@ -354,9 +360,11 @@ func (h *Handler) orientMultiDomain(domains []string, topic string, digest bool)
 	}
 
 	resp := struct {
+		SummaryHint   string              `json:"summary_hint"`
 		Orientations  []orientDomainEntry `json:"orientations"`
 		ServerVersion string              `json:"server_version"`
 	}{
+		SummaryHint:   "Synthesise each domain's section into its own narrative paragraph (max 300 words), covering: current state, known blockers, recent decisions, and open questions. declared_spine lists key decisions chronologically. rules lists standing constraints. significant/relevant lists load-bearing or topic-matched memories. recent shows where work was last happening. Plain prose per domain, no bullet points.",
 		Orientations:  entries,
 		ServerVersion: h.version,
 	}

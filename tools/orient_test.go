@@ -1383,6 +1383,74 @@ func TestOrient_DomainsArray_SingleEntry(t *testing.T) {
 	}
 }
 
+// TestOrient_DomainsArray_ArchivedNodesAndSummaryHintPresent guards against
+// each multi-domain entry silently omitting archived_nodes (present on every
+// single-domain orient response) and the wrapper omitting summary_hint.
+func TestOrient_DomainsArray_ArchivedNodesAndSummaryHintPresent(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Alpha node", "dom-arr-fields-a", nil)
+	addNode(t, h, "Beta node", "dom-arr-fields-b", nil)
+
+	tr := call(t, h, "orient", map[string]any{
+		"domains": []string{"dom-arr-fields-a", "dom-arr-fields-b"},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		SummaryHint  string `json:"summary_hint"`
+		Orientations []struct {
+			Domain        string `json:"domain"`
+			ArchivedNodes *int   `json:"archived_nodes"`
+		} `json:"orientations"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orientations response: %v", err)
+	}
+	if resp.SummaryHint == "" {
+		t.Error("multi-domain orient response must include a top-level summary_hint, matching single-domain orient")
+	}
+	for _, entry := range resp.Orientations {
+		if entry.ArchivedNodes == nil {
+			t.Errorf("domain %q: archived_nodes must be present, matching single-domain orient", entry.Domain)
+		}
+	}
+}
+
+// TestOrient_DomainsArray_SingleEntry_EmptyDomain locks in the one documented
+// exception to "domains=[X] matches domain=X": for a domain with zero live
+// nodes, domains=["X"] (length 1) falls through to identical single-domain
+// code and returns the plain-text "nothing filed" response, while
+// domains=["X","Y"] (length 2+) returns structured JSON with empty sections
+// for the same domain (per "unknown domains return empty sections, not
+// errors"). This is a deliberate consequence of length-1 reusing the
+// single-domain code path byte-for-byte; it is not itself a bug, but was
+// previously silent and untested.
+func TestOrient_DomainsArray_SingleEntry_EmptyDomain(t *testing.T) {
+	_, h := newEnv(t)
+
+	trSingle := call(t, h, "orient", map[string]any{"domain": "dom-arr-empty-solo"})
+	mustNotError(t, trSingle)
+	trArraySolo := call(t, h, "orient", map[string]any{"domains": []string{"dom-arr-empty-solo"}})
+	mustNotError(t, trArraySolo)
+
+	if text(t, trSingle) != text(t, trArraySolo) {
+		t.Errorf("domains=[X] (length 1) must match domain=X byte-for-byte, including the empty-domain case:\ndomain=X: %s\ndomains=[X]: %s", text(t, trSingle), text(t, trArraySolo))
+	}
+	if strings.Contains(text(t, trArraySolo), "orientations") {
+		t.Error("domains=[X] (length 1) must not use the orientations wrapper, even for an empty domain")
+	}
+
+	// The length-2+ path for the same empty domain uses structured JSON instead.
+	addNode(t, h, "Other domain node", "dom-arr-empty-other", nil)
+	trArrayMulti := call(t, h, "orient", map[string]any{
+		"domains": []string{"dom-arr-empty-solo", "dom-arr-empty-other"},
+	})
+	mustNotError(t, trArrayMulti)
+	if !strings.Contains(text(t, trArrayMulti), `"orientations"`) {
+		t.Error("domains=[X,Y] (length 2+) must use the orientations wrapper even when X is empty")
+	}
+}
+
 // TestOrient_DomainsArray_MutuallyExclusive: orient(domain="a", domains=["b"])
 // must return a validation error.
 func TestOrient_DomainsArray_MutuallyExclusive(t *testing.T) {

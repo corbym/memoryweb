@@ -852,7 +852,6 @@ func TestAudit_Stale_ContradictsPair_NotFlaggedAfterResolution(t *testing.T) {
 
 	idA := addNode(t, h, "pool cap old version", "resolve-test", nil)
 	idB := addNode(t, h, "pool cap new version", "resolve-test", nil)
-	idResolution := addNode(t, h, "pool cap final decision", "resolve-test", nil)
 
 	// Wire the contradiction.
 	mustNotError(t, call(t, h, "connect", map[string]any{
@@ -861,16 +860,12 @@ func TestAudit_Stale_ContradictsPair_NotFlaggedAfterResolution(t *testing.T) {
 		"relationship": "contradicts",
 	}))
 
-	// Resolution action: add a resolved_by edge from the contradicting node
-	// to the resolution node.
+	// Resolution action: add a resolved_by edge directly between the two
+	// contradicting nodes (per the story: "exists between the contradicting
+	// nodes"), not to a third unrelated node.
 	mustNotError(t, call(t, h, "connect", map[string]any{
 		"from_memory":  idA,
-		"to_memory":    idResolution,
-		"relationship": "resolved_by",
-	}))
-	mustNotError(t, call(t, h, "connect", map[string]any{
-		"from_memory":  idB,
-		"to_memory":    idResolution,
+		"to_memory":    idB,
 		"relationship": "resolved_by",
 	}))
 
@@ -894,16 +889,17 @@ func TestAudit_Conflicts_ContradictsPair_ExcludedAfterResolution(t *testing.T) {
 
 	idA := addNode(t, h, "pool cap twenty", "conflict-resolve", nil)
 	idB := addNode(t, h, "pool cap thirty five", "conflict-resolve", nil)
-	idC := addNode(t, h, "pool cap final", "conflict-resolve", nil)
 
 	mustNotError(t, call(t, h, "connect", map[string]any{
 		"from_memory":  idA,
 		"to_memory":    idB,
 		"relationship": "contradicts",
 	}))
+	// Resolution edge directly between the two contradicting nodes (per the
+	// story: "exists between the contradicting nodes"), not a third node.
 	mustNotError(t, call(t, h, "connect", map[string]any{
 		"from_memory":  idA,
-		"to_memory":    idC,
+		"to_memory":    idB,
 		"relationship": "resolved_by",
 	}))
 

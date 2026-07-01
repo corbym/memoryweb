@@ -443,21 +443,29 @@ func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters 
 
 	// Domain affinity: find best same-domain distance.
 	bestSameDomainDist := float64(2.0) // worst possible cosine distance
+	haveSameDomain := false
 	for _, c := range all {
-		if c.domain == domain && c.dist < bestSameDomainDist {
-			bestSameDomainDist = c.dist
+		if c.domain == domain {
+			haveSameDomain = true
+			if c.dist < bestSameDomainDist {
+				bestSameDomainDist = c.dist
+			}
 		}
 	}
 
 	// Filter: include same-domain candidates; include cross-domain candidates
 	// only when their distance is crossDomainAffinityBoost better than the
-	// best same-domain match.
+	// best same-domain match. With no same-domain candidate to calibrate
+	// against, there is no baseline "normal" to compare a cross-domain match
+	// to, so cross-domain candidates are excluded entirely rather than
+	// admitted by a relaxed-to-uselessness threshold (2.0*(1-boost), which
+	// every candidate already inside the outer floor would trivially pass).
 	threshold := bestSameDomainDist * (1.0 - crossDomainAffinityBoost)
 	var kept []candidate
 	for _, c := range all {
 		if c.domain == domain {
 			kept = append(kept, c)
-		} else if c.dist <= threshold {
+		} else if haveSameDomain && c.dist <= threshold {
 			kept = append(kept, c)
 		}
 	}

@@ -20,8 +20,8 @@ type ConflictCandidate struct {
 }
 
 // conflictsDomainThreshold is the cross-domain distance ceiling for the
-// conflicts mode. Higher than CandidateSimilarityFloor so cross-domain pairs
-// are only surfaced when very semantically close.
+// conflicts mode. Lower (stricter) than CandidateSimilarityFloor so cross-domain
+// pairs are only surfaced when very semantically close.
 const conflictsDomainThreshold = 0.3
 
 // FindConflictCandidates returns pairs of live nodes whose embedding distance
@@ -54,7 +54,8 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 	nodeQ := `SELECT n.id, n.label, n.domain, e.embedding
 	FROM node_embeddings e
 	JOIN nodes n ON n.id = e.node_id
-	WHERE ` + strings.Join(conds, " AND ")
+	WHERE ` + strings.Join(conds, " AND ") + `
+	ORDER BY n.id`
 
 	rows, err := s.db.Query(nodeQ, args...)
 	if err != nil {
@@ -77,15 +78,20 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 		nodes = append(nodes, n)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return []ConflictCandidate{}, nil
+	}
 	if len(nodes) < 2 {
 		return []ConflictCandidate{}, nil
 	}
 
-	// Build a set of already-contradicting pairs so we can exclude them.
+	// Build a set of pairs to exclude: already-contradicting pairs, and pairs
+	// already resolved via a resolved_by/supersedes edge directly between the
+	// two nodes (checked in either direction).
 	type pairKey struct{ a, b string }
 	contradicting := make(map[pairKey]bool)
 	edgeRows, err := s.db.Query(
-		`SELECT from_node, to_node FROM edges WHERE relationship = 'contradicts'`)
+		`SELECT from_node, to_node FROM edges WHERE relationship IN ('contradicts', 'resolved_by', 'supersedes')`)
 	if err == nil {
 		for edgeRows.Next() {
 			var fn, tn string
@@ -98,11 +104,14 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 			}
 		}
 		edgeRows.Close()
+		if err := edgeRows.Err(); err != nil {
+			return []ConflictCandidate{}, nil
+		}
 	}
 
 	// Compute pairwise distances using vec_distance_cosine via SQLite.
 	// For N nodes this is O(N²) queries — bounded by the domain scope and limit.
-	var candidates []ConflictCandidate
+	candidates := []ConflictCandidate{}
 	seen := make(map[pairKey]bool)
 
 	for i := 0; i < len(nodes) && len(candidates) < limit*2; i++ {
@@ -110,19 +119,23 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 		if len(na.embedding) == 0 {
 			continue
 		}
-		// Query distance from na to all other nodes with embeddings.
-		var distArgs []interface{}
-		distArgs = append(distArgs, na.embedding)
-		distArgs = append(distArgs, na.id)
+		// Query distance from na to all other nodes with embeddings, applying
+		// the same tags/node_kind scoping as the outer candidate query so a
+		// scoped audit(mode=conflicts) call doesn't pair a matching node with
+		// an unrelated one that fails the caller's own filter.
+		innerConds := []string{"n.id != ?", "n.archived_at IS NULL"}
+		innerArgs := []interface{}{na.id}
+		innerConds, innerArgs = tagFilter("n.tags", tags, innerConds, innerArgs)
+		innerConds, innerArgs = nodeKindFilter("n.node_kind", nodeKinds, innerConds, innerArgs)
 
 		distQ := `SELECT n.id, n.label, n.domain,
 			vec_distance_cosine(e.embedding, ?) AS dist
 			FROM node_embeddings e
 			JOIN nodes n ON n.id = e.node_id
-			WHERE n.id != ?
-			  AND n.archived_at IS NULL
+			WHERE ` + strings.Join(innerConds, " AND ") + `
 			ORDER BY dist ASC`
 
+		distArgs := append([]interface{}{na.embedding}, innerArgs...)
 		dRows, err := s.db.Query(distQ, distArgs...)
 		if err != nil {
 			continue
@@ -146,14 +159,7 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 				continue
 			}
 
-			// Normalise pair key.
-			aID := na.id
-			if aID > bID {
-				aID, bID = bID, aID
-				bLabel, bLabel = na.label, bLabel // swap labels to match IDs
-				_ = bLabel                        // suppress false-swap; fix below
-			}
-			// Rebuild correctly after swap.
+			// Normalise pair key: smaller ID first.
 			var pAID, pALabel, pBID, pBLabel string
 			if na.id <= bID {
 				pAID, pALabel, pBID, pBLabel = na.id, na.label, bID, bLabel
@@ -179,6 +185,9 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 			}
 		}
 		dRows.Close()
+		if err := dRows.Err(); err != nil {
+			return []ConflictCandidate{}, nil
+		}
 	}
 
 	// Sort by distance ascending and cap at limit.
@@ -235,10 +244,14 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	var err error
 
 	// ── Rule 1: contradicts edges (excluding pairs with resolution edges) ────────
-	// A pair is considered resolved when at least one of the two contradicting
-	// nodes has a resolved_by or supersedes edge to any other node. This
-	// implements Option A from the story: the resolution is expressed as a graph
-	// action (an additional edge), not a new DB column.
+	// A pair is considered resolved when a resolved_by or supersedes edge
+	// connects the two contradicting nodes specifically, in either direction
+	// (from either node to the other — "A supersedes B" and "B resolved_by A"
+	// are both valid resolution phrasings). This implements Option A from the
+	// story: the resolution is expressed as a graph action (an additional
+	// edge), not a new DB column. Checking both directions and requiring the
+	// edge to connect this exact pair (not an unrelated third node) avoids
+	// both under- and over-excluding contradicts pairs.
 	rows, err := s.db.Query(`
 		SELECT a.id, a.label, a.description, a.why_matters, a.domain,
 		       a.created_at, a.updated_at, a.occurred_at, a.archived_at, a.tags, a.node_kind,
@@ -251,7 +264,10 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		  AND NOT EXISTS (
 		      SELECT 1 FROM edges r
 		       WHERE r.relationship IN ('resolved_by', 'supersedes')
-		         AND (r.from_node = a.id OR r.from_node = b.id)
+		         AND (
+		             (r.from_node = a.id AND r.to_node = b.id) OR
+		             (r.from_node = b.id AND r.to_node = a.id)
+		         )
 		  )`)
 	if err != nil {
 		return nil, err
