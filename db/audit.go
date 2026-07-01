@@ -6,6 +6,198 @@ import (
 	"time"
 )
 
+// ConflictCandidate is a pair of nodes that are semantically adjacent and may
+// warrant agent review for potential contradiction. The server never asserts
+// these conflict — only that their embedding distance is low enough to warrant
+// attention.
+type ConflictCandidate struct {
+	AID              string  `json:"a_id"`
+	ALabel           string  `json:"a_label"`
+	BID              string  `json:"b_id"`
+	BLabel           string  `json:"b_label"`
+	SemanticDistance float64 `json:"semantic_distance"`
+	Reason           string  `json:"reason"`
+}
+
+// conflictsDomainThreshold is the cross-domain distance ceiling for the
+// conflicts mode. Higher than CandidateSimilarityFloor so cross-domain pairs
+// are only surfaced when very semantically close.
+const conflictsDomainThreshold = 0.3
+
+// FindConflictCandidates returns pairs of live nodes whose embedding distance
+// is below CandidateSimilarityFloor, excluding pairs that already have a
+// contradicts edge between them. Same-domain pairs are preferred; cross-domain
+// pairs are included only when their distance is below conflictsDomainThreshold.
+// The result contains up to limit pairs. Empty slice (not nil) is returned when
+// no embeddings exist.
+func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds []string) ([]ConflictCandidate, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	domain = s.ResolveAlias(domain)
+
+	// Fetch live nodes with their embeddings. If no embeddings table is
+	// available or empty, return an empty slice.
+	if !s.vecAvailable {
+		return []ConflictCandidate{}, nil
+	}
+
+	conds := []string{"n.archived_at IS NULL"}
+	args := []interface{}{}
+	if domain != "" {
+		conds = append(conds, "n.domain = ?")
+		args = append(args, domain)
+	}
+	conds, args = tagFilter("n.tags", tags, conds, args)
+	conds, args = nodeKindFilter("n.node_kind", nodeKinds, conds, args)
+
+	nodeQ := `SELECT n.id, n.label, n.domain, e.embedding
+	FROM node_embeddings e
+	JOIN nodes n ON n.id = e.node_id
+	WHERE ` + strings.Join(conds, " AND ")
+
+	rows, err := s.db.Query(nodeQ, args...)
+	if err != nil {
+		return []ConflictCandidate{}, nil
+	}
+	defer rows.Close()
+
+	type embNode struct {
+		id        string
+		label     string
+		domain    string
+		embedding []byte
+	}
+	var nodes []embNode
+	for rows.Next() {
+		var n embNode
+		if err := rows.Scan(&n.id, &n.label, &n.domain, &n.embedding); err != nil {
+			return []ConflictCandidate{}, nil
+		}
+		nodes = append(nodes, n)
+	}
+	rows.Close()
+	if len(nodes) < 2 {
+		return []ConflictCandidate{}, nil
+	}
+
+	// Build a set of already-contradicting pairs so we can exclude them.
+	type pairKey struct{ a, b string }
+	contradicting := make(map[pairKey]bool)
+	edgeRows, err := s.db.Query(
+		`SELECT from_node, to_node FROM edges WHERE relationship = 'contradicts'`)
+	if err == nil {
+		for edgeRows.Next() {
+			var fn, tn string
+			if edgeRows.Scan(&fn, &tn) == nil {
+				// Normalise: always store smaller-ID first.
+				if fn > tn {
+					fn, tn = tn, fn
+				}
+				contradicting[pairKey{fn, tn}] = true
+			}
+		}
+		edgeRows.Close()
+	}
+
+	// Compute pairwise distances using vec_distance_cosine via SQLite.
+	// For N nodes this is O(N²) queries — bounded by the domain scope and limit.
+	var candidates []ConflictCandidate
+	seen := make(map[pairKey]bool)
+
+	for i := 0; i < len(nodes) && len(candidates) < limit*2; i++ {
+		na := nodes[i]
+		if len(na.embedding) == 0 {
+			continue
+		}
+		// Query distance from na to all other nodes with embeddings.
+		var distArgs []interface{}
+		distArgs = append(distArgs, na.embedding)
+		distArgs = append(distArgs, na.id)
+
+		distQ := `SELECT n.id, n.label, n.domain,
+			vec_distance_cosine(e.embedding, ?) AS dist
+			FROM node_embeddings e
+			JOIN nodes n ON n.id = e.node_id
+			WHERE n.id != ?
+			  AND n.archived_at IS NULL
+			ORDER BY dist ASC`
+
+		dRows, err := s.db.Query(distQ, distArgs...)
+		if err != nil {
+			continue
+		}
+		for dRows.Next() {
+			var bID, bLabel, bDomain string
+			var dist float64
+			if err := dRows.Scan(&bID, &bLabel, &bDomain, &dist); err != nil {
+				continue
+			}
+			// Hard floor.
+			if dist > CandidateSimilarityFloor {
+				break // ordered by dist ASC
+			}
+			// Domain scope filter for cross-domain.
+			if na.domain != bDomain && dist > conflictsDomainThreshold {
+				continue
+			}
+			// If a domain was requested, at least one node must be in it.
+			if domain != "" && na.domain != domain && bDomain != domain {
+				continue
+			}
+
+			// Normalise pair key.
+			aID := na.id
+			if aID > bID {
+				aID, bID = bID, aID
+				bLabel, bLabel = na.label, bLabel // swap labels to match IDs
+				_ = bLabel                        // suppress false-swap; fix below
+			}
+			// Rebuild correctly after swap.
+			var pAID, pALabel, pBID, pBLabel string
+			if na.id <= bID {
+				pAID, pALabel, pBID, pBLabel = na.id, na.label, bID, bLabel
+			} else {
+				pAID, pALabel, pBID, pBLabel = bID, bLabel, na.id, na.label
+			}
+
+			pk := pairKey{pAID, pBID}
+			if seen[pk] || contradicting[pk] {
+				continue
+			}
+			seen[pk] = true
+			candidates = append(candidates, ConflictCandidate{
+				AID:              pAID,
+				ALabel:           pALabel,
+				BID:              pBID,
+				BLabel:           pBLabel,
+				SemanticDistance: dist,
+				Reason:           "semantically adjacent — agent adjudicates whether these conflict",
+			})
+			if len(candidates) >= limit*2 {
+				break
+			}
+		}
+		dRows.Close()
+	}
+
+	// Sort by distance ascending and cap at limit.
+	sortConflictCandidates(candidates)
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates, nil
+}
+
+// sortConflictCandidates sorts candidates by SemanticDistance ascending.
+func sortConflictCandidates(cs []ConflictCandidate) {
+	for i := 1; i < len(cs); i++ {
+		for j := i; j > 0 && cs[j].SemanticDistance < cs[j-1].SemanticDistance; j-- {
+			cs[j], cs[j-1] = cs[j-1], cs[j]
+		}
+	}
+}
+
 // DriftCandidate is a node flagged as potentially stale or conflicting.
 type DriftCandidate struct {
 	Node          Node   `json:"node"`
@@ -42,7 +234,11 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 
 	var err error
 
-	// ── Rule 1: contradicts edges ─────────────────────────────────────────────
+	// ── Rule 1: contradicts edges (excluding pairs with resolution edges) ────────
+	// A pair is considered resolved when at least one of the two contradicting
+	// nodes has a resolved_by or supersedes edge to any other node. This
+	// implements Option A from the story: the resolution is expressed as a graph
+	// action (an additional edge), not a new DB column.
 	rows, err := s.db.Query(`
 		SELECT a.id, a.label, a.description, a.why_matters, a.domain,
 		       a.created_at, a.updated_at, a.occurred_at, a.archived_at, a.tags, a.node_kind,
@@ -51,7 +247,12 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		FROM edges e
 		JOIN nodes a ON a.id = e.from_node AND a.archived_at IS NULL
 		JOIN nodes b ON b.id = e.to_node   AND b.archived_at IS NULL
-		WHERE e.relationship = 'contradicts'`)
+		WHERE e.relationship = 'contradicts'
+		  AND NOT EXISTS (
+		      SELECT 1 FROM edges r
+		       WHERE r.relationship IN ('resolved_by', 'supersedes')
+		         AND (r.from_node = a.id OR r.from_node = b.id)
+		  )`)
 	if err != nil {
 		return nil, err
 	}

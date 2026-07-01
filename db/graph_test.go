@@ -1,9 +1,21 @@
 package db_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
+
+// disableOllamaDB sets MEMORYWEB_OLLAMA_ENDPOINT=disabled for the duration of
+// the test. Use this in db-layer tests that exercise keyword-only paths in
+// SuggestEdges and SearchNodes so that a running Ollama instance does not
+// activate the embedding path and interfere with expected results.
+func disableOllamaDB(t *testing.T) {
+	t.Helper()
+	prev := os.Getenv("MEMORYWEB_OLLAMA_ENDPOINT")
+	os.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
+	t.Cleanup(func() { os.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", prev) })
+}
 
 func TestFindConnections_ReturnsBidirectionalEdge(t *testing.T) {
 	s := newStore(t)
@@ -118,8 +130,9 @@ func TestSuggestEdges_DomainScoping_DB(t *testing.T) {
 
 // TestSuggestEdges_EmDashNotMatchedAsSharedWord: two labels whose only common
 // character is an em-dash must not be suggested as connected — the em-dash is
-// not a word.
+// not a word. Ollama is disabled so only the keyword path runs.
 func TestSuggestEdges_EmDashNotMatchedAsSharedWord(t *testing.T) {
+	disableOllamaDB(t)
 	s := newStore(t)
 	nA, _ := s.AddNode("Alpha — gizmo", "d", "w", "proj", nil, "", "")
 	nB, _ := s.AddNode("Beta — widget", "d", "w", "proj", nil, "", "")
@@ -137,8 +150,10 @@ func TestSuggestEdges_EmDashNotMatchedAsSharedWord(t *testing.T) {
 
 // TestSuggestEdges_EnDashAndEllipsisNotMatchedAsSharedWord: same shape as the
 // em-dash case, using en-dash and ellipsis — any standalone punctuation/symbol
-// token must be excluded, not just the em-dash.
+// token must be excluded, not just the em-dash. Ollama is disabled so only the
+// keyword path runs.
 func TestSuggestEdges_EnDashAndEllipsisNotMatchedAsSharedWord(t *testing.T) {
+	disableOllamaDB(t)
 	s := newStore(t)
 	nA, _ := s.AddNode("Alpha – gizmo…", "d", "w", "proj", nil, "", "")
 	nB, _ := s.AddNode("Beta – widget…", "d", "w", "proj", nil, "", "")

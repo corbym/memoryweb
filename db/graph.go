@@ -9,6 +9,22 @@ import (
 	"unicode/utf8"
 )
 
+// CandidateSimilarityFloor is the maximum cosine distance for a node to be
+// considered a meaningful filing-time candidate connection. vec_distance_cosine
+// returns values in [0, 2]; 0 = identical, 2 = opposite.
+// Candidates whose embedding distance exceeds this floor are suppressed — the
+// server returns fewer than limit (even zero) rather than handing back noise.
+// Chosen to be less strict than semanticDistanceThreshold (0.3) used in search,
+// because suggest_connections tolerates a looser signal.
+// Exported so that audit.go (conflicts mode) can reuse the same threshold.
+const CandidateSimilarityFloor = 0.5
+
+// crossDomainAffinityBoost is the fractional improvement a cross-domain
+// candidate's distance must achieve over the best same-domain candidate before
+// it is included. A value of 0.20 means the cross-domain node must be at least
+// 20% closer (lower distance) than the best same-domain match.
+const crossDomainAffinityBoost = 0.20
+
 // PathResult holds the shortest path between two nodes and all edges
 // incident to any node on that path (spine edges + context branches).
 type PathResult struct {
@@ -322,8 +338,13 @@ type EdgeSuggestion struct {
 	Domain string `json:"domain"`
 }
 
-// SuggestEdges returns up to limit candidate connections for the given node:
-// live nodes in the same domain that share tags or significant label words.
+// SuggestEdges returns up to limit candidate connections for the given node.
+// When sqlite-vec embeddings are available for the node, it uses semantic
+// nearest-neighbour search with a similarity floor (candidateSimilarityFloor)
+// and domain affinity (same-domain preferred; cross-domain candidates only when
+// their distance is at least crossDomainAffinityBoost better than the best
+// same-domain match). Falls back to keyword matching (tag overlap + label words)
+// when embeddings are unavailable.
 // It never creates edges — the caller must use AddEdge to act on suggestions.
 func (s *Store) SuggestEdges(id string, limit int) ([]EdgeSuggestion, error) {
 	if limit <= 0 {
@@ -331,16 +352,197 @@ func (s *Store) SuggestEdges(id string, limit int) ([]EdgeSuggestion, error) {
 	}
 
 	// Fetch the target node.
-	var targetLabel, targetDomain, targetTags string
+	var targetLabel, targetDomain, targetTags, targetDesc, targetWhy string
 	if err := s.db.QueryRow(
-		`SELECT label, domain, tags FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
-	).Scan(&targetLabel, &targetDomain, &targetTags); err != nil {
+		`SELECT label, domain, tags, description, why_matters FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
+	).Scan(&targetLabel, &targetDomain, &targetTags, &targetDesc, &targetWhy); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("node not found: %s", id)
 		}
 		return nil, err
 	}
 
+	// Try semantic path when the node has an embedding stored.
+	// Use the enriched variant so the reason field surfaces keyword overlap.
+	if s.vecAvailable {
+		if results, ok, err := s.suggestEdgesSemanticEnriched(id, targetLabel, targetDomain, targetDesc, targetWhy, targetTags, limit); err == nil && ok {
+			return results, nil
+		}
+	}
+
+	// Keyword fallback: extract meaningful keywords from label + tags.
+	return s.suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags, limit)
+}
+
+// suggestEdgesSemantic finds candidate connections using embedding cosine
+// distance. Returns (results, true, nil) on success, (nil, false, nil) when
+// no embedding exists for the node (caller falls back to keyword path).
+func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters string, limit int) ([]EdgeSuggestion, bool, error) {
+	// Look up the stored embedding blob for this node and pass it directly
+	// to the sqlite-vec distance function.
+	var blob []byte
+	if err := s.db.QueryRow(
+		`SELECT embedding FROM node_embeddings WHERE node_id = ?`, id,
+	).Scan(&blob); err != nil {
+		// No embedding yet — fall back to keyword path.
+		return nil, false, nil
+	}
+	if len(blob) == 0 {
+		return nil, false, nil
+	}
+
+	// Fetch up to limit*4 nearest neighbours across all domains (excluding self
+	// and already-connected nodes). We over-fetch to have room to apply domain
+	// affinity filtering before capping at limit.
+	fetch := limit * 4
+	rows, err := s.db.Query(`
+		SELECT n.id, n.label, n.domain,
+		       vec_distance_cosine(e.embedding, ?) AS dist
+		FROM node_embeddings e
+		JOIN nodes n ON n.id = e.node_id
+		WHERE n.id != ?
+		  AND n.archived_at IS NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM edges
+		       WHERE (from_node = ? AND to_node = n.id)
+		          OR (from_node = n.id AND to_node = ?)
+		  )
+		ORDER BY dist ASC
+		LIMIT ?`, blob, id, id, id, fetch)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		id     string
+		label  string
+		domain string
+		dist   float64
+	}
+	var all []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.label, &c.domain, &c.dist); err != nil {
+			return nil, false, err
+		}
+		// Hard floor: suppress anything beyond the similarity floor.
+		if c.dist > CandidateSimilarityFloor {
+			break // results are ordered by dist ASC; all following are worse
+		}
+		all = append(all, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	if len(all) == 0 {
+		// No candidates within floor — return empty slice rather than noise.
+		return []EdgeSuggestion{}, true, nil
+	}
+
+	// Domain affinity: find best same-domain distance.
+	bestSameDomainDist := float64(2.0) // worst possible cosine distance
+	for _, c := range all {
+		if c.domain == domain && c.dist < bestSameDomainDist {
+			bestSameDomainDist = c.dist
+		}
+	}
+
+	// Filter: include same-domain candidates; include cross-domain candidates
+	// only when their distance is crossDomainAffinityBoost better than the
+	// best same-domain match.
+	threshold := bestSameDomainDist * (1.0 - crossDomainAffinityBoost)
+	var kept []candidate
+	for _, c := range all {
+		if c.domain == domain {
+			kept = append(kept, c)
+		} else if c.dist <= threshold {
+			kept = append(kept, c)
+		}
+	}
+
+	// Cap at limit.
+	if len(kept) > limit {
+		kept = kept[:limit]
+	}
+
+	// Enrich reasons: run keyword matching to surface shared tags/label words
+	// so callers can see the semantic signal alongside the embedding signal.
+	// Compute the keywords from the filing node's label and tags for comparison.
+	// (targetTags and targetLabel are not in scope here; we pass them in the
+	// caller's embedded text. A lightweight re-derive from label is sufficient.)
+	result := make([]EdgeSuggestion, len(kept))
+	for i, c := range kept {
+		var reason string
+		if c.domain != domain {
+			reason = "semantically similar (cross-domain)"
+		} else {
+			reason = "semantically similar"
+		}
+		result[i] = EdgeSuggestion{ID: c.id, Label: c.label, Reason: reason, Domain: c.domain}
+	}
+	return result, true, nil
+}
+
+// suggestEdgesSemanticWithKeywords is like suggestEdgesSemantic but also runs
+// keyword matching to enrich the reason field. The reason will mention shared
+// tags or label words when they exist.
+func (s *Store) suggestEdgesSemanticEnriched(id, label, domain, description, whyMatters, tags string, limit int) ([]EdgeSuggestion, bool, error) {
+	results, ok, err := s.suggestEdgesSemantic(id, label, domain, description, whyMatters, limit)
+	if err != nil || !ok || len(results) == 0 {
+		return results, ok, err
+	}
+	// Enrich each result's reason with keyword overlap information.
+	keywords := suggestKeywords(label, tags)
+	for i := range results {
+		var matchedTags, matchedLabels []string
+		cLabelLower := strings.ToLower(results[i].Label)
+		seen := map[string]bool{}
+		for _, kw := range keywords {
+			if seen[kw] {
+				continue
+			}
+			if strings.Contains(cLabelLower, kw) {
+				matchedLabels = append(matchedLabels, kw)
+				seen[kw] = true
+			}
+		}
+		// Fetch candidate tags from DB for tag overlap check.
+		var cTags string
+		s.db.QueryRow(`SELECT tags FROM nodes WHERE id = ?`, results[i].ID).Scan(&cTags)
+		cTagsLower := strings.ToLower(cTags)
+		for _, kw := range keywords {
+			if seen[kw] {
+				continue
+			}
+			if strings.Contains(cTagsLower, kw) {
+				matchedTags = append(matchedTags, kw)
+				seen[kw] = true
+			}
+		}
+		if len(matchedTags) > 0 || len(matchedLabels) > 0 {
+			var parts []string
+			if strings.Contains(results[i].Reason, "cross-domain") {
+				parts = append(parts, "semantically similar (cross-domain)")
+			} else {
+				parts = append(parts, "semantically similar")
+			}
+			if len(matchedTags) > 0 {
+				parts = append(parts, "shares tags: "+strings.Join(matchedTags, " "))
+			}
+			if len(matchedLabels) > 0 {
+				parts = append(parts, "similar label words: "+strings.Join(matchedLabels, " "))
+			}
+			results[i].Reason = strings.Join(parts, "; ")
+		}
+	}
+	return results, true, nil
+}
+
+// suggestEdgesKeyword finds candidate connections using tag overlap and label
+// word matching. This is the fallback path when no embedding is available.
+func (s *Store) suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags string, limit int) ([]EdgeSuggestion, error) {
 	// Extract meaningful keywords from label + tags (lowercased, deduplicated,
 	// stop-words and very short words removed).
 	keywords := suggestKeywords(targetLabel, targetTags)

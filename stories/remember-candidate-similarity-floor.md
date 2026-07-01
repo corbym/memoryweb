@@ -1,6 +1,6 @@
 # remember: similarity floor and domain affinity for filing-time candidates
 
-**Status:** OPEN (memoryweb mirror)
+**Status:** COMPLETE
 
 **Shared-surface node:** `finding-remember-filing-time-candidate-suggestions-show-cross-domain-noise-no-similarity-floor-34e0d3f0`
 

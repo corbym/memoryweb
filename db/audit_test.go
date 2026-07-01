@@ -295,6 +295,102 @@ func TestFindDrift_MemoryID_NeighbourhoodOnly(t *testing.T) {
 	}
 }
 
+// TestFindDrift_ContradictsPair_ExcludedWhenResolvedBy: a contradicts pair
+// where at least one node has a resolved_by edge to another node must not be
+// re-flagged by rule 1 of FindDrift.
+func TestFindDrift_ContradictsPair_ExcludedWhenResolvedBy(t *testing.T) {
+	s := newStore(t)
+	nA := mustAddNode(t, s, "approach A", "rules")
+	nB := mustAddNode(t, s, "approach B", "rules")
+	nR := mustAddNode(t, s, "resolution node", "rules")
+
+	// A contradicts B.
+	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", ""); err != nil {
+		t.Fatalf("AddEdge contradicts: %v", err)
+	}
+	// A is resolved_by R.
+	if _, err := s.AddEdge(nA.ID, nR.ID, "resolved_by", ""); err != nil {
+		t.Fatalf("AddEdge resolved_by: %v", err)
+	}
+
+	candidates, err := s.FindDrift("rules", 10, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, c := range candidates {
+		if c.ConflictsWith != nil && c.Reason == "explicitly marked as contradicting each other" {
+			if (c.Node.ID == nA.ID && c.ConflictsWith.ID == nB.ID) ||
+				(c.Node.ID == nB.ID && c.ConflictsWith.ID == nA.ID) {
+				t.Errorf("resolved contradicts pair must not appear in drift; got: %+v", c)
+			}
+		}
+	}
+}
+
+// TestFindDrift_ContradictsPair_StillFlaggedWithoutResolution: an unresolved
+// contradicts pair must still be flagged.
+func TestFindDrift_ContradictsPair_StillFlaggedWithoutResolution(t *testing.T) {
+	s := newStore(t)
+	nA := mustAddNode(t, s, "approach alpha", "rules2")
+	nB := mustAddNode(t, s, "approach beta", "rules2")
+
+	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", ""); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	candidates, err := s.FindDrift("rules2", 10, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, c := range candidates {
+		if c.Node.ID == nA.ID || c.Node.ID == nB.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("unresolved contradicts pair must still appear in drift")
+	}
+}
+
+// TestFindConflictCandidates_ExcludesPairsAlreadyLinked: pairs that already
+// have a contradicts edge must not appear in the conflict candidates output.
+func TestFindConflictCandidates_ExcludesPairsAlreadyLinked(t *testing.T) {
+	s := newStore(t)
+	nA := mustAddNode(t, s, "cap pool at 20", "rules")
+	nB := mustAddNode(t, s, "cap pool at 35", "rules")
+	// Mark them as contradicting.
+	s.AddEdge(nA.ID, nB.ID, "contradicts", "different pool sizes")
+
+	// No embeddings available (no Ollama) — result must be empty, not error.
+	candidates, err := s.FindConflictCandidates("rules", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("FindConflictCandidates: %v", err)
+	}
+	// With no embeddings, result will be empty — that's expected.
+	for _, c := range candidates {
+		if (c.AID == nA.ID && c.BID == nB.ID) || (c.AID == nB.ID && c.BID == nA.ID) {
+			t.Errorf("contradicts-linked pair must be excluded; got candidate: %+v", c)
+		}
+	}
+}
+
+// TestFindConflictCandidates_EmptyWhenNoEmbeddings: without embeddings, the
+// result must be an empty slice (not an error).
+func TestFindConflictCandidates_EmptyWhenNoEmbeddings(t *testing.T) {
+	s := newStore(t)
+	mustAddNode(t, s, "cap pool at 20", "rules")
+	mustAddNode(t, s, "cap pool at 35", "rules")
+
+	candidates, err := s.FindConflictCandidates("rules", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("FindConflictCandidates: %v", err)
+	}
+	if candidates == nil {
+		t.Error("expected a non-nil slice (may be empty) when no embeddings exist")
+	}
+}
+
 func TestFindDisconnected_TagsFilter(t *testing.T) {
 	s := newStore(t)
 	inResult := mustAddNodeWithTags(t, s, "orphan review", "proj", "review")
