@@ -1,6 +1,6 @@
 # orient: domains array — multi-domain full orient in one call
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface nodes:**
 - `cross-cutting-gap-orient-has-no-multi-domain-full-orient-path-agents-must-call-orient-once-per-domain-23640699`
