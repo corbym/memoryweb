@@ -1,6 +1,6 @@
 # audit: retire resolved contradicts pairs from stale re-flagging
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `issue-resolving-a-contradicts-edge-doesn-t-clear-it-same-pair-re-flags-in-audit-mode-stale-forever-a87db2d5`
 

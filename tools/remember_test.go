@@ -1074,6 +1074,111 @@ func TestRemember_BatchViaItems_OrphanWarningPresent(t *testing.T) {
 	}
 }
 
+// TestRemember_SimilarityFloor_NoCrossDomainNoise: filing a node in domain-b
+// must not produce suggested_connections from domain-a when the two domains
+// have clearly unrelated content (Z80 assembly vs JWT admin bugs).
+// This is the regression fixture from the shared finding:
+// "filing-time suggested_connections show cross-domain noise, no similarity floor".
+// Because we cannot run Ollama in CI, this test disables embeddings and relies
+// on the keyword path — which must already be domain-scoped, producing zero
+// cross-domain suggestions.
+func TestRemember_SimilarityFloor_NoCrossDomainNoise(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	// Domain-a: Z80 assembly — completely unrelated to JWT/admin bugs.
+	addNode(t, h, "Z80 register file layout", "domain-a", map[string]any{
+		"description": "Z80 CPU uses eight 8-bit registers: A, B, C, D, E, H, L and F. The SP and PC are 16-bit.",
+		"why_matters": "Understanding register layout is fundamental to Z80 assembly programming",
+		"tags":        "z80 assembly register cpu",
+	})
+	addNode(t, h, "Z80 stack pointer conventions", "domain-a", map[string]any{
+		"description": "The stack grows downward from the initial SP value. Push decrements SP first.",
+		"why_matters": "Stack discipline is critical for correct interrupt handling in Z80 code",
+		"tags":        "z80 assembly stack pointer",
+	})
+	addNode(t, h, "Z80 interrupt mode 2 setup", "domain-a", map[string]any{
+		"description": "IM 2 uses a vector table pointed to by the I register combined with a byte from the data bus.",
+		"why_matters": "IM 2 provides flexible interrupt dispatch for Z80 systems",
+		"tags":        "z80 assembly interrupt mode",
+	})
+
+	// Domain-b: JWT admin bug report — file a node here.
+	addNode(t, h, "JWT provisioning bug root cause", "domain-b", map[string]any{
+		"description": "Admin endpoint was generating JWTs with wrong audience claim. Fixed by updating the issuer config.",
+		"why_matters": "Broke authentication for all admin users for 2 hours",
+		"tags":        "jwt admin auth bug",
+	})
+
+	tr := call(t, h, "remember", map[string]any{
+		"label":       "JWT expiry not enforced on admin login",
+		"domain":      "domain-b",
+		"description": "The admin login route was not validating the JWT expiry claim, allowing expired tokens.",
+		"why_matters": "Security regression — expired admin sessions remained valid indefinitely",
+		"tags":        "jwt admin auth security",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		SuggestedConnections []struct {
+			ID     string `json:"id"`
+			Domain string `json:"domain"`
+		} `json:"suggested_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+
+	// No domain-a (Z80) node should appear in suggested_connections.
+	for _, s := range resp.SuggestedConnections {
+		if s.Domain == "domain-a" {
+			t.Errorf("cross-domain noise: domain-a Z80 node %q appeared in suggested_connections for domain-b JWT node", s.ID)
+		}
+	}
+}
+
+// TestRemember_SimilarityFloor_SameDomainStillSuggested: when a genuine
+// duplicate/related node exists in the same domain, it must still appear in
+// suggested_connections above the floor.
+func TestRemember_SimilarityFloor_SameDomainStillSuggested(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	existingID := addNode(t, h, "JWT token expiry enforcement", "auth-domain", map[string]any{
+		"description": "Enforce JWT expiry on all API routes including admin endpoints",
+		"why_matters": "Prevents session hijack via expired tokens",
+		"tags":        "jwt auth expiry",
+	})
+
+	tr := call(t, h, "remember", map[string]any{
+		"label":       "JWT expiry validation missing on login route",
+		"domain":      "auth-domain",
+		"description": "Login route skips JWT expiry validation",
+		"why_matters": "Security gap in auth flow",
+		"tags":        "jwt auth expiry",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		SuggestedConnections []struct {
+			ID string `json:"id"`
+		} `json:"suggested_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+
+	found := false
+	for _, s := range resp.SuggestedConnections {
+		if s.ID == existingID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("same-domain related node %q should appear in suggested_connections; got %+v", existingID, resp.SuggestedConnections)
+	}
+}
+
 // TestRememberAll_IsUnknownTool: after consolidation, remember_all must no
 // longer be a registered tool.
 

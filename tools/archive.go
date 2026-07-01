@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/corbym/memoryweb/db"
 )
 
 type auditArgs struct {
@@ -95,8 +97,7 @@ func (h *Handler) forgetAll(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
 }
 
-// auditTool dispatches mode=stale to drift, mode=orphans to findDisconnected,
-// and mode=archived to listArchived.
+// auditTool dispatches mode=stale/orphans/archived/conflicts.
 func (h *Handler) auditTool(args json.RawMessage) (*ToolResult, error) {
 	var a auditArgs
 	if err := decodeParams(args, &a, "audit"); err != nil {
@@ -109,9 +110,49 @@ func (h *Handler) auditTool(args json.RawMessage) (*ToolResult, error) {
 		return h.findDisconnected(a)
 	case "archived":
 		return h.listArchived(a)
+	case "conflicts":
+		return h.findConflictCandidates(a)
 	default:
-		return errorResult(fmt.Sprintf("unknown audit mode %q — use stale, orphans, or archived", a.Mode)), nil
+		return errorResult(fmt.Sprintf("unknown audit mode %q — use stale, orphans, archived, or conflicts", a.Mode)), nil
 	}
+}
+
+// ConflictCandidatesResult is the response shape for audit(mode=conflicts).
+type ConflictCandidatesResult struct {
+	Candidates []db.ConflictCandidate `json:"candidates"`
+	Truncated  bool                   `json:"truncated"`
+}
+
+// findConflictCandidates handles mode=conflicts: returns semantically adjacent
+// node pairs that do not already have a contradicts edge. The server never
+// asserts these conflict — only that they are close enough to warrant review.
+func (h *Handler) findConflictCandidates(a auditArgs) (*ToolResult, error) {
+	if a.Limit <= 0 {
+		a.Limit = 10
+	}
+	if a.Limit > 100 {
+		a.Limit = 100
+	}
+	tags := splitTags(a.Tags)
+	nodeKinds := splitNodeKinds(a.NodeKind)
+
+	// Fetch one extra to detect truncation.
+	candidates, err := h.store.FindConflictCandidates(a.Domain, a.Limit+1, tags, nodeKinds)
+	if err != nil {
+		return nil, err
+	}
+
+	truncated := len(candidates) > a.Limit
+	if truncated {
+		candidates = candidates[:a.Limit]
+	}
+
+	out := ConflictCandidatesResult{
+		Candidates: candidates,
+		Truncated:  truncated,
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
 func (h *Handler) drift(a auditArgs) (*ToolResult, error) {

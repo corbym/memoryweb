@@ -1,6 +1,6 @@
 # audit(mode=conflicts) — semantic candidate surfacing for contradictions
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `conflict-flagging-is-candidate-s-4a5be655`
 

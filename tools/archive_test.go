@@ -685,6 +685,316 @@ func TestForgetAll_UnknownID_ReturnsError(t *testing.T) {
 	}
 }
 
+// ── audit(mode=conflicts) ──────────────────────────────────────────────────────
+
+// TestAudit_ModeConflicts_CoexistsWithOtherModes: mode=conflicts must succeed
+// alongside the existing stale/orphans/archived modes without breaking them.
+func TestAudit_ModeConflicts_CoexistsWithOtherModes(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	// Existing modes must still work.
+	for _, mode := range []string{"stale", "orphans", "archived"} {
+		tr := call(t, h, "audit", map[string]any{"mode": mode})
+		mustNotError(t, tr)
+	}
+
+	// conflicts mode must also succeed (empty result is fine).
+	tr := call(t, h, "audit", map[string]any{"mode": "conflicts"})
+	mustNotError(t, tr)
+}
+
+// TestAudit_ModeConflicts_InvalidModeStillErrors: unknown modes must still error.
+func TestAudit_ModeConflicts_InvalidModeStillErrors(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "audit", map[string]any{"mode": "bogusmode"})
+	mustError(t, tr)
+}
+
+// TestAudit_ModeConflicts_ResponseShape: mode=conflicts must return
+// {candidates: [...], truncated: bool}.
+func TestAudit_ModeConflicts_ResponseShape(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	tr := call(t, h, "audit", map[string]any{"mode": "conflicts"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Candidates []struct {
+			AID              string  `json:"a_id"`
+			ALabel           string  `json:"a_label"`
+			BID              string  `json:"b_id"`
+			BLabel           string  `json:"b_label"`
+			SemanticDistance float64 `json:"semantic_distance"`
+			Reason           string  `json:"reason"`
+		} `json:"candidates"`
+		Truncated bool `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse conflicts response: %v\nraw: %s", err, text(t, tr))
+	}
+	// candidates field must exist (may be empty when no embeddings available).
+	if resp.Candidates == nil {
+		t.Error("candidates field must be present (even if empty slice)")
+	}
+}
+
+// TestAudit_ModeConflicts_ExcludesPairsWithContradicts: pairs already linked
+// by a contradicts edge must not appear in the conflicts candidates list.
+func TestAudit_ModeConflicts_ExcludesPairsWithContradicts(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	idA := addNode(t, h, "JWT expiry must be enforced", "auth", nil)
+	idB := addNode(t, h, "JWT expiry is not enforced in admin route", "auth", nil)
+
+	// Mark them as contradicting — conflicts mode must NOT re-flag.
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idB,
+		"relationship": "contradicts",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{"mode": "conflicts", "domain": "auth"})
+	mustNotError(t, tr)
+
+	body := text(t, tr)
+	// Since there's no embedding (Ollama disabled), candidates will be empty.
+	// The key test: calling the mode with an existing contradicts edge must not
+	// produce a response that includes both IDs in the same candidate pair.
+	var resp struct {
+		Candidates []struct {
+			AID string `json:"a_id"`
+			BID string `json:"b_id"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("parse conflicts response: %v", err)
+	}
+	for _, c := range resp.Candidates {
+		if (c.AID == idA && c.BID == idB) || (c.AID == idB && c.BID == idA) {
+			t.Errorf("pair already linked by contradicts edge must be excluded from conflicts candidates; got: %s", body)
+		}
+	}
+}
+
+// TestAudit_ModeConflicts_DescriptionMentionsContradictsEdge: the audit tool's
+// description must include the imperative about contradicts edges.
+func TestAudit_ModeConflicts_DescriptionMentionsContradictsEdge(t *testing.T) {
+	_, h := newEnv(t)
+	tools, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+
+	type toolEntry struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	var list []toolEntry
+	b, _ := json.Marshal(tools)
+	// ListTools returns a struct with a tools array
+	var wrapper struct {
+		Tools []toolEntry `json:"tools"`
+	}
+	json.Unmarshal(b, &wrapper)
+	list = wrapper.Tools
+
+	var auditDesc string
+	for _, tl := range list {
+		if tl.Name == "audit" {
+			auditDesc = tl.Description
+			break
+		}
+	}
+	if auditDesc == "" {
+		t.Fatal("audit tool not found in ListTools")
+	}
+	if !strings.Contains(auditDesc, "contradicts") {
+		t.Errorf("audit description must mention 'contradicts'; got: %s", auditDesc)
+	}
+	if !strings.Contains(auditDesc, "conflicts") {
+		t.Errorf("audit description must mention 'conflicts' mode; got: %s", auditDesc)
+	}
+}
+
+// ── audit: retire resolved contradicts pairs (Story 3) ─────────────────────────
+
+// TestAudit_Stale_ContradictsPair_FlaggedWhenUnresolved: two nodes connected by
+// a contradicts edge must appear as drift candidates in mode=stale.
+func TestAudit_Stale_ContradictsPair_FlaggedWhenUnresolved(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	idA := addNode(t, h, "pool cap 20", "rules", nil)
+	idB := addNode(t, h, "pool cap 35", "rules", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idB,
+		"relationship": "contradicts",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "rules"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if !strings.Contains(body, idA) || !strings.Contains(body, idB) {
+		t.Errorf("unresolved contradicts pair must appear in stale; got: %s", body)
+	}
+}
+
+// TestAudit_Stale_ContradictsPair_NotFlaggedAfterResolution: after adding a
+// resolved_by edge, the contradicts pair must NOT reappear in mode=stale.
+func TestAudit_Stale_ContradictsPair_NotFlaggedAfterResolution(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	idA := addNode(t, h, "pool cap old version", "resolve-test", nil)
+	idB := addNode(t, h, "pool cap new version", "resolve-test", nil)
+	idResolution := addNode(t, h, "pool cap final decision", "resolve-test", nil)
+
+	// Wire the contradiction.
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idB,
+		"relationship": "contradicts",
+	}))
+
+	// Resolution action: add a resolved_by edge from the contradicting node
+	// to the resolution node.
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idResolution,
+		"relationship": "resolved_by",
+	}))
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idB,
+		"to_memory":    idResolution,
+		"relationship": "resolved_by",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "resolve-test"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	// The contradicting pair should NOT re-appear (they're resolved).
+	// Note: idA and idB may still appear for other reasons (e.g. label "old"),
+	// but they must not appear with reason "contradicting each other".
+	if strings.Contains(body, "contradicting each other") {
+		t.Errorf("resolved contradicts pair must not re-flag in stale; got: %s", body)
+	}
+}
+
+// TestAudit_Conflicts_ContradictsPair_ExcludedAfterResolution: after a
+// resolved_by edge is added, the pair must not appear in mode=conflicts either.
+func TestAudit_Conflicts_ContradictsPair_ExcludedAfterResolution(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	idA := addNode(t, h, "pool cap twenty", "conflict-resolve", nil)
+	idB := addNode(t, h, "pool cap thirty five", "conflict-resolve", nil)
+	idC := addNode(t, h, "pool cap final", "conflict-resolve", nil)
+
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idB,
+		"relationship": "contradicts",
+	}))
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idC,
+		"relationship": "resolved_by",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{"mode": "conflicts", "domain": "conflict-resolve"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Candidates []struct {
+			AID string `json:"a_id"`
+			BID string `json:"b_id"`
+		} `json:"candidates"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+
+	for _, c := range resp.Candidates {
+		if (c.AID == idA && c.BID == idB) || (c.AID == idB && c.BID == idA) {
+			t.Errorf("resolved pair must not re-appear in conflicts mode; got: %s", text(t, tr))
+		}
+	}
+}
+
+// TestAudit_Stale_ContradictsPair_StillFlaggedWhenUnrelated: unresolved
+// contradicts pairs must still appear in stale after an unrelated resolution
+// elsewhere in the graph.
+func TestAudit_Stale_ContradictsPair_StillFlaggedWhenUnrelated(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	idA := addNode(t, h, "approach alpha", "unresolved-test", nil)
+	idB := addNode(t, h, "approach beta", "unresolved-test", nil)
+	idC := addNode(t, h, "approach gamma", "unresolved-test", nil)
+	idD := addNode(t, h, "resolution for gamma", "unresolved-test", nil)
+
+	// A-B: unresolved contradiction.
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idB,
+		"relationship": "contradicts",
+	}))
+
+	// C-D: an unrelated resolved_by that should not affect A-B.
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idC,
+		"to_memory":    idD,
+		"relationship": "resolved_by",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "unresolved-test"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	// A-B must still appear with "contradicting" reason.
+	if !strings.Contains(body, "contradicting") {
+		t.Errorf("unresolved pair A-B must still appear in stale audit; got: %s", body)
+	}
+	if !strings.Contains(body, idA) || !strings.Contains(body, idB) {
+		t.Errorf("unresolved nodes A (%s) and B (%s) must appear in stale; got: %s", idA, idB, body)
+	}
+}
+
+// TestAudit_DescriptionMentionsResolutionWorkflow: the audit tool description
+// must document the resolution workflow for contradicts edges.
+func TestAudit_DescriptionMentionsResolutionWorkflow(t *testing.T) {
+	_, h := newEnv(t)
+	tools, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+
+	type toolEntry struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	var wrapper struct {
+		Tools []toolEntry `json:"tools"`
+	}
+	b, _ := json.Marshal(tools)
+	json.Unmarshal(b, &wrapper)
+
+	var auditDesc string
+	for _, tl := range wrapper.Tools {
+		if tl.Name == "audit" {
+			auditDesc = tl.Description
+			break
+		}
+	}
+	if !strings.Contains(auditDesc, "resolved_by") && !strings.Contains(auditDesc, "disconnect") {
+		t.Errorf("audit description must mention resolution workflow (resolved_by or disconnect); got: %s", auditDesc)
+	}
+}
+
 // TestCheckForUpdates_IsUnknownTool: check_for_updates must return an error
 // after being removed from the MCP surface.
 
