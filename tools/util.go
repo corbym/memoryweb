@@ -71,9 +71,6 @@ func formatDecodeError(err error, toolName string) error {
 		return err
 	}
 	out := msg + " — call tools/list to refresh your schema."
-	if toolName == "orient" && strings.Contains(msg, `"domains"`) {
-		out += " orient takes a single domain string, not domains; call once per domain."
-	}
 	return fmt.Errorf("%s", out)
 }
 

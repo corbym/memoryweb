@@ -1288,3 +1288,289 @@ func TestOrient_RulesSection_OrderedByInboundEdgeCount(t *testing.T) {
 		t.Errorf("rules[1]: want idA (%q, 0 inbound), got %q", idA, rules[1].ID)
 	}
 }
+
+// ── orient: domains array (multi-domain full orient) ──────────────────────────
+
+// TestOrient_DomainsArray_TwoDomains: orient(domains=["a","b"]) must return an
+// orientations array with two full entries, each containing domain, rules,
+// declared_spine, significant, recent, total_nodes, stale_count, workspace_stats.
+// Order must match input order.
+func TestOrient_DomainsArray_TwoDomains(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Alpha node", "dom-arr-a", map[string]any{
+		"why_matters": "important for alpha",
+	})
+	addNode(t, h, "Beta node", "dom-arr-b", map[string]any{
+		"why_matters": "important for beta",
+	})
+
+	tr := call(t, h, "orient", map[string]any{
+		"domains": []string{"dom-arr-a", "dom-arr-b"},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Orientations  []json.RawMessage `json:"orientations"`
+		ServerVersion string            `json:"server_version"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orientations response: %v", err)
+	}
+	if len(resp.Orientations) != 2 {
+		t.Fatalf("orientations: got %d entries, want 2", len(resp.Orientations))
+	}
+	if resp.ServerVersion == "" {
+		t.Error("server_version must be present in multi-domain orient response")
+	}
+
+	// Check order and shape of each entry.
+	wantDomains := []string{"dom-arr-a", "dom-arr-b"}
+	for i, raw := range resp.Orientations {
+		var entry struct {
+			Domain        string          `json:"domain"`
+			DeclaredSpine json.RawMessage `json:"declared_spine"`
+			Significant   json.RawMessage `json:"significant"`
+			Recent        json.RawMessage `json:"recent"`
+		}
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			t.Fatalf("parse orientation[%d]: %v", i, err)
+		}
+		if entry.Domain != wantDomains[i] {
+			t.Errorf("orientations[%d].domain: got %q, want %q", i, entry.Domain, wantDomains[i])
+		}
+		if entry.DeclaredSpine == nil {
+			t.Errorf("orientations[%d] missing declared_spine", i)
+		}
+		if entry.Significant == nil {
+			t.Errorf("orientations[%d] missing significant", i)
+		}
+		if entry.Recent == nil {
+			t.Errorf("orientations[%d] missing recent", i)
+		}
+	}
+}
+
+// TestOrient_DomainsArray_SingleEntry: orient(domains=["x"]) must return the
+// same top-level shape as orient(domain="x") — no orientations wrapper.
+func TestOrient_DomainsArray_SingleEntry(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Solo node", "dom-arr-solo", map[string]any{
+		"why_matters": "singleton domain entry",
+	})
+
+	trSingle := call(t, h, "orient", map[string]any{"domain": "dom-arr-solo"})
+	mustNotError(t, trSingle)
+
+	trArray := call(t, h, "orient", map[string]any{"domains": []string{"dom-arr-solo"}})
+	mustNotError(t, trArray)
+
+	// Both must have top-level declared_spine (not wrapped in orientations).
+	for _, label := range []string{"single-domain", "domains-length-1"} {
+		tr := trSingle
+		if label == "domains-length-1" {
+			tr = trArray
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+			t.Fatalf("[%s] parse orient response: %v", label, err)
+		}
+		if _, ok := raw["declared_spine"]; !ok {
+			t.Errorf("[%s] missing top-level declared_spine — must match single-domain shape", label)
+		}
+		if _, ok := raw["orientations"]; ok {
+			t.Errorf("[%s] must NOT have orientations wrapper when domains length=1", label)
+		}
+	}
+}
+
+// TestOrient_DomainsArray_MutuallyExclusive: orient(domain="a", domains=["b"])
+// must return a validation error.
+func TestOrient_DomainsArray_MutuallyExclusive(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Some node", "dom-excl", nil)
+
+	tr := call(t, h, "orient", map[string]any{
+		"domain":  "dom-excl",
+		"domains": []string{"dom-excl"},
+	})
+	mustError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "domain") || !strings.Contains(body, "domains") {
+		t.Errorf("error message must mention both 'domain' and 'domains'; got: %s", body)
+	}
+}
+
+// TestOrient_DomainsArray_EmptyArray: orient(domains=[]) must return a
+// validation error.
+func TestOrient_DomainsArray_EmptyArray(t *testing.T) {
+	_, h := newEnv(t)
+
+	tr := call(t, h, "orient", map[string]any{
+		"domains": []string{},
+	})
+	mustError(t, tr)
+}
+
+// TestOrient_DomainsArray_TooMany: orient(domains=[6 items]) must return a
+// validation error citing the max-5 cap.
+func TestOrient_DomainsArray_TooMany(t *testing.T) {
+	_, h := newEnv(t)
+
+	tr := call(t, h, "orient", map[string]any{
+		"domains": []string{"a", "b", "c", "d", "e", "f"},
+	})
+	mustError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "5") {
+		t.Errorf("error message must cite max-5 cap; got: %s", body)
+	}
+}
+
+// TestOrient_DomainsArray_TopicPerDomain: orient(domains=["a","b"], topic="X")
+// applies topic weighting per domain — each entry should have a relevant section
+// instead of significant.
+func TestOrient_DomainsArray_TopicPerDomain(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "Authentication node alpha", "dom-topic-a", map[string]any{
+		"why_matters": "JWT chosen over sessions",
+	})
+	addNode(t, h, "Authentication node beta", "dom-topic-b", map[string]any{
+		"why_matters": "OAuth scopes for API access",
+	})
+
+	tr := call(t, h, "orient", map[string]any{
+		"domains": []string{"dom-topic-a", "dom-topic-b"},
+		"topic":   "authentication",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Orientations []json.RawMessage `json:"orientations"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orientations: %v", err)
+	}
+	if len(resp.Orientations) != 2 {
+		t.Fatalf("orientations: got %d, want 2", len(resp.Orientations))
+	}
+	for i, raw := range resp.Orientations {
+		var entry map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			t.Fatalf("parse orientation[%d]: %v", i, err)
+		}
+		if _, ok := entry["relevant"]; !ok {
+			t.Errorf("orientations[%d] missing relevant section (topic mode)", i)
+		}
+		if _, ok := entry["significant"]; ok {
+			t.Errorf("orientations[%d] must not have significant when topic is set", i)
+		}
+	}
+}
+
+// TestOrient_DomainsArray_UnknownDomain: orient with an unknown domain name
+// must return empty sections for that domain rather than erroring.
+func TestOrient_DomainsArray_UnknownDomain(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Known node", "dom-known-xyz", nil)
+
+	tr := call(t, h, "orient", map[string]any{
+		"domains": []string{"dom-known-xyz", "dom-unknown-xyz-999"},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Orientations []json.RawMessage `json:"orientations"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orientations: %v", err)
+	}
+	if len(resp.Orientations) != 2 {
+		t.Fatalf("orientations: got %d, want 2", len(resp.Orientations))
+	}
+	// Second entry (unknown domain) must have domain field set to the unknown name.
+	var unknownEntry struct {
+		Domain      string            `json:"domain"`
+		Significant []json.RawMessage `json:"significant"`
+		Recent      []json.RawMessage `json:"recent"`
+	}
+	if err := json.Unmarshal(resp.Orientations[1], &unknownEntry); err != nil {
+		t.Fatalf("parse unknown entry: %v", err)
+	}
+	if unknownEntry.Domain != "dom-unknown-xyz-999" {
+		t.Errorf("unknown domain entry: domain=%q, want dom-unknown-xyz-999", unknownEntry.Domain)
+	}
+	// significant and recent should be empty arrays, not missing.
+	if unknownEntry.Significant == nil {
+		t.Error("unknown domain entry: significant should be an empty array, not nil")
+	}
+	if unknownEntry.Recent == nil {
+		t.Error("unknown domain entry: recent should be an empty array, not nil")
+	}
+}
+
+// TestOrient_DomainsArray_DescriptionDocumentsThreePaths: orient description
+// must document all three paths (no domain, domain, domains) and must not
+// contain "call orient once per domain".
+func TestOrient_DomainsArray_DescriptionDocumentsThreePaths(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "orient" {
+			continue
+		}
+		if strings.Contains(td.Description, "call orient once per domain") {
+			t.Error(`orient description must not contain steer text "call orient once per domain"`)
+		}
+		if !strings.Contains(td.Description, "domains") {
+			t.Error(`orient description must mention the "domains" parameter`)
+		}
+		return
+	}
+	t.Fatal("orient tool not found in ListTools")
+}
+
+// TestOrient_DomainsArray_SchemaHasDomainsProperty: the orient tool schema must
+// include a domains array property.
+func TestOrient_DomainsArray_SchemaHasDomainsProperty(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "orient" {
+			continue
+		}
+		if _, ok := td.InputSchema.Properties["domains"]; !ok {
+			t.Error("orient inputSchema.properties must include 'domains'")
+		}
+		return
+	}
+	t.Fatal("orient tool not found in ListTools")
+}

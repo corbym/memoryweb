@@ -83,14 +83,14 @@ func TestStrictDecode_AllToolsRejectUnknownField(t *testing.T) {
 	}
 }
 
-func TestStrictDecode_OrientRejectsDomainsArray(t *testing.T) {
+func TestStrictDecode_OrientAcceptsDomainsArray(t *testing.T) {
+	// domains is now a valid parameter (multi-domain orient). It must not be
+	// rejected as an unknown field, and must not fall through to bootstrap.
 	_, h := newEnv(t)
+	addNode(t, h, "test node", "memoryweb-meta", nil)
 	tr := call(t, h, "orient", map[string]any{"domains": []string{"memoryweb-meta"}})
-	mustError(t, tr)
+	mustNotError(t, tr)
 	msg := text(t, tr)
-	if !strings.Contains(msg, "domains") {
-		t.Errorf("error should name domains field, got: %s", msg)
-	}
 	if strings.Contains(msg, "cross_domain_snapshot") {
 		t.Error("orient must not fall through to bootstrap when domains array is passed")
 	}
