@@ -33,11 +33,17 @@ func (s *Store) AddEdge(fromID, toID, relationship, narrative string) (*Edge, er
 		}
 		return nil, err
 	}
-	// Check to node exists.
+	// Check to node exists (live only).
 	var toCount int
 	s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NULL`, toID).Scan(&toCount)
 	if toCount == 0 {
-		return nil, fmt.Errorf("node not found: %q was not found (searched domain %q). If this node is in a different domain, cross-domain connections are not yet supported — search for it first to confirm its domain", toID, fromDomain)
+		// Distinguish: archived vs. genuinely missing.
+		var archivedCount int
+		s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NOT NULL`, toID).Scan(&archivedCount)
+		if archivedCount > 0 {
+			return nil, fmt.Errorf("memory archived; use restore first (id %q)", toID)
+		}
+		return nil, fmt.Errorf("memory not found: %q — verify the ID with recall or search (filing domain was %q)", toID, fromDomain)
 	}
 	id := "edge-" + shortID()
 	now := time.Now().UTC()
@@ -53,7 +59,7 @@ func (s *Store) AddEdge(fromID, toID, relationship, narrative string) (*Edge, er
 }
 
 // AddEdgesBatch inserts all edges in a single transaction.
-// If any edge references a non-existent node the transaction is rolled back.
+// If any edge references a non-existent or archived node the transaction is rolled back.
 func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -62,16 +68,30 @@ func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
 	now := time.Now().UTC()
 	edges := make([]*Edge, 0, len(inputs))
 	for _, inp := range inputs {
-		for _, nodeID := range []string{inp.FromNode, inp.ToNode} {
-			var count int
-			if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ?`, nodeID).Scan(&count); err != nil {
-				tx.Rollback()
-				return nil, err
+		// Verify from-node exists live; get its domain for diagnostic messages.
+		var fromDomain string
+		if err := tx.QueryRow(`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, inp.FromNode).Scan(&fromDomain); err != nil {
+			tx.Rollback()
+			if err == sql.ErrNoRows {
+				return nil, fmt.Errorf("node not found: %s", inp.FromNode)
 			}
-			if count == 0 {
-				tx.Rollback()
-				return nil, fmt.Errorf("node not found: %s", nodeID)
+			return nil, err
+		}
+		// Verify to-node exists live.
+		var toCount int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NULL`, inp.ToNode).Scan(&toCount); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if toCount == 0 {
+			tx.Rollback()
+			// Distinguish: archived vs. genuinely missing.
+			var archivedCount int
+			s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NOT NULL`, inp.ToNode).Scan(&archivedCount)
+			if archivedCount > 0 {
+				return nil, fmt.Errorf("memory archived; use restore first (id %q)", inp.ToNode)
 			}
+			return nil, fmt.Errorf("memory not found: %q — verify the ID with recall or search (filing domain was %q)", inp.ToNode, fromDomain)
 		}
 		id := "edge-" + shortID()
 		if _, err := tx.Exec(
