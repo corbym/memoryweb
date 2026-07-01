@@ -6,7 +6,7 @@
 - `cross-cutting-gap-orient-has-no-multi-domain-full-orient-path-agents-must-call-orient-once-per-domain-23640699`
 - `spec-orient-domains-array-full-orient-parameter-and-response-shape-79835d5c`
 
-**Recordari backlog:** STORY-155 (filed 2026-06-28). memoryweb mirrors after Recordari ships.
+**Recordari backlog:** STORY-155 (filed 2026-06-28). No sequencing dependency — memoryweb and Recordari implement independently.
 
 **Related:** `stories/orient-optional-domain.md` (COMPLETE — STORY-069 bootstrap path)
 
