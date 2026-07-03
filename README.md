@@ -163,8 +163,17 @@ The `purge` subcommand hard-deletes archived nodes from the database. It is inte
 ```bash
 memoryweb purge --dry-run              # show what would be deleted (default behaviour without --confirm)
 memoryweb purge --confirm              # actually deletes
-memoryweb purge --domain sedex         # scope to a domain
+memoryweb purge --domain sedex         # scope to a domain (case/whitespace-insensitive match)
 memoryweb purge --before 2026-01-01    # only nodes archived before a date
+```
+
+By default `purge` only ever touches **archived** nodes — a node must be `forget`-archived first before it's eligible. If you scope to a domain and see `0 node(s) would be purged` but the domain isn't actually empty, that's a sign it still has *live* nodes that were never archived; a domain-scoped run prints a note like `2 live node(s) still exist in domain "sedex"` whenever that's the case, so it's never mistaken for "domain is empty".
+
+To skip archiving and hard-delete a domain outright — live nodes included — pass `--include-live`. This requires `--domain` (it refuses to run unscoped, to avoid wiping every live node in the database) and is irreversible:
+
+```bash
+memoryweb purge --domain sedex --include-live --dry-run   # preview: shows live nodes too
+memoryweb purge --domain sedex --include-live --confirm   # hard-deletes the whole domain, archived or not
 ```
 
 The `dream` subcommand prints a digest of recent nodes and drift candidates — useful for session orientation and embedded automatically by the save and precompact hooks at filing time.

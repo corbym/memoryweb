@@ -1166,10 +1166,16 @@ func purgeCmd() {
 	beforeFlag := flags.String("before", "", "purge only nodes archived before this ISO8601 date (e.g. 2026-01-01)")
 	dryRun := flags.Bool("dry-run", false, "print what would be purged without deleting anything")
 	confirm := flags.Bool("confirm", false, "required to actually execute; without it nothing is deleted")
+	includeLive := flags.Bool("include-live", false, "also hard-delete live (non-archived) nodes matching --domain — irreversible, requires --domain")
 	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
 
 	if !*dryRun && !*confirm {
 		fmt.Fprintln(os.Stderr, "warning: no action taken. Use --confirm to purge archived nodes, or --dry-run to preview.")
+		os.Exit(1)
+	}
+
+	if *includeLive && *domainFlag == "" {
+		fmt.Fprintln(os.Stderr, "error: --include-live requires --domain (refusing to hard-delete every live node in the database)")
 		os.Exit(1)
 	}
 
@@ -1193,7 +1199,7 @@ func purgeCmd() {
 	}
 	defer store.Close()
 
-	result, err := store.Purge(*domainFlag, beforeTime, *dryRun)
+	result, err := store.Purge(*domainFlag, beforeTime, *dryRun, *includeLive)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -1201,15 +1207,33 @@ func purgeCmd() {
 
 	if *dryRun {
 		fmt.Printf("DRY RUN — no changes will be made.\n")
-		fmt.Printf("%d archived node(s) would be purged:\n", len(result.Nodes))
+		fmt.Printf("%d node(s) would be purged:\n", len(result.Nodes))
 		for _, n := range result.Nodes {
-			fmt.Printf("  - %s (id: %s, archived: %s)\n",
-				n.Label, n.ID, n.ArchivedAt.UTC().Format(time.RFC3339))
+			archived := "live"
+			if n.ArchivedAt != nil {
+				archived = n.ArchivedAt.UTC().Format(time.RFC3339)
+			}
+			fmt.Printf("  - %s (id: %s, archived: %s)\n", n.Label, n.ID, archived)
 		}
+		printLiveRemaining(result, *domainFlag, *includeLive)
 		return
 	}
 
 	fmt.Printf("%d node(s) purged, %d edge(s) removed\n", len(result.Nodes), result.TotalEdges)
+	printLiveRemaining(result, *domainFlag, *includeLive)
+}
+
+// printLiveRemaining tells the operator when a domain-scoped purge left live
+// (non-archived) nodes untouched — otherwise "0 archived candidates" reads as
+// "domain is empty" when it may still hold live nodes that were never
+// archived. Silent when there's no domain filter, includeLive was used (there
+// is nothing left to report), or the domain genuinely has no live nodes.
+func printLiveRemaining(result db.PurgeResult, domain string, includeLive bool) {
+	if domain == "" || includeLive || result.LiveRemaining == 0 {
+		return
+	}
+	fmt.Printf("note: %d live node(s) still exist in domain %q — archive them first (forget), "+
+		"then re-run purge, or use --include-live to remove them directly\n", result.LiveRemaining, domain)
 }
 
 func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, *RPCError) {

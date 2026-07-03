@@ -10,6 +10,12 @@ out/
 
 # databases
 *.db
+*.db-shm
+*.db-wal
+
+# personal/investigation database copies — never ship real user data
+bug-purge/
+bug-purge-copy/
 
 # macOS
 .DS_Store

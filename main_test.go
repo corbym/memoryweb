@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +22,64 @@ func newTestStore(t *testing.T) (*db.Store, string) {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s, path
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = old
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+	return string(out)
+}
+
+func TestPrintLiveRemaining_SilentWithoutDomain(t *testing.T) {
+	out := captureStdout(t, func() {
+		printLiveRemaining(db.PurgeResult{LiveRemaining: 3}, "", false)
+	})
+	if out != "" {
+		t.Errorf("expected no output when domain is unscoped, got %q", out)
+	}
+}
+
+func TestPrintLiveRemaining_SilentWhenIncludeLiveUsed(t *testing.T) {
+	out := captureStdout(t, func() {
+		printLiveRemaining(db.PurgeResult{LiveRemaining: 0}, "recordari-commercial", true)
+	})
+	if out != "" {
+		t.Errorf("expected no output when includeLive already swept up live nodes, got %q", out)
+	}
+}
+
+func TestPrintLiveRemaining_SilentWhenNoneRemain(t *testing.T) {
+	out := captureStdout(t, func() {
+		printLiveRemaining(db.PurgeResult{LiveRemaining: 0}, "recordari-commercial", false)
+	})
+	if out != "" {
+		t.Errorf("expected no output when LiveRemaining is 0, got %q", out)
+	}
+}
+
+func TestPrintLiveRemaining_WarnsWhenLiveNodesRemain(t *testing.T) {
+	out := captureStdout(t, func() {
+		printLiveRemaining(db.PurgeResult{LiveRemaining: 2}, "recordari-commercial", false)
+	})
+	if !strings.Contains(out, "2 live node(s)") || !strings.Contains(out, "recordari-commercial") {
+		t.Errorf("expected a note naming the domain and live count, got %q", out)
+	}
+	if !strings.Contains(out, "--include-live") {
+		t.Errorf("expected the note to mention --include-live as the escape hatch, got %q", out)
+	}
 }
 
 func TestDrawProgressBar_Format(t *testing.T) {

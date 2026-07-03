@@ -9,23 +9,47 @@ import (
 
 // PurgeResult holds the outcome of a Purge call.
 type PurgeResult struct {
-	Nodes      []Node // nodes that were (or would be) purged
-	TotalEdges int    // total edges deleted (0 in dry-run)
+	Nodes         []Node // nodes that were (or would be) purged
+	TotalEdges    int    // total edges deleted (0 in dry-run)
+	LiveRemaining int    // live (non-archived) nodes still matching the domain filter, untouched
 }
 
-// Purge hard-deletes archived nodes from the database.
+// Purge hard-deletes nodes from the database. By default only archived nodes
+// are eligible — this is the only sanctioned hard-delete path and it never
+// touches live data unless includeLive is explicitly set.
+//
 // domain and before are optional filters. When dryRun is true the database is
-// not modified and only the candidate list is returned.
-func (s *Store) Purge(domain string, before *time.Time, dryRun bool) (PurgeResult, error) {
+// not modified and only the candidate list is returned. When includeLive is
+// true, live (non-archived) nodes matching domain are hard-deleted too — this
+// is a genuine, irreversible removal of live data and callers must gate it
+// behind an explicit opt-in (the CLI requires --domain alongside
+// --include-live to prevent an accidental whole-graph wipe).
+//
+// When domain is set, LiveRemaining on the result reports how many live
+// nodes match that domain and were left untouched (0 when includeLive is
+// true, or when there is no domain filter). This exists so an operator who
+// only archives-then-purges doesn't mistake "0 archived candidates" for
+// "domain is empty" — the domain can still have live nodes.
+func (s *Store) Purge(domain string, before *time.Time, dryRun bool, includeLive bool) (PurgeResult, error) {
 	if domain != "" {
 		domain = s.ResolveAlias(domain)
 	}
 
-	conds := []string{"archived_at IS NOT NULL"}
+	var conds []string
 	args := []interface{}{}
 
+	if !includeLive {
+		conds = append(conds, "archived_at IS NOT NULL")
+	}
 	if domain != "" {
-		conds = append(conds, "domain = ?")
+		// Case/whitespace-normalized match: on a long-lived database, archived
+		// nodes may carry raw domain strings typed inconsistently across
+		// sessions or years (e.g. "Sedex" vs "sedex" vs "sedex " vs "SEDEX").
+		// A byte-exact match here would silently leave those variants archived
+		// forever — a follow-up --dry-run would then report 0 for the literal
+		// string typed, even though nodes/edges for the same conceptual domain
+		// are still in the table.
+		conds = append(conds, "LOWER(TRIM(domain)) = LOWER(TRIM(?))")
 		args = append(args, domain)
 	}
 	if before != nil {
@@ -33,8 +57,11 @@ func (s *Store) Purge(domain string, before *time.Time, dryRun bool) (PurgeResul
 		args = append(args, before.UTC())
 	}
 
-	query := "SELECT id, label, archived_at FROM nodes WHERE " +
-		strings.Join(conds, " AND ") + " ORDER BY archived_at ASC"
+	query := "SELECT id, label, archived_at FROM nodes ORDER BY archived_at ASC"
+	if len(conds) > 0 {
+		query = "SELECT id, label, archived_at FROM nodes WHERE " +
+			strings.Join(conds, " AND ") + " ORDER BY archived_at ASC"
+	}
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -63,6 +90,12 @@ func (s *Store) Purge(domain string, before *time.Time, dryRun bool) (PurgeResul
 
 	// Build the Node slice (minimal fields) for the caller.
 	result := PurgeResult{}
+	if domain != "" && !includeLive {
+		s.db.QueryRow( //nolint:errcheck // best-effort informational count, never fatal
+			`SELECT COUNT(*) FROM nodes WHERE LOWER(TRIM(domain)) = LOWER(TRIM(?)) AND archived_at IS NULL`,
+			domain,
+		).Scan(&result.LiveRemaining)
+	}
 	for _, c := range candidates {
 		at := c.archivedAt
 		result.Nodes = append(result.Nodes, Node{
