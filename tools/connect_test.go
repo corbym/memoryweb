@@ -6,6 +6,59 @@ import (
 	"testing"
 )
 
+// TestListTools_ConnectRelationshipEnumIncludesResolutionTypes: the connect
+// tool's relationship property must declare resolved, resolved_by, and
+// supersedes in its schema Enum. A client that validates tool calls against
+// the declared schema (confirmed live, 2026-07-09) rejects any relationship
+// value absent from this list before the call ever reaches memoryweb's
+// server — so an accepted-but-undeclared value is unusable in practice, not
+// merely undocumented.
+func TestListTools_ConnectRelationshipEnumIncludesResolutionTypes(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "connect" {
+			continue
+		}
+		p, ok := td.InputSchema.Properties["relationship"]
+		if !ok {
+			t.Fatal("connect tool missing 'relationship' property in schema")
+		}
+		want := []string{"resolved", "resolved_by", "supersedes"}
+		for _, w := range want {
+			found := false
+			for _, e := range p.Enum {
+				if e == w {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("connect relationship enum missing %q; got: %v", w, p.Enum)
+			}
+		}
+		return
+	}
+	t.Fatal("connect tool not found in ListTools")
+}
+
 func TestAddEdge_HappyPath(t *testing.T) {
 	_, h := newEnv(t)
 	from := addNode(t, h, "RST crash", "deep-game", nil)

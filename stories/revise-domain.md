@@ -1,6 +1,6 @@
 # revise(domain) — node-level domain reassignment
 
-**Status:** OPEN
+**Status:** COMPLETE — shipped v1.37.0 (commit b7a0f32)
 
 **Shared-surface spec:** `spec-revise-domain-node-level-domain-reassignment-both-products-4ca333ed`
 

@@ -986,8 +986,47 @@ func TestAudit_DescriptionMentionsResolutionWorkflow(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(auditDesc, "resolved_by") && !strings.Contains(auditDesc, "disconnect") {
-		t.Errorf("audit description must mention resolution workflow (resolved_by or disconnect); got: %s", auditDesc)
+	if !strings.Contains(auditDesc, "resolved_by") && !strings.Contains(auditDesc, "resolved") {
+		t.Errorf("audit description must mention resolution workflow (resolved/resolved_by); got: %s", auditDesc)
+	}
+	// The retired instruction told agents to disconnect the contradicts edge —
+	// destructive, and wrong (the shipped mechanism is additive). Guard against
+	// that specific imperative resurfacing, without banning the corrected
+	// sentence's own "do not disconnect the contradicts edge" phrasing.
+	if strings.Contains(auditDesc, "disconnect the contradicts edge to retire") {
+		t.Errorf("audit description must not instruct disconnecting the contradicts edge — resolution is additive (resolved/resolved_by/supersedes), the contradicts edge must stay on record; got: %s", auditDesc)
+	}
+}
+
+// TestAudit_Stale_ContradictsPair_NotFlaggedAfterResolvedRelationship: after
+// adding a 'resolved' edge (Recordari's canonical resolution name) between a
+// contradicting pair, the pair must not reappear in mode=stale — mirrors the
+// existing resolved_by coverage.
+func TestAudit_Stale_ContradictsPair_NotFlaggedAfterResolvedRelationship(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	idA := addNode(t, h, "pool cap draft version", "resolve-test-2", nil)
+	idB := addNode(t, h, "pool cap final version", "resolve-test-2", nil)
+
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idB,
+		"relationship": "contradicts",
+	}))
+
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory":  idA,
+		"to_memory":    idB,
+		"relationship": "resolved",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "resolve-test-2"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if strings.Contains(body, "contradicting each other") {
+		t.Errorf("contradicts pair resolved via 'resolved' relationship must not re-flag in stale; got: %s", body)
 	}
 }
 

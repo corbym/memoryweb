@@ -77,6 +77,39 @@ func TestFindConflictCandidates_ExcludesResolvedPairs(t *testing.T) {
 	}
 }
 
+// TestFindConflictCandidates_ExcludesResolvedRelationshipPairs guards against
+// FindConflictCandidates failing to recognise the 'resolved' relationship
+// (Recordari's canonical resolution name) as an exclusion signal, alongside
+// the existing resolved_by/supersedes exclusion.
+func TestFindConflictCandidates_ExcludesResolvedRelationshipPairs(t *testing.T) {
+	s := newStore(t)
+	a := mustAddNode(t, s, "Cap the pool at 40 marker-resd-a", "conf-resd-domain")
+	b := mustAddNode(t, s, "Cap the pool at 55 marker-resd-b", "conf-resd-domain")
+
+	sharedVec := makeDenseVector(300)
+	withFakeEmbeddings(t, map[string][]float32{
+		"marker-resd-a": sharedVec,
+		"marker-resd-b": sharedVec,
+	})
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	if _, err := s.AddEdge(a.ID, b.ID, "resolved", "adjudicated"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	candidates, err := s.FindConflictCandidates("conf-resd-domain", 10, nil, nil)
+	if err != nil {
+		t.Fatalf("FindConflictCandidates: %v", err)
+	}
+	for _, c := range candidates {
+		if (c.AID == a.ID && c.BID == b.ID) || (c.AID == b.ID && c.BID == a.ID) {
+			t.Errorf("resolved pair (%s, %s) should be excluded from conflicts mode after 'resolved' relationship", a.ID, b.ID)
+		}
+	}
+}
+
 // TestFindConflictCandidates_TagsFilterAppliesToBothSidesOfPair guards
 // against the inner distance query ignoring the caller's tags filter.
 func TestFindConflictCandidates_TagsFilterAppliesToBothSidesOfPair(t *testing.T) {
@@ -518,6 +551,36 @@ func TestFindDrift_ContradictsPair_ExcludedWhenResolvedBy(t *testing.T) {
 			if (c.Node.ID == nA.ID && c.ConflictsWith.ID == nB.ID) ||
 				(c.Node.ID == nB.ID && c.ConflictsWith.ID == nA.ID) {
 				t.Errorf("resolved contradicts pair must not appear in drift; got: %+v", c)
+			}
+		}
+	}
+}
+
+// TestFindDrift_ContradictsPair_ExcludedWhenResolved: a contradicts pair
+// resolved via the 'resolved' relationship (Recordari's canonical resolution
+// name) must not be re-flagged by rule 1 of FindDrift, exactly like
+// resolved_by/supersedes.
+func TestFindDrift_ContradictsPair_ExcludedWhenResolved(t *testing.T) {
+	s := newStore(t)
+	nA := mustAddNode(t, s, "approach C", "rules")
+	nB := mustAddNode(t, s, "approach D", "rules")
+
+	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", ""); err != nil {
+		t.Fatalf("AddEdge contradicts: %v", err)
+	}
+	if _, err := s.AddEdge(nA.ID, nB.ID, "resolved", ""); err != nil {
+		t.Fatalf("AddEdge resolved: %v", err)
+	}
+
+	candidates, err := s.FindDrift("rules", 10, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, c := range candidates {
+		if c.ConflictsWith != nil && c.Reason == "explicitly marked as contradicting each other" {
+			if (c.Node.ID == nA.ID && c.ConflictsWith.ID == nB.ID) ||
+				(c.Node.ID == nB.ID && c.ConflictsWith.ID == nA.ID) {
+				t.Errorf("contradicts pair resolved via 'resolved' relationship must not appear in drift; got: %+v", c)
 			}
 		}
 	}

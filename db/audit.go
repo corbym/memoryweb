@@ -86,12 +86,12 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 	}
 
 	// Build a set of pairs to exclude: already-contradicting pairs, and pairs
-	// already resolved via a resolved_by/supersedes edge directly between the
-	// two nodes (checked in either direction).
+	// already resolved via a resolved/resolved_by/supersedes edge directly
+	// between the two nodes (checked in either direction).
 	type pairKey struct{ a, b string }
 	contradicting := make(map[pairKey]bool)
 	edgeRows, err := s.db.Query(
-		`SELECT from_node, to_node FROM edges WHERE relationship IN ('contradicts', 'resolved_by', 'supersedes')`)
+		`SELECT from_node, to_node FROM edges WHERE relationship IN ('contradicts', 'resolved', 'resolved_by', 'supersedes')`)
 	if err == nil {
 		for edgeRows.Next() {
 			var fn, tn string
@@ -244,14 +244,18 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	var err error
 
 	// ── Rule 1: contradicts edges (excluding pairs with resolution edges) ────────
-	// A pair is considered resolved when a resolved_by or supersedes edge
-	// connects the two contradicting nodes specifically, in either direction
-	// (from either node to the other — "A supersedes B" and "B resolved_by A"
-	// are both valid resolution phrasings). This implements Option A from the
-	// story: the resolution is expressed as a graph action (an additional
-	// edge), not a new DB column. Checking both directions and requiring the
-	// edge to connect this exact pair (not an unrelated third node) avoids
-	// both under- and over-excluding contradicts pairs.
+	// A pair is considered resolved when a resolved, resolved_by, or supersedes
+	// edge connects the two contradicting nodes specifically, in either
+	// direction (from either node to the other — "A supersedes B" and "B
+	// resolved_by A" are both valid resolution phrasings). This implements
+	// Option A from the story: the resolution is expressed as a graph action
+	// (an additional edge), not a new DB column. Checking both directions and
+	// requiring the edge to connect this exact pair (not an unrelated third
+	// node) avoids both under- and over-excluding contradicts pairs. 'resolved'
+	// is Recordari's canonical resolution relationship name, taught by the
+	// shared recordari skill document — accepted here alongside memoryweb's
+	// own resolved_by/supersedes so the same skill guidance works on both
+	// products.
 	rows, err := s.db.Query(`
 		SELECT a.id, a.label, a.description, a.why_matters, a.domain,
 		       a.created_at, a.updated_at, a.occurred_at, a.archived_at, a.tags, a.node_kind,
@@ -263,7 +267,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		WHERE e.relationship = 'contradicts'
 		  AND NOT EXISTS (
 		      SELECT 1 FROM edges r
-		       WHERE r.relationship IN ('resolved_by', 'supersedes')
+		       WHERE r.relationship IN ('resolved', 'resolved_by', 'supersedes')
 		         AND (
 		             (r.from_node = a.id AND r.to_node = b.id) OR
 		             (r.from_node = b.id AND r.to_node = a.id)
