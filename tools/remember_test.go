@@ -962,8 +962,11 @@ func TestRemember_OrphanWarning_PresentWhenNoConnections(t *testing.T) {
 	if strings.Contains(tr.Content[0].Text, "cannot be connected directly") {
 		t.Error("orphan_warning must not say 'cannot be connected directly' — use usage-instruction wording instead")
 	}
-	if !strings.Contains(tr.Content[0].Text, "pass their domain explicitly") {
-		t.Error("orphan_warning must instruct agent to pass domain explicitly for cross-domain connect")
+	if strings.Contains(tr.Content[0].Text, "pass their domain explicitly") || strings.Contains(tr.Content[0].Text, "domain=") {
+		t.Error("orphan_warning must not instruct passing a domain to connect — connect has no domain parameter")
+	}
+	if !strings.Contains(tr.Content[0].Text, "no domain parameter") {
+		t.Error("orphan_warning should clarify connect takes no domain parameter")
 	}
 }
 
@@ -999,8 +1002,11 @@ func TestRememberAll_OrphanWarning_PresentWhenNoEdges(t *testing.T) {
 	if strings.Contains(tr.Content[0].Text, "cannot be connected directly") {
 		t.Error("orphan_warning must not say 'cannot be connected directly' — use usage-instruction wording instead")
 	}
-	if !strings.Contains(tr.Content[0].Text, "pass their domain explicitly") {
-		t.Error("orphan_warning must instruct agent to pass domain explicitly for cross-domain connect")
+	if strings.Contains(tr.Content[0].Text, "pass their domain explicitly") || strings.Contains(tr.Content[0].Text, "domain=") {
+		t.Error("orphan_warning must not instruct passing a domain to connect — connect has no domain parameter")
+	}
+	if !strings.Contains(tr.Content[0].Text, "no domain parameter") {
+		t.Error("orphan_warning should clarify connect takes no domain parameter")
 	}
 }
 
