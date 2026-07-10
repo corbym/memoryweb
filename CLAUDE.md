@@ -189,6 +189,31 @@ which scans all property-level descriptions too.
 - `visualise` must instruct agents to output the mermaid string inside a mermaid
   code block unconditionally — no client-conditional HTML widget branching.
 
+**Decision:** tool changes and `docs/memoryweb-skill.md` are reviewed against
+each other, in both directions, every time either one changes.
+
+- Changing a tool (new tool, added/removed/renamed parameter, changed enum
+  values, changed response shape, changed description text) — before
+  merging, re-read `docs/memoryweb-skill.md`'s Layer 1 contract and Layer 2
+  reference (node_kind taxonomy, relationship types, tool quick reference,
+  domain move protocol) for anything that now names the old shape or old
+  wording, and update the skill in the same change.
+- Changing `docs/memoryweb-skill.md` — if the edit documents a workaround for
+  a tool quirk ("ignore what the tool tells you", "the tool does X, work
+  around it by doing Y"), that's a signal the tool itself has a bug or a
+  description defect. Flag it as a candidate fix rather than letting the
+  workaround become permanent skill content.
+
+A stale skill actively misleads agents into calling tools the way they used
+to work; an unfixed tool bug papered over by a skill workaround hides a real
+defect behind agent-side prose that has to be re-taught in every host
+variant. See the `before-shipping-any-tool-schema...` standing rule in the
+`memoryweb-meta` domain — this session's `docs/memoryweb-skill.md` v2 draft
+surfaced exactly this coupling: it documented a workaround for `remember`'s
+`orphan_warning` telling agents to pass `connect` a `domain` parameter that
+never existed, and reviewing *why* the workaround was needed led straight to
+the actual fix (v1.38.2) instead of the workaround becoming permanent.
+
 ---
 
 ## Archive / forget protocol
