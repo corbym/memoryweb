@@ -51,14 +51,13 @@ digest) that run behind you. They're a backstop, not permission to skip steps.
    same-domain sibling can crowd out a low-frequency but highly relevant
    standing rule.
 
-   **Known quirk:** if `orphan_warning` on a `remember` response tells you to
-   "pass their domain explicitly when calling connect" — `connect` has no
-   `domain` parameter. `from_memory`/`to_memory` IDs are global and
-   domain-independent; the parameter would be silently ignored if you added
-   it. Ignore that part of the wording and call `connect` with the two IDs
-   directly. This is a skill-side mitigation for stale wording in the
-   `remember` tool's response template — worth a code fix, not just a skill
-   note (see Provenance).
+   `orphan_warning` on a `remember` response is now accurate: it tells you to
+   call `connect` with the two IDs directly and states plainly that `connect`
+   takes no `domain` parameter. (Older versions of this response — before the
+   fix described in Provenance — told agents to pass a `domain` value that
+   the tool silently ignored. If you ever see `domain=` in that wording
+   again, treat it as a regression and ignore it — `connect` only needs
+   `from_memory`/`to_memory`.)
 5. Before ending the session, run `audit(mode=orphans)` and
    `audit(mode=stale)` as two separate steps — never merge them into one
    pass or one report. They're different failure modes and need different
@@ -112,10 +111,10 @@ front-loaded harder:
    for a self-referencing linkback directive before treating a filing as
    done — same reasoning as A.4.
 
-   **Known quirk:** if `orphan_warning` tells you to "pass their domain
-   explicitly when calling connect" — ignore that; `connect` takes no
-   `domain` parameter, and memory IDs are global. Just call `connect` with
-   the two IDs.
+   `orphan_warning` correctly states that `connect` takes no `domain`
+   parameter — just call it with the two IDs. (This was a live wording bug
+   until the fix noted in Provenance; if the old `domain=` phrasing ever
+   reappears, treat it as a regression, not an instruction to follow.)
 5. Run `audit(mode=orphans)` and `audit(mode=stale)` at natural pauses, not
    just "before ending" — you may not get a clean end-of-session moment.
    Keep them as two separate steps even when run back to back.
@@ -151,11 +150,18 @@ front-loaded harder:
   this document — there is no second line of defence. Variant B exists
   because of that gap.
 - **Ambiguous wording gets read the more permissive way, silently.** The
-  `orphan_warning` quirk documented in A.4/B.4 is a live example: the tool
-  response tells the agent to do something the tool doesn't support, and an
-  agent following it literally either wastes a turn or, worse, concludes the
-  capability doesn't exist. A skill-side note is a stopgap; the underlying
-  wording should be fixed in the tool response itself.
+  `orphan_warning` history noted in A.4/B.4 is the concrete example: from
+  2026-05-23 to 2026-07-10 the tool response told the agent to pass a
+  `domain` parameter `connect` never accepted, and an agent following it
+  literally either wasted a turn constructing it or, worse, treated a
+  subsequently successful call as evidence the parameter did something. It
+  traced to a false premise in the story that introduced it (`connect`
+  resolves node IDs within a domain scope — it doesn't; IDs are global) that
+  nobody revisited across two later wording passes, both of which were
+  test-locked by regression assertions checking the wording, never the
+  underlying behaviour. Now fixed at the source (see Provenance) — kept here
+  as the reason A.4/B.4 still tell you to treat a `domain=` reappearance as a
+  regression rather than an instruction.
 - **Comprehension is not compliance.** An agent can read a warning, narrate
   that it read it, and then not act on it in the same turn — this is a
   distinct failure mode from never seeing the warning at all, and it's why
@@ -366,4 +372,5 @@ by design. Use `search` for anything specific.
 | Version | Change | Trigger |
 |---|---|---|
 | v1 | Drafted as a decision (two-layer Behavioural Contract + Reference, modelled on `recordari-skill.md`), but never materialised to disk — the decision recorded intent, not content. | Closing the same documentation gap `recordari-skill.md` closed for Recordari, grounded in memoryweb's own dogfooding: the 69% binder-session orphan rate / connect-instruction-position fix, and the 90%-monochrome-decision-graph finding that motivated `node_kind` enforcement. |
-| v2 (this document) | First materialised version. Adapts `recordari-skill.md` v7.1 — the `why_connected`-as-pair-verification rule, the warning-as-instruction rule, and the deployed-file audit discipline — but does **not** port it mechanically. Re-verified against memoryweb's live 21-tool surface and corrected three places where the two systems diverge: (1) pair verification uses `recall(id)`'s `edges` array, not `why_connected` — memoryweb's `why_connected` is the fuzzy label-matched tool and `trace` is the multi-hop one, the reverse of Recordari's tool split; (2) no ownership/`override_reason` section — memoryweb is single-tenant, that entire v7 addition doesn't apply; (3) `forget_all` is a real, separate memoryweb tool (unlike Recordari, where v7 replaced a nonexistent `forget_all` with batched `forget`). Added a memoryweb-only Domain move protocol section (`revise(domain=...)` vs `rename_domain`) with no Recordari analogue. Also surfaced, but deliberately did not silently patch, a live wording bug in `remember`'s `orphan_warning` (tells agents to pass `connect` a `domain` parameter that doesn't exist on the tool) — same failure class as the `orphan_warning` quirk that drove Recordari's v7.1, but here the response format doesn't reject the parameter, it just discards it, so the failure is silent rather than a rejected call. Flagged in Layer 1 A.4/B.4 as a stopgap; the actual fix belongs in `tools/remember.go`, not in this document. | User request to adapt Recordari's v7.1 skill for memoryweb (2026-07-10). |
+| v2 (this document) | First materialised version. Adapts `recordari-skill.md` v7.1 — the `why_connected`-as-pair-verification rule, the warning-as-instruction rule, and the deployed-file audit discipline — but does **not** port it mechanically. Re-verified against memoryweb's live 21-tool surface and corrected three places where the two systems diverge: (1) pair verification uses `recall(id)`'s `edges` array, not `why_connected` — memoryweb's `why_connected` is the fuzzy label-matched tool and `trace` is the multi-hop one, the reverse of Recordari's tool split; (2) no ownership/`override_reason` section — memoryweb is single-tenant, that entire v7 addition doesn't apply; (3) `forget_all` is a real, separate memoryweb tool (unlike Recordari, where v7 replaced a nonexistent `forget_all` with batched `forget`). Added a memoryweb-only Domain move protocol section (`revise(domain=...)` vs `rename_domain`) with no Recordari analogue. | User request to adapt Recordari's v7.1 skill for memoryweb (2026-07-10). |
+| v2.1 | Drafting this document surfaced a live wording bug in `remember`'s `orphan_warning`: it told agents to pass `connect` a `domain` parameter the tool has never accepted (confirmed down to `db/edges.go`'s `AddEdge(fromID, toID, relationship, narrative)` — no domain anywhere). Traced to a false premise in `stories/cross-domain-connect-ux.md` (2026-05-23) — "`connect` resolves node IDs within a domain scope" — that a later wording pass (v1.29.3) polished without re-checking, and that two regression tests (`TestRemember_OrphanWarning_PresentWhenNoConnections`, `TestRememberAll_OrphanWarning_PresentWhenNoEdges`) then locked in by asserting the wrong phrase's *presence*. Fixed same-session in `tools/remember.go` (both single and batch `orphanWarning` strings) and `tools/remember_test.go` (assertions flipped to forbid the old phrase); `go test ./...` green; committed as `300a9d2` and pushed. This document's A.4/B.4 and "Why this shape" updated to describe the fix instead of carrying it as an open quirk. | User confirmation to fix after the quirk was flagged in v2 (2026-07-10). |
