@@ -10,13 +10,6 @@ reference material below it. Position determines compliance — instructions
 that only live in reference material get skipped, not from disagreement, but
 because agents never reach them.
 
-Condensed per the same token-efficiency pass applied to `recordari-skill.md`
-v8: host variants merged into one contract (real differences flagged inline
-with 🪝), reference tables condensed, rationale and full version history
-moved out of the live file — they exist as `node_kind=decision` memories in
-recordari's `memoryweb-meta` domain (tag `memoryweb-skill`), one search away
-instead of paid for on every load.
-
 ---
 
 ## Layer 1 — Behavioural Contract
@@ -153,7 +146,7 @@ filing into them.
   one project or topic.
 - Never file credentials, connection strings, API keys, or tokens.
 
-### Domain move protocol (memoryweb-specific — no Recordari equivalent)
+### Domain move protocol
 
 Two different operations move memories between domains; don't confuse them:
 
