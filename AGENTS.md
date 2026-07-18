@@ -37,11 +37,30 @@ If you do not know what domains exist, call `domains` first.
   Supply an `items` array to file multiple nodes in one transaction.
 - `revise` — update `label`, `description`, `why_matters`, `tags`, or
   `occurred_at` on a live node without archiving it. Supply an `items` array for
-  batch updates. Writes an audit log entry on every call.
+  batch updates. Writes an audit log entry on every call. When updating a
+  decision, do not paste new source material into its description — file a
+  `node_kind=finding` for the evidence and connect with `depends_on` or
+  `caused_by`.
 
-**Before filing a node**: search first. If a similar node exists, suggest
-linking with `connect` rather than creating a duplicate. Unfiled duplicates are
-the primary cause of orphan nodes and audit drift.
+**Before filing a node**: search first. Infer the domain from search results;
+prefer an existing domain over creating a new one. **Creating a new domain hides
+the memory from every other domain's `orient` and domain-scoped `search`** —
+only create one when no existing domain covers the topic. If a similar node
+exists, suggest linking with `connect` rather than creating a duplicate.
+Unfiled duplicates are the primary cause of orphan nodes and audit drift.
+
+**Evidence is a finding, not a footnote.** If a decision rests on something you
+checked — code read, a doc fetched, a log, a search result — file that evidence
+separately as `node_kind=finding` and connect the decision with `depends_on` or
+`caused_by`. Do not fold raw evidence into the decision's description.
+
+**When reviewing `suggested_connections`**, check each candidate for
+**contradiction** as well as relevance — a semantically close memory asserting
+the opposite of what you just filed is a conflict candidate, not just a link
+opportunity. If you find a contradiction, use `connect(relationship=contradicts)`
+or `connect(relationship=resolved)` after user confirmation. Filing-time
+`suggested_connections` is not interchangeable with `audit(mode=conflicts)` —
+that mode is a separate domain-wide semantic sweep.
 
 **The `why_matters` field is the most important one** — it is what makes a node
 retrievable from oblique search terms. Never skip it.
@@ -96,10 +115,24 @@ it was archived, or `audit(mode=stale)` to surface drift candidates.
   below.
 - `forget_all` — archive multiple nodes atomically in a single call.
 - `restore` — restore an archived node so it surfaces in search again.
-- `audit` — surface nodes that need attention. Three modes:
+- `audit` — surface nodes that need attention. Four modes:
   - `mode=stale` — stale, contradicted, duplicated, or overdue transient nodes
   - `mode=orphans` — live nodes with zero connections
   - `mode=archived` — review what has been archived
+  - `mode=conflicts` — semantically adjacent pairs that may warrant contradiction review
+
+Run `audit(mode=orphans)`, `audit(mode=stale)`, and `audit(mode=conflicts)` as
+**three separate steps** — never one combined pass or report. Orphans: resolve
+every one yourself (`suggest_connections` + `connect`); only ask the user when
+the target is genuinely ambiguous. Stale: fix duplicates and superseded labels
+with `revise` without asking; genuine `contradicts` edges require user
+confirmation before adjudicating via `connect(relationship=resolved)` (verify
+the exact pair via `recall` first). Before escalating a contradiction, confirm
+no `resolved`/`resolved_by`/`supersedes` edge already links the two IDs — that
+edge is the canonical close signal; a `RESOLVED` label prefix is a legacy
+backstop only. **Say nothing about audits if all three come back clean** — no
+routine status lines. Only speak up for an unresolved orphan or a live
+contradiction awaiting the user's decision.
 
 ### Domain management
 
@@ -124,6 +157,7 @@ it was archived, or `audit(mode=stale)` to surface drift candidates.
 | `connects_to` | General association |
 | `contradicts` | A and B conflict |
 | `depends_on` | A requires B |
+| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair (additive — does not remove the original edge) |
 | `is_example_of` | A illustrates B |
 
 ---
@@ -229,7 +263,7 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 
 ---
 
-## What is available now (v1.17.0)
+## What is available now (v1.39.0)
 
 | Tool | Status |
 |------|--------|
@@ -250,7 +284,7 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 | `forget` | Live |
 | `forget_all` | Live |
 | `restore` | Live |
-| `audit` | Live (mode=stale/orphans/archived) |
+| `audit` | Live (mode=stale/orphans/archived/conflicts) |
 | `domains` | Live |
 | `alias` | Live (action=add/remove/resolve/list) |
 | `rename_domain` | Live |

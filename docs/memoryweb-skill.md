@@ -35,20 +35,27 @@ because agents never reach them.
    crowd out a low-frequency but highly relevant standing rule.
 5. 🪝 **Hook-backed hosts (Claude Code, Codex):** a Stop hook (save) and a
    PreCompact hook (orphan nudge, dream digest) run behind you. They're a
-   backstop, not permission to skip steps — run `audit(mode=orphans)` and
-   `audit(mode=stale)` as two separate steps before ending the session.
-   **No-hook hosts (claude.ai chat/web, Claude Desktop, ChatGPT, raw API):**
-   there is no mechanical sweep behind you. Run both audits at natural
-   pauses, not just "before ending" — you may not get a clean end-of-session
-   moment. Either way, never merge the two audits into one pass: they're
-   different failure modes needing different handling.
+   backstop, not permission to skip steps — run `audit(mode=orphans)`,
+   `audit(mode=stale)`, and `audit(mode=conflicts)` as three separate steps
+   before ending the session. **No-hook hosts (claude.ai chat/web, Claude
+   Desktop, ChatGPT, raw API):** there is no mechanical sweep behind you. Run
+   all three at natural pauses, not just "before ending" — you may not get a
+   clean end-of-session moment. Either way, never merge these into one pass or
+   one report: orphans, stale drift, and semantic conflict candidates are
+   different failure modes needing different handling. `conflicts` is a
+   domain-wide semantic sweep — not interchangeable with filing-time
+   `suggested_connections` on `remember`.
 6. Orphans: resolve every one yourself (`suggest_connections` + `connect`).
    Only ask the user when the correct target is genuinely ambiguous —
    multiple equally plausible candidates, or none at all.
-7. Stale: triage what comes back. Duplicates and superseded labels are yours
-   to fix — `revise`, don't ask. A genuine `contradicts` edge is *not* yours
-   to resolve: present both conflicting claims to the user and wait for
-   their call. Once decided, verify the exact pair before adjudicating —
+7. Stale / conflicts: triage what comes back. Duplicates and superseded
+   labels are yours to fix — `revise`, don't ask. A genuine `contradicts`
+   edge is *not* yours to resolve: present both conflicting claims to the user
+   and wait for their call. Before escalating a pair, confirm no
+   `resolved`/`resolved_by`/`supersedes` edge already links the two IDs —
+   that edge is the canonical close signal. A `RESOLVED` label prefix on
+   either side is a legacy backstop only; do not treat a label alone as
+   closed if the adjudication edge is missing. Once decided, verify the exact pair before adjudicating —
    `recall(id)` on one side, check its `edges` array for a direct edge
    naming the other ID. Do **not** rely on `trace(from_id, to_id)` alone (a
    6-hop BFS that can report a path through an unrelated third memory, not
@@ -61,9 +68,10 @@ because agents never reach them.
    no separate `verdict` field). Additive — the original `contradicts` edge
    stays on the record, and the pair stops surfacing in `audit(mode=stale)`
    automatically.
-8. Say nothing about either audit if it comes back clean. Only speak up for
+8. Say nothing about any audit if all three come back clean. Only speak up for
    an unresolved orphan or a live contradiction still awaiting the user's
-   call — no routine "orphans checked / stale checked" status line.
+   call — no routine "orphans checked / stale checked / conflicts checked"
+   status line.
 9. Delegating to a sub-agent: inject your own `orient()` output into its
    context. It starts cold otherwise.
 10. If leaving mid-flight work unfinished, file a `node_kind=goal` before
@@ -74,7 +82,7 @@ because agents never reach them.
     never conversational noise or self-referential musing.
 
 `audit` sweeps are the real backstop, which is why step 5 anchors both host
-variants on the same pair of calls. This is defence in depth, not a
+variants on the same three separate calls. This is defence in depth, not a
 guarantee.
 
 ---
@@ -84,8 +92,12 @@ guarantee.
 ### Filing workflow
 
 Before calling `remember`, `search` first. Infer the domain from what comes
-back — prefer an existing domain over creating a new one. If a similar
-memory already exists, `revise` it instead of filing a duplicate.
+back — prefer an existing domain over creating a new one. Creating a new
+domain hides the memory from every other domain's `orient` and
+domain-scoped `search` — only create one when no existing domain covers
+the topic. If a similar memory already exists, `revise` it instead of filing
+a duplicate. When revising a decision, do not paste new source material into
+its `description` — file a `finding` and `connect` instead.
 
 If `orient()` returned a nonzero stale count for the domain, run
 `audit(mode=stale)` before filing anything new there — a fresh contradiction

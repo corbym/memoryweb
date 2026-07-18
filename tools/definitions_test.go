@@ -1229,6 +1229,76 @@ func TestListTools_ForgetCrossReferencesForgetAll(t *testing.T) {
 
 // ── orient: optional domain ───────────────────────────────────────────────────
 
+// listToolsDesc holds parsed ListTools output for description assertions.
+type listToolsDesc struct {
+	Name        string
+	Description string
+	Properties  map[string]struct {
+		Description string `json:"description"`
+	}
+}
+
+// parseListToolsForDescriptions unmarshals ListTools into a slice suitable for
+// description and property-description assertions.
+func parseListToolsForDescriptions(t *testing.T, h *tools.Handler) []listToolsDesc {
+	t.Helper()
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	out := make([]listToolsDesc, len(resp.Tools))
+	for i, td := range resp.Tools {
+		out[i] = listToolsDesc{
+			Name:        td.Name,
+			Description: td.Description,
+			Properties:  td.InputSchema.Properties,
+		}
+	}
+	return out
+}
+
+func toolDescription(t *testing.T, tools []listToolsDesc, name string) string {
+	t.Helper()
+	for _, td := range tools {
+		if td.Name == name {
+			return td.Description
+		}
+	}
+	t.Fatalf("tool %q not found in ListTools", name)
+	return ""
+}
+
+func toolPropertyDescription(t *testing.T, tools []listToolsDesc, toolName, propName string) string {
+	t.Helper()
+	for _, td := range tools {
+		if td.Name != toolName {
+			continue
+		}
+		prop, ok := td.Properties[propName]
+		if !ok {
+			t.Fatalf("tool %q has no property %q", toolName, propName)
+		}
+		return prop.Description
+	}
+	t.Fatalf("tool %q not found in ListTools", toolName)
+	return ""
+}
+
 // TestOrient_NoDomain_ReturnsCrossDomainSnapshot: calling orient with no domain
 // must return mode="cross_domain_snapshot" with a domains array containing at
 // least one entry that has domain and recent fields.
@@ -1264,6 +1334,125 @@ func TestListTools_RememberDescriptionContainsDomainInference(t *testing.T) {
 		}
 	}
 	t.Fatal("remember tool not found in ListTools")
+}
+
+func TestListTools_RememberDescriptionContainsNewDomainWarning(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "remember" {
+			if !strings.Contains(td.Description, "Creating a new domain hides this memory") {
+				t.Error(`remember description missing new-domain discoverability warning`)
+			}
+			return
+		}
+	}
+	t.Fatal("remember tool not found in ListTools")
+}
+
+func TestListTools_RememberDescriptionContainsConflictFraming(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "remember" {
+			if !strings.Contains(td.Description, "contradiction as well as relevance") {
+				t.Error(`remember description missing suggested_connections conflict framing`)
+			}
+			if !strings.Contains(td.Description, "audit(mode=conflicts) is a separate domain-wide sweep") {
+				t.Error(`remember description must distinguish filing-time check from audit(mode=conflicts)`)
+			}
+			return
+		}
+	}
+	t.Fatal("remember tool not found in ListTools")
+}
+
+func TestListTools_RememberDescriptionContainsFindingLinkback(t *testing.T) {
+	_, h := newEnv(t)
+	tools := parseListToolsForDescriptions(t, h)
+	desc := toolDescription(t, tools, "remember")
+	if !strings.Contains(desc, "file that evidence separately as node_kind='finding'") {
+		t.Error(`remember description missing decision→finding linkback instruction`)
+	}
+	if !strings.Contains(desc, "depends_on or caused_by") {
+		t.Error(`remember description missing depends_on or caused_by linkback instruction`)
+	}
+	linkbackIdx := strings.Index(desc, "file that evidence separately as node_kind='finding'")
+	singleModeIdx := strings.Index(desc, "Single mode")
+	if linkbackIdx == -1 || singleModeIdx == -1 || linkbackIdx > singleModeIdx {
+		t.Error(`remember decision→finding linkback must appear before Single mode section`)
+	}
+}
+
+func TestListTools_RememberItemsPropertyContainsFindingLinkback(t *testing.T) {
+	_, h := newEnv(t)
+	tools := parseListToolsForDescriptions(t, h)
+	desc := toolPropertyDescription(t, tools, "remember", "items")
+	if !strings.Contains(desc, "depends_on or caused_by") {
+		t.Error(`remember items property missing decision→finding linkback instruction`)
+	}
+}
+
+func TestListTools_ReviseItemsPropertyWarnsAgainstEvidenceFold(t *testing.T) {
+	_, h := newEnv(t)
+	tools := parseListToolsForDescriptions(t, h)
+	desc := toolPropertyDescription(t, tools, "revise", "items")
+	if !strings.Contains(desc, "Do not paste new source material into description") {
+		t.Error(`revise items property missing warning against folding evidence into description`)
+	}
+}
+
+func TestListTools_ReviseDescriptionWarnsAgainstEvidenceFold(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name == "revise" {
+			if !strings.Contains(td.Description, "do not paste new source material") {
+				t.Error(`revise description missing warning against folding evidence into description`)
+			}
+			return
+		}
+	}
+	t.Fatal("revise tool not found in ListTools")
 }
 
 // ── revise: transient field ───────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # remember: reinforce decision→finding linkback rule in the tool description
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `issue-remember-s-tool-description-doesn-t-reinforce-the-decision-finding-linkback-rule-it-lives-only-in-the-skill-document-595914a3`
 
