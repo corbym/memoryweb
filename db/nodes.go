@@ -38,6 +38,7 @@ type NodeInput struct {
 }
 
 func (s *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time, tags string, nodeKind string) (*Node, error) {
+	domain = s.ResolveAlias(domain)
 	id := slug(label) + "-" + shortID()
 	now := time.Now().UTC()
 
@@ -184,13 +185,16 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 			changes = append(changes, fmt.Sprintf("node_kind (was %q)", cur.NodeKind))
 		}
 	}
-	if domain != nil && *domain != cur.Domain {
-		if moveReason == nil || strings.TrimSpace(*moveReason) == "" {
-			return nil, fmt.Errorf("reason is required when changing domain")
+	if domain != nil {
+		resolved := s.ResolveAlias(*domain)
+		if resolved != cur.Domain {
+			if moveReason == nil || strings.TrimSpace(*moveReason) == "" {
+				return nil, fmt.Errorf("reason is required when changing domain")
+			}
+			sets = append(sets, "domain = ?")
+			args = append(args, resolved)
+			changes = append(changes, fmt.Sprintf("domain (was %s → %s): %s", cur.Domain, resolved, strings.TrimSpace(*moveReason)))
 		}
-		sets = append(sets, "domain = ?")
-		args = append(args, *domain)
-		changes = append(changes, fmt.Sprintf("domain (was %s → %s): %s", cur.Domain, *domain, strings.TrimSpace(*moveReason)))
 	}
 	args = append(args, id)
 
@@ -307,14 +311,17 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 				changes = append(changes, fmt.Sprintf("node_kind (was %q)", cur.NodeKind))
 			}
 		}
-		if inp.Domain != nil && *inp.Domain != cur.Domain {
-			if inp.Reason == nil || strings.TrimSpace(*inp.Reason) == "" {
-				tx.Rollback()
-				return nil, fmt.Errorf("reason is required when changing domain")
+		if inp.Domain != nil {
+			resolved := s.ResolveAlias(*inp.Domain)
+			if resolved != cur.Domain {
+				if inp.Reason == nil || strings.TrimSpace(*inp.Reason) == "" {
+					tx.Rollback()
+					return nil, fmt.Errorf("reason is required when changing domain")
+				}
+				sets = append(sets, "domain = ?")
+				args = append(args, resolved)
+				changes = append(changes, fmt.Sprintf("domain (was %s → %s): %s", cur.Domain, resolved, strings.TrimSpace(*inp.Reason)))
 			}
-			sets = append(sets, "domain = ?")
-			args = append(args, *inp.Domain)
-			changes = append(changes, fmt.Sprintf("domain (was %s → %s): %s", cur.Domain, *inp.Domain, strings.TrimSpace(*inp.Reason)))
 		}
 		args = append(args, inp.ID)
 
@@ -384,6 +391,7 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 			tx.Rollback()
 			return nil, fmt.Errorf("node %d: domain is required", i)
 		}
+		domain := s.ResolveAlias(inp.Domain)
 		id := slug(inp.Label) + "-" + shortID()
 		nodeKind := inp.NodeKind
 		if nodeKind == "" {
@@ -392,7 +400,7 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 		if _, err := tx.Exec(
 			`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags, node_kind)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id, inp.Label, inp.Description, inp.WhyMatters, inp.Domain, now, now, inp.OccurredAt, inp.Tags, nodeKind,
+			id, inp.Label, inp.Description, inp.WhyMatters, domain, now, now, inp.OccurredAt, inp.Tags, nodeKind,
 		); err != nil {
 			tx.Rollback()
 			return nil, err
@@ -403,7 +411,7 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 			Description: inp.Description,
 			WhyMatters:  inp.WhyMatters,
 			Tags:        inp.Tags,
-			Domain:      inp.Domain,
+			Domain:      domain,
 			CreatedAt:   now,
 			UpdatedAt:   now,
 			OccurredAt:  inp.OccurredAt,
@@ -572,6 +580,7 @@ func (s *Store) CountArchived(domain string) (int, error) {
 // label closely matches the given label (lowercased, punctuation stripped).
 // The node with the given excludeID is excluded (used to avoid self-match).
 func (s *Store) FindPossibleDuplicates(label, domain, excludeID string) ([]Node, error) {
+	domain = s.ResolveAlias(domain)
 	norm := normaliseLabel(label)
 	if norm == "" {
 		return []Node{}, nil

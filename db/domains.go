@@ -26,6 +26,15 @@ func (s *Store) ResolveAlias(name string) string {
 
 // AddAlias registers alias as an alternative name for domain.
 func (s *Store) AddAlias(alias, domain string) error {
+	var liveCount int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, alias,
+	).Scan(&liveCount); err != nil {
+		return err
+	}
+	if liveCount > 0 {
+		return fmt.Errorf("cannot register alias %q: %d live node(s) already filed under that domain name — revise their domain to %q first", alias, liveCount, domain)
+	}
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO domain_aliases (alias, domain, created_at) VALUES (?, ?, ?)`,
 		alias, domain, time.Now().UTC(),

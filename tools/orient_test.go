@@ -1642,3 +1642,24 @@ func TestOrient_DomainsArray_SchemaHasDomainsProperty(t *testing.T) {
 	}
 	t.Fatal("orient tool not found in ListTools")
 }
+
+// TestOrient_RememberViaAliasVisibleOnOrient: filing with an alias domain name
+// must store the canonical domain so orient(domain=alias) finds the memory.
+func TestOrient_RememberViaAliasVisibleOnOrient(t *testing.T) {
+	_, h := newEnv(t)
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
+
+	addNode(t, h, "Filed via alias", "engine", map[string]any{
+		"why_matters": "tests alias resolve-on-write for orient visibility",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "engine"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if strings.Contains(body, "Nothing has been filed") {
+		t.Fatalf("orient via alias should find node filed with alias domain; got:\n%s", body)
+	}
+	if !strings.Contains(body, "Filed via alias") {
+		t.Errorf("orient via alias should include filed node label; got:\n%s", body)
+	}
+}

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -220,11 +221,14 @@ type DriftCandidate struct {
 // FindDrift returns nodes that may be stale, contradicted, or superseded.
 // Rules are applied in order; the first match per node wins:
 //  1. Contradiction: connected by a "contradicts" edge.
-//  2. Superseded label: contains "old", "deprecated", "replaced", "legacy", "previous".
-//  3. Stale open question: contains open-question keywords and is older than 30 days.
-//  4. Duplicate label: identical lowercased label in the same domain.
-//  5. Transient node older than 7 days.
-//  6. Standing node with fewer than 2 inbound edges and older than 30 days.
+//  2. Shadow domain: live node filed under a registered alias name (unreachable by
+//     domain-scoped reads) — runs early so limit truncation does not hide data-loss rows.
+//  3. Superseded label: contains "old", "deprecated", "replaced", "legacy", "previous".
+//  4. Stale open question: contains open-question keywords and is older than 30 days.
+//  5. Duplicate label: identical lowercased label in the same domain.
+//  6. Transient node older than 7 days.
+//  7. Standing node with fewer than 2 inbound edges and older than 30 days.
+//  8. Connected placeholder whose target appears resolved.
 func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, memoryID string, depth int) ([]DriftCandidate, error) {
 	if limit <= 0 {
 		limit = 10
@@ -316,7 +320,48 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		return nil, err
 	}
 
-	// ── Rule 2: superseded labels ─────────────────────────────────────────────
+	// ── Rule 2: shadow domain rows (filed under alias name, not canonical) ─────
+	var rowsShadow *sql.Rows
+	if domain != "" {
+		rowsShadow, err = s.db.Query(
+			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
+			        da.domain AS canonical_domain
+			 FROM nodes n
+			 JOIN domain_aliases da ON da.alias = n.domain
+			 WHERE n.archived_at IS NULL AND da.domain = ?`,
+			domain)
+	} else {
+		rowsShadow, err = s.db.Query(
+			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
+			        da.domain AS canonical_domain
+			 FROM nodes n
+			 JOIN domain_aliases da ON da.alias = n.domain
+			 WHERE n.archived_at IS NULL`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for rowsShadow.Next() {
+		var n Node
+		var oa, aa sql.NullTime
+		var canonical string
+		if err := rowsShadow.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind, &canonical); err != nil {
+			rowsShadow.Close()
+			return nil, err
+		}
+		n.OccurredAt = nullTimeToPtr(oa)
+		n.ArchivedAt = nullTimeToPtr(aa)
+		add(n, nil, fmt.Sprintf("filed under alias domain %q (canonical: %q) — unreachable by domain-scoped reads; revise domain to canonical", n.Domain, canonical))
+	}
+	rowsShadow.Close()
+	if err = rowsShadow.Err(); err != nil {
+		return nil, err
+	}
+
+	// ── Rule 3: superseded labels ─────────────────────────────────────────────
 	const supersededKW = `(LOWER(label) LIKE '%old%' OR LOWER(label) LIKE '%deprecated%' OR ` +
 		`LOWER(label) LIKE '%replaced%' OR LOWER(label) LIKE '%legacy%' OR LOWER(label) LIKE '%previous%')`
 	var rows2 *sql.Rows
@@ -345,7 +390,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		return nil, err
 	}
 
-	// ── Rule 3: stale open questions ──────────────────────────────────────────
+	// ── Rule 4: stale open questions ──────────────────────────────────────────
 	cutoff30 := time.Now().UTC().AddDate(0, 0, -30)
 	const staleKW = `(LOWER(label) LIKE '%open question%' OR LOWER(label) LIKE '%unresolved%' OR ` +
 		`LOWER(label) LIKE '%tbd%' OR LOWER(label) LIKE '%todo%' OR ` +
@@ -380,7 +425,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		return nil, err
 	}
 
-	// ── Rule 4: duplicate labels ──────────────────────────────────────────────
+	// ── Rule 5: duplicate labels ──────────────────────────────────────────────
 	const dupExists = `EXISTS (SELECT 1 FROM nodes n2 WHERE n2.archived_at IS NULL ` +
 		`AND n2.domain = nodes.domain AND LOWER(n2.label) = LOWER(nodes.label) AND n2.id != nodes.id)`
 	var rows4 *sql.Rows
@@ -409,7 +454,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		return nil, err
 	}
 
-	// ── Rule 5: transient nodes older than 7 days ─────────────────────────────
+	// ── Rule 6: transient nodes older than 7 days ─────────────────────────────
 	cutoff7 := time.Now().UTC().AddDate(0, 0, -7)
 	var rows5 *sql.Rows
 	if domain != "" {
@@ -439,7 +484,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		return nil, err
 	}
 
-	// ── Rule 6: standing nodes with low inbound edge count older than 30 days ──
+	// ── Rule 7: standing nodes with low inbound edge count older than 30 days ──
 	cutoff30standing := time.Now().UTC().AddDate(0, 0, -30)
 	var rows6 *sql.Rows
 	if domain != "" {
@@ -493,7 +538,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		add(n, nil, "standing rule with low connection count — may not be in use")
 	}
 
-	// ── Rule 7: connected placeholder whose target appears resolved ──────────────
+	// ── Rule 8: connected placeholder whose target appears resolved ──────────────
 	// A candidate matches when ALL of:
 	//   a) node_kind='goal' OR label contains "Story needed:", "TODO:", or "Placeholder:" (case-insensitive)
 	//   b) Has at least one outbound edge (connects_to OR led_to) to a node whose

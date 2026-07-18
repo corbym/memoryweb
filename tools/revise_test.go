@@ -768,3 +768,50 @@ func TestRevise_Batch_Domain_MovesAll(t *testing.T) {
 		}
 	}
 }
+
+func TestRevise_Domain_ViaAliasResolvesOnWrite(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "target", "domain": "canonical-target"})
+	id := addNode(t, h, "Move via alias", "source-domain", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":     id,
+		"domain": "target",
+		"reason": "consolidating under canonical name",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	if resp.Domain != "canonical-target" {
+		t.Errorf("domain: got %q, want canonical-target", resp.Domain)
+	}
+}
+
+func TestRevise_Domain_AliasMatchingCurrent_NoReasonRequired(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
+	id := addNode(t, h, "Already canonical", "deep-engine", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":     id,
+		"domain": "engine",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	if resp.Domain != "deep-engine" {
+		t.Errorf("domain: got %q, want deep-engine", resp.Domain)
+	}
+}

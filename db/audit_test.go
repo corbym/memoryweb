@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -854,5 +855,101 @@ func TestFindDrift_PlaceholderItself_HasCompletionSignal_NotFlagged(t *testing.T
 		if c.Node.ID == updatedPh.ID && strings.Contains(c.Reason, "placeholder") {
 			t.Errorf("placeholder whose own label/desc already signals completion should NOT be flagged; got reason: %q", c.Reason)
 		}
+	}
+}
+
+func TestFindDrift_ShadowDomainRows(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+
+	s.AddAlias("engine", "deep-engine")
+	// Simulate pre-fix shadow row: domain stored as alias name verbatim.
+	now := time.Now().UTC()
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	_, err = rawDB.Exec(
+		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, node_kind)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"shadow-row-abc12345", "Shadow row", "desc", "why", "engine", now, now, "decision",
+	)
+	rawDB.Close()
+	if err != nil {
+		t.Fatalf("insert shadow row: %v", err)
+	}
+
+	candidates, err := s.FindDrift("deep-engine", 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, c := range candidates {
+		if c.Node.ID == "shadow-row-abc12345" {
+			found = true
+			if !strings.Contains(c.Reason, "alias") {
+				t.Errorf("shadow row reason should mention alias; got %q", c.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Error("shadow row filed under alias domain name should be flagged by FindDrift")
+	}
+}
+
+func TestFindDrift_ShadowDomainRowsSurvivesLimit(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+
+	s.AddAlias("engine", "deep-engine")
+	now := time.Now().UTC()
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for i := 0; i < 8; i++ {
+		_, err = rawDB.Exec(
+			`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, node_kind)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			fmt.Sprintf("legacy-node-%d-abc12345", i),
+			fmt.Sprintf("legacy deprecated node %d", i),
+			"desc", "why", "deep-engine", now, now, "decision",
+		)
+		if err != nil {
+			t.Fatalf("insert superseded node %d: %v", i, err)
+		}
+	}
+	_, err = rawDB.Exec(
+		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, node_kind)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"shadow-row-limit-abc12345", "Shadow row limit", "desc", "why", "engine", now, now, "decision",
+	)
+	rawDB.Close()
+	if err != nil {
+		t.Fatalf("insert shadow row: %v", err)
+	}
+
+	candidates, err := s.FindDrift("deep-engine", 5, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, c := range candidates {
+		if c.Node.ID == "shadow-row-limit-abc12345" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("shadow row should survive limit=5 (rule 2 runs before superseded labels); got %d candidates", len(candidates))
 	}
 }

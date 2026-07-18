@@ -554,6 +554,38 @@ func TestAudit_ModeStale_ReturnsDriftCandidates(t *testing.T) {
 	mustNotError(t, tr)
 }
 
+func TestAudit_ModeStale_ShadowDomainRows(t *testing.T) {
+	dbPath, s, h := newEnvWithPath(t)
+	if err := s.AddAlias("engine", "deep-engine"); err != nil {
+		t.Fatalf("AddAlias: %v", err)
+	}
+
+	now := time.Now().UTC()
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	_, err = rawDB.Exec(
+		`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, node_kind)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"shadow-audit-abc12345", "Shadow audit row", "desc", "why", "engine", now, now, "decision",
+	)
+	rawDB.Close()
+	if err != nil {
+		t.Fatalf("insert shadow row: %v", err)
+	}
+
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "deep-engine"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "shadow-audit-abc12345") {
+		t.Errorf("audit(mode=stale) should surface shadow domain row; got:\n%s", body)
+	}
+	if !strings.Contains(body, "alias") {
+		t.Errorf("shadow drift reason should mention alias; got:\n%s", body)
+	}
+}
+
 // TestAudit_ModeOrphans_ReturnsDisconnected: mode=orphans must return
 // non-transient nodes with zero connections.
 

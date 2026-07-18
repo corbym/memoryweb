@@ -81,6 +81,17 @@ func TestAddAlias_SearchResolvesAlias(t *testing.T) {
 	}
 }
 
+func TestAlias_AddRejectedWhenLiveRowsExistUnderAliasName(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Existing row", "engine", nil)
+
+	tr := call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "live node") {
+		t.Errorf("expected live node guard error, got: %s", text(t, tr))
+	}
+}
+
 func TestResolveDomain_ReturnsCanonical(t *testing.T) {
 	_, h := newEnv(t)
 	call(t, h, "alias", map[string]any{"action": "add", "alias": "dg", "domain": "deep-game"})

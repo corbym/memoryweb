@@ -3,6 +3,8 @@ package db_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/corbym/memoryweb/db"
 )
 
 func TestAddAlias_AffectsSearch(t *testing.T) {
@@ -22,6 +24,131 @@ func TestAddAlias_AffectsSearch(t *testing.T) {
 	}
 	if !found {
 		t.Error("alias should resolve to canonical domain in search")
+	}
+}
+
+func TestAddNode_ResolvesAliasOnWrite(t *testing.T) {
+	s := newStore(t)
+	s.AddAlias("engine", "deep-engine")
+
+	n, err := s.AddNode("Engine write path", "desc", "why", "engine", nil, "", "")
+	if err != nil {
+		t.Fatalf("AddNode via alias: %v", err)
+	}
+	if n.Domain != "deep-engine" {
+		t.Errorf("AddNode stored domain %q, want canonical %q", n.Domain, "deep-engine")
+	}
+	count, err := s.CountNodes("deep-engine")
+	if err != nil {
+		t.Fatalf("CountNodes: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("canonical domain count: got %d, want 1", count)
+	}
+	got, err := s.GetNode(n.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got.Node.Domain != "deep-engine" {
+		t.Errorf("stored row domain %q, want %q", got.Node.Domain, "deep-engine")
+	}
+}
+
+func TestAddNodesBatch_ResolvesAliasOnWrite(t *testing.T) {
+	s := newStore(t)
+	s.AddAlias("engine", "deep-engine")
+
+	nodes, err := s.AddNodesBatch([]db.NodeInput{{
+		Label:  "Batch via alias",
+		Domain: "engine",
+	}})
+	if err != nil {
+		t.Fatalf("AddNodesBatch via alias: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].Domain != "deep-engine" {
+		t.Errorf("batch stored domain %q, want %q", nodes[0].Domain, "deep-engine")
+	}
+}
+
+func TestUpdateNode_ResolvesAliasOnWrite(t *testing.T) {
+	s := newStore(t)
+	s.AddAlias("target", "canonical-target")
+	n := mustAddNode(t, s, "Move me", "source-domain")
+
+	reason := "test move"
+	target := "target"
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, nil, &target, &reason)
+	if err != nil {
+		t.Fatalf("UpdateNode via alias: %v", err)
+	}
+	if updated.Domain != "canonical-target" {
+		t.Errorf("UpdateNode stored domain %q, want %q", updated.Domain, "canonical-target")
+	}
+}
+
+func TestUpdateNode_AliasMatchingCurrentDomain_IsNoOp(t *testing.T) {
+	s := newStore(t)
+	s.AddAlias("engine", "deep-engine")
+	n := mustAddNode(t, s, "Already canonical", "deep-engine")
+
+	aliasDomain := "engine"
+	updated, err := s.UpdateNode(n.ID, nil, nil, nil, nil, nil, nil, &aliasDomain, nil)
+	if err != nil {
+		t.Fatalf("UpdateNode with alias matching current domain: %v", err)
+	}
+	if updated.Domain != "deep-engine" {
+		t.Errorf("domain: got %q, want %q", updated.Domain, "deep-engine")
+	}
+}
+
+func TestUpdateNodesBatch_ResolvesAliasOnWrite(t *testing.T) {
+	s := newStore(t)
+	s.AddAlias("target", "canonical-target")
+	n := mustAddNode(t, s, "Batch move", "source-domain")
+
+	reason := "batch move"
+	target := "target"
+	nodes, err := s.UpdateNodesBatch([]db.NodeUpdateInput{{
+		ID:     n.ID,
+		Domain: &target,
+		Reason: &reason,
+	}})
+	if err != nil {
+		t.Fatalf("UpdateNodesBatch via alias: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].Domain != "canonical-target" {
+		t.Errorf("batch stored domain %q, want %q", nodes[0].Domain, "canonical-target")
+	}
+}
+
+func TestUpdateNodesBatch_AliasMatchingCurrentDomain_IsNoOp(t *testing.T) {
+	s := newStore(t)
+	s.AddAlias("engine", "deep-engine")
+	n := mustAddNode(t, s, "Batch canonical", "deep-engine")
+
+	aliasDomain := "engine"
+	nodes, err := s.UpdateNodesBatch([]db.NodeUpdateInput{{
+		ID:     n.ID,
+		Domain: &aliasDomain,
+	}})
+	if err != nil {
+		t.Fatalf("UpdateNodesBatch with alias matching current domain: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].Domain != "deep-engine" {
+		t.Errorf("domain: got %q, want %q", nodes[0].Domain, "deep-engine")
+	}
+}
+
+func TestAddAlias_RejectsWhenLiveRowsExistUnderAliasName(t *testing.T) {
+	s := newStore(t)
+	mustAddNode(t, s, "Existing row", "engine")
+
+	err := s.AddAlias("engine", "deep-engine")
+	if err == nil {
+		t.Fatal("expected error when alias name already has live nodes")
+	}
+	if !strings.Contains(err.Error(), "live node") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

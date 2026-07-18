@@ -76,8 +76,17 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 			}
 		}
 	}
-	if a.Domain != nil && (a.Reason == nil || strings.TrimSpace(*a.Reason) == "") {
-		return errorResult("reason is required when changing domain — confirm the target domain with the user before moving"), nil
+	if a.Domain != nil {
+		existing, err := h.store.GetNode(a.ID)
+		if err != nil {
+			return nil, err
+		}
+		resolved := h.store.ResolveAlias(*a.Domain)
+		if resolved == existing.Node.Domain {
+			a.Domain = nil
+		} else if a.Reason == nil || strings.TrimSpace(*a.Reason) == "" {
+			return errorResult("reason is required when changing domain — confirm the target domain with the user before moving"), nil
+		}
 	}
 	// backcompat: transient=true maps to node_kind=transient
 	if a.Transient != nil && a.NodeKind == nil {
@@ -152,8 +161,17 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 				}
 			}
 		}
-		if u.Domain != nil && (u.Reason == nil || strings.TrimSpace(*u.Reason) == "") {
-			return errorResult(fmt.Sprintf("update %d: reason is required when changing domain", i)), nil
+		if u.Domain != nil {
+			existing, err := h.store.GetNode(u.ID)
+			if err != nil {
+				return nil, fmt.Errorf("update %d: %w", i, err)
+			}
+			resolved := h.store.ResolveAlias(*u.Domain)
+			if resolved == existing.Node.Domain {
+				u.Domain = nil
+			} else if u.Reason == nil || strings.TrimSpace(*u.Reason) == "" {
+				return errorResult(fmt.Sprintf("update %d: reason is required when changing domain", i)), nil
+			}
 		}
 		// backcompat: transient bool maps to node_kind
 		nodeKind := u.NodeKind
