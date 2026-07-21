@@ -233,13 +233,13 @@ complete.
 |---|---|
 | `recent` | `{nodes, results_truncated}` or `{groups, results_truncated}` when `group_by_domain=true` |
 | `history` | `{nodes, results_truncated}` |
-| `audit(mode=stale)` | `{candidates, results_truncated}` |
+| `audit(mode=stale)` | `{candidates, results_truncated}` — empty is `{candidates: [], results_truncated: false}` |
 | `audit(mode=orphans)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}` |
-| `audit(mode=archived)` | `{nodes, results_truncated}` — **default cap 25**; raise `limit` to enumerate |
-| `audit(mode=conflicts)` | `{candidates, results_truncated}` |
-| `significance` | section booleans: `declared_results_truncated`, `structural_results_truncated`, `uncurated_results_truncated`, `potentially_stale_results_truncated` |
+| `audit(mode=archived)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}`; **default cap 25**; raise `limit` to enumerate |
+| `audit(mode=conflicts)` | `{candidates, results_truncated}` — empty is `{candidates: [], results_truncated: false}` |
+| `significance` | section booleans: `declared_results_truncated`, `structural_results_truncated`, `uncurated_results_truncated`, `potentially_stale_results_truncated`; `call_id` is opaque analytics metadata — ignore |
 | `orient(domain=X)` | `significant_results_truncated`, `recent_results_truncated`, `declared_spine_results_truncated`, `rules_results_truncated` |
-| `orient()` (no domain) | `{domains, results_truncated}` on cross-domain snapshot |
+| `orient()` (no domain) | `{domains, results_truncated}` — each domain entry has `recent_results_truncated`; pass `limit` to raise per-domain recent cap (default 5) |
 
 Per-node excerpt truncation uses `truncated` on lean entries — distinct from
 list-level `results_truncated`.

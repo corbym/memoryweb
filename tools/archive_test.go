@@ -1393,11 +1393,81 @@ func TestAudit_Orphans_EmptyReturnsWrapper(t *testing.T) {
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse orphans empty: %v\nbody: %s", err, text(t, tr))
 	}
+	if resp.Nodes == nil {
+		t.Fatal("expected nodes array, got null")
+	}
 	if len(resp.Nodes) != 0 {
 		t.Errorf("expected empty nodes array, got %d", len(resp.Nodes))
 	}
 	if resp.ResultsTruncated {
 		t.Error("results_truncated should be false for empty orphans result")
+	}
+}
+
+func TestAudit_Archived_EmptyReturnsWrapper(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "archived-empty"
+	addNode(t, h, "Live only", domain, nil)
+
+	tr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": domain})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if strings.Contains(body, `"nodes": null`) {
+		t.Fatalf("empty archived must not return nodes:null; got:\n%s", body)
+	}
+	var resp struct {
+		Nodes            []any `json:"nodes"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("parse archived empty: %v\nbody: %s", err, body)
+	}
+	if len(resp.Nodes) != 0 {
+		t.Errorf("expected empty nodes array, got %d", len(resp.Nodes))
+	}
+	if resp.ResultsTruncated {
+		t.Error("results_truncated should be false for empty archived result")
+	}
+}
+
+func TestAudit_Archived_DefaultLimit25(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "archived-default-cap"
+	for i := 0; i < 26; i++ {
+		id := addNode(t, h, fmt.Sprintf("Archive default %d", i), domain, nil)
+		mustNotError(t, call(t, h, "forget", map[string]any{"id": id, "reason": "cap test"}))
+	}
+
+	trDefault := call(t, h, "audit", map[string]any{"mode": "archived", "domain": domain})
+	mustNotError(t, trDefault)
+	var def struct {
+		Nodes            []any `json:"nodes"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, trDefault)), &def); err != nil {
+		t.Fatalf("parse default archived: %v", err)
+	}
+	if len(def.Nodes) != 25 {
+		t.Errorf("default archived cap should return 25 nodes, got %d", len(def.Nodes))
+	}
+	if !def.ResultsTruncated {
+		t.Error("results_truncated should be true when 26 archived and default limit 25")
+	}
+
+	trAll := call(t, h, "audit", map[string]any{"mode": "archived", "domain": domain, "limit": 500})
+	mustNotError(t, trAll)
+	var all struct {
+		Nodes            []any `json:"nodes"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, trAll)), &all); err != nil {
+		t.Fatalf("parse raised archived: %v", err)
+	}
+	if len(all.Nodes) != 26 {
+		t.Errorf("limit 500 should return all 26 archived nodes, got %d", len(all.Nodes))
+	}
+	if all.ResultsTruncated {
+		t.Error("results_truncated should be false when limit covers all archived nodes")
 	}
 }
 

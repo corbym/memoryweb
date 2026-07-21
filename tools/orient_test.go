@@ -1057,8 +1057,9 @@ func TestOrient_NoDomain_ReturnsCrossDomainSnapshot(t *testing.T) {
 	var resp struct {
 		Mode    string `json:"mode"`
 		Domains []struct {
-			Domain string        `json:"domain"`
-			Recent []interface{} `json:"recent"`
+			Domain                 string        `json:"domain"`
+			Recent                 []interface{} `json:"recent"`
+			RecentResultsTruncated bool          `json:"recent_results_truncated"`
 		} `json:"domains"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {

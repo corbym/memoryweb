@@ -165,14 +165,14 @@ func TestFindConnections_ReturnsBidirectionalEdge(t *testing.T) {
 	}
 }
 
-func TestFindConnections_NoMatchReturnsNilNodes(t *testing.T) {
+func TestFindConnections_NoMatchErrors(t *testing.T) {
 	s := newStore(t)
-	res, err := s.FindConnections("ghost-a", "ghost-b", "")
-	if err != nil {
-		t.Fatalf("FindConnections: %v", err)
+	_, err := s.FindConnections("ghost-a", "ghost-b", "")
+	if err == nil {
+		t.Fatal("expected error when labels do not match")
 	}
-	if res.From != nil || res.To != nil {
-		t.Error("no match should give nil From/To")
+	if !strings.Contains(err.Error(), "ghost-a") && !strings.Contains(err.Error(), "ghost-b") {
+		t.Errorf("error should name unmatched label; got: %v", err)
 	}
 }
 
@@ -183,12 +183,12 @@ func TestFindConnections_ArchivedNodeNotMatched(t *testing.T) {
 	s.ArchiveNode(archived.ID, "reason")
 	s.AddEdge(n.ID, archived.ID, "connects_to", "link")
 
-	res, err := s.FindConnections("Visible node", "Archived node", "proj")
-	if err != nil {
-		t.Fatalf("FindConnections: %v", err)
+	_, err := s.FindConnections("Visible node", "Archived node", "proj")
+	if err == nil {
+		t.Fatal("archived node should not be matched by FindConnections")
 	}
-	if res.To != nil {
-		t.Error("archived node should not be matched by FindConnections")
+	if !strings.Contains(err.Error(), "Archived node") {
+		t.Errorf("error should name unmatched archived label; got: %v", err)
 	}
 }
 

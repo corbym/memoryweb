@@ -67,6 +67,15 @@ func (h *Handler) listArchived(a auditArgs) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(nodes) == 0 {
+		var nodesField interface{} = []db.Node{}
+		if a.Digest {
+			nodesField = []string{}
+		}
+		out := auditArchivedResult{Nodes: nodesField, ResultsTruncated: false}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	}
 	resultsTruncated := len(nodes) > a.Limit
 	if resultsTruncated {
 		nodes = nodes[:a.Limit]
@@ -177,6 +186,11 @@ func (h *Handler) findConflictCandidates(a auditArgs) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(candidates) == 0 {
+		out := ConflictCandidatesResult{Candidates: []db.ConflictCandidate{}, ResultsTruncated: false}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	}
 
 	truncated := len(candidates) > a.Limit
 	if truncated {
@@ -207,6 +221,16 @@ func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 	candidates, err := h.store.FindDrift(a.Domain, a.Limit+1, tags, nodeKinds, a.MemoryID, a.Depth)
 	if err != nil {
 		return nil, err
+	}
+	if len(candidates) == 0 {
+		if a.Digest {
+			out := auditStaleDigestResult{Lines: []string{}, ResultsTruncated: false}
+			b, _ := json.MarshalIndent(out, "", "  ")
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		}
+		out := auditStaleResult{Candidates: []db.DriftCandidate{}, ResultsTruncated: false}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 	resultsTruncated := len(candidates) > a.Limit
 	if resultsTruncated {

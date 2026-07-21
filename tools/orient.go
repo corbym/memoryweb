@@ -28,7 +28,13 @@ func cappedNodes(nodes []db.Node, cap int) ([]db.Node, bool) {
 	return trimWithTruncation(nodes, cap)
 }
 
-func (h *Handler) orientCrossDomain() (*ToolResult, error) {
+func (h *Handler) orientCrossDomain(limit int) (*ToolResult, error) {
+	if limit <= 0 {
+		limit = orientRecentCap
+	}
+	if limit > 500 {
+		limit = 500
+	}
 	// Fetch a broad slice of recent nodes across all domains then group,
 	// reusing the same logic as recentChanges(group_by_domain=true).
 	all, err := h.store.RecentChanges("", 1000, nil)
@@ -42,19 +48,21 @@ func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 		UpdatedAt string `json:"updated_at"`
 	}
 	type domainEntry struct {
-		Domain string        `json:"domain"`
-		Recent []recentEntry `json:"recent"`
+		Domain                 string        `json:"domain"`
+		Recent                 []recentEntry `json:"recent"`
+		RecentResultsTruncated bool          `json:"recent_results_truncated"`
 	}
 
-	const perDomain = 5
 	grouped := make(map[string][]recentEntry)
+	domainTruncated := make(map[string]bool)
 	domainOrder := []string{}
 	resultsTruncated := false
 	for _, n := range all {
 		if _, seen := grouped[n.Domain]; !seen {
 			domainOrder = append(domainOrder, n.Domain)
 		}
-		if len(grouped[n.Domain]) >= perDomain {
+		if len(grouped[n.Domain]) >= limit {
+			domainTruncated[n.Domain] = true
 			resultsTruncated = true
 			continue
 		}
@@ -67,7 +75,11 @@ func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 
 	domains := make([]domainEntry, 0, len(domainOrder))
 	for _, d := range domainOrder {
-		domains = append(domains, domainEntry{Domain: d, Recent: grouped[d]})
+		domains = append(domains, domainEntry{
+			Domain:                 d,
+			Recent:                 grouped[d],
+			RecentResultsTruncated: domainTruncated[d],
+		})
 	}
 
 	resp := struct {
@@ -272,13 +284,14 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 
 func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	if argsEmpty(args) {
-		return h.orientCrossDomain()
+		return h.orientCrossDomain(0)
 	}
 	var a struct {
 		Domain  string   `json:"domain"`
 		Domains []string `json:"domains"`
 		Topic   string   `json:"topic"`
 		Digest  bool     `json:"digest"`
+		Limit   int      `json:"limit"`
 	}
 	if err := decodeParams(args, &a, "orient"); err != nil {
 		return nil, err
@@ -291,7 +304,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 
 	// No domain and no domains → cross-domain bootstrap.
 	if a.Domain == "" && len(a.Domains) == 0 {
-		return h.orientCrossDomain()
+		return h.orientCrossDomain(a.Limit)
 	}
 
 	// Mutual exclusion: domain + domains together is an error.

@@ -37,22 +37,29 @@ func TestFindConnections_ReturnsEdgeBetweenNodes(t *testing.T) {
 	}
 }
 
-func TestFindConnections_NoMatchReturnsNilNodes(t *testing.T) {
+func TestFindConnections_NoMatchErrors(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "why_connected", map[string]any{
 		"from_label": "nonexistent-thing-abc",
 		"to_label":   "another-nonexistent-xyz",
 	})
-	mustNotError(t, tr)
-
-	var result struct {
-		From  *map[string]any `json:"from"`
-		To    *map[string]any `json:"to"`
-		Edges []any           `json:"edges"`
+	mustError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "nonexistent-thing-abc") && !strings.Contains(body, "another-nonexistent-xyz") {
+		t.Errorf("error should name unmatched label; got: %s", body)
 	}
-	json.Unmarshal([]byte(text(t, tr)), &result)
-	if result.From != nil || result.To != nil {
-		t.Error("no-match result should have nil from/to nodes")
+}
+
+func TestWhyConnected_LabelMissInMixedModeErrors(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "Known source", "deep-game", nil)
+
+	tr := call(t, h, "why_connected", map[string]any{
+		"from_id": from, "to_label": "no-such-label-xyz", "domain": "deep-game",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "no-such-label-xyz") {
+		t.Errorf("mixed mode should error on unmatched to_label; got: %s", text(t, tr))
 	}
 }
 
@@ -148,21 +155,18 @@ func TestWhyConnected_IDDoesNotFallbackToLabel(t *testing.T) {
 
 func TestFindConnections_ArchivedNodeNotMatched(t *testing.T) {
 	store, h := newEnv(t)
-	id := addNode(t, h, "Invisible archived node", "deep-game", nil)
-	store.ArchiveNode(id, "test")
+	addNode(t, h, "Visible node", "deep-game", nil)
+	archived := addNode(t, h, "Archived node", "deep-game", nil)
+	store.ArchiveNode(archived, "test")
 
 	tr := call(t, h, "why_connected", map[string]any{
-		"from_label": "Invisible archived",
-		"to_label":   "something else",
+		"from_label": "Visible node",
+		"to_label":   "Archived node",
+		"domain":     "deep-game",
 	})
-	mustNotError(t, tr)
-
-	var result struct {
-		From *map[string]any `json:"from"`
-	}
-	json.Unmarshal([]byte(text(t, tr)), &result)
-	if result.From != nil {
-		t.Error("archived node should not be matched by find_connections")
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "Archived node") {
+		t.Errorf("archived label miss should error; got: %s", text(t, tr))
 	}
 }
 
@@ -357,12 +361,84 @@ func TestOrient_CrossDomain_ResultsTruncated(t *testing.T) {
 	mustNotError(t, tr)
 	var resp struct {
 		ResultsTruncated bool `json:"results_truncated"`
+		Domains          []struct {
+			Domain                 string `json:"domain"`
+			RecentResultsTruncated bool   `json:"recent_results_truncated"`
+		} `json:"domains"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse cross-domain orient: %v", err)
 	}
 	if !resp.ResultsTruncated {
 		t.Error("results_truncated should be true when a domain has more than 5 recent updates")
+	}
+	found := false
+	for _, d := range resp.Domains {
+		if d.Domain == domain && d.RecentResultsTruncated {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("domain %q should have recent_results_truncated=true", domain)
+	}
+}
+
+func TestOrient_CrossDomain_LimitRaisesPerDomainCap(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "orient-cross-limit"
+	for i := 0; i < 8; i++ {
+		addNode(t, h, fmt.Sprintf("Limit node %d", i), domain, nil)
+	}
+
+	trLow := call(t, h, "orient", map[string]any{"limit": 3})
+	mustNotError(t, trLow)
+	var low struct {
+		ResultsTruncated bool `json:"results_truncated"`
+		Domains          []struct {
+			Domain                 string            `json:"domain"`
+			Recent                 []json.RawMessage `json:"recent"`
+			RecentResultsTruncated bool              `json:"recent_results_truncated"`
+		} `json:"domains"`
+	}
+	if err := json.Unmarshal([]byte(text(t, trLow)), &low); err != nil {
+		t.Fatalf("parse low limit orient: %v", err)
+	}
+	if !low.ResultsTruncated {
+		t.Fatal("limit 3: expected top-level results_truncated true")
+	}
+
+	trHigh := call(t, h, "orient", map[string]any{"limit": 10})
+	mustNotError(t, trHigh)
+	var high struct {
+		ResultsTruncated bool `json:"results_truncated"`
+		Domains          []struct {
+			Domain                 string            `json:"domain"`
+			Recent                 []json.RawMessage `json:"recent"`
+			RecentResultsTruncated bool              `json:"recent_results_truncated"`
+		} `json:"domains"`
+	}
+	if err := json.Unmarshal([]byte(text(t, trHigh)), &high); err != nil {
+		t.Fatalf("parse high limit orient: %v", err)
+	}
+	var lowCount, highCount int
+	for _, d := range low.Domains {
+		if d.Domain == domain {
+			lowCount = len(d.Recent)
+		}
+	}
+	for _, d := range high.Domains {
+		if d.Domain == domain {
+			highCount = len(d.Recent)
+			if d.RecentResultsTruncated {
+				t.Errorf("limit 10 should cover 8 nodes without per-domain truncation")
+			}
+		}
+	}
+	if highCount <= lowCount {
+		t.Errorf("raising limit should return more recents per domain: low=%d high=%d", lowCount, highCount)
+	}
+	if high.ResultsTruncated {
+		t.Error("results_truncated should be false when limit covers all recents in domain")
 	}
 }
 

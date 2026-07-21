@@ -213,9 +213,6 @@ func (s *Store) FindConnectionsResolved(fromID, fromLabel, toID, toLabel, domain
 	if err != nil {
 		return nil, err
 	}
-	if from == nil || to == nil {
-		return &ConnectionResult{From: from, To: to, Edges: nil}, nil
-	}
 	return s.connectionResultBetween(from, to)
 }
 
@@ -228,9 +225,16 @@ func (s *Store) resolveConnectionEndpoint(id, label, domain string) (*Node, erro
 		return &nwe.Node, nil
 	}
 	if label != "" {
-		return s.bestMatch(label, domain)
+		n, err := s.bestMatch(label, domain)
+		if err != nil {
+			return nil, err
+		}
+		if n == nil {
+			return nil, fmt.Errorf("no live memory matched label %q", label)
+		}
+		return n, nil
 	}
-	return nil, nil
+	return nil, fmt.Errorf("id or label is required")
 }
 
 func (s *Store) connectionResultBetween(from, to *Node) (*ConnectionResult, error) {
