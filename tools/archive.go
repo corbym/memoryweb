@@ -136,8 +136,10 @@ func (h *Handler) auditTool(args json.RawMessage) (*ToolResult, error) {
 		return h.listArchived(a)
 	case "conflicts":
 		return h.findConflictCandidates(a)
+	case "kind_coverage":
+		return h.findKindCoverage(a)
 	default:
-		return errorResult(fmt.Sprintf("unknown audit mode %q — use stale, orphans, archived, or conflicts", a.Mode)), nil
+		return errorResult(fmt.Sprintf("unknown audit mode %q — use stale, orphans, archived, conflicts, or kind_coverage", a.Mode)), nil
 	}
 }
 
@@ -281,5 +283,22 @@ func (h *Handler) findDisconnected(a auditArgs) (*ToolResult, error) {
 	}
 	out := auditOrphansResult{Nodes: nodes, ResultsTruncated: resultsTruncated}
 	b, _ := json.MarshalIndent(out, "", "  ")
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
+func (h *Handler) findKindCoverage(a auditArgs) (*ToolResult, error) {
+	if a.Limit <= 0 {
+		a.Limit = 50
+	}
+	if a.Limit > 500 {
+		a.Limit = 500
+	}
+	tags := splitTags(a.Tags)
+	nodeKinds := splitNodeKinds(a.NodeKind)
+	result, err := h.store.FindKindCoverage(a.Domain, a.Limit, tags, nodeKinds)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.MarshalIndent(result, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

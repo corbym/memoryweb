@@ -1,6 +1,6 @@
 # connect: add optional `verdict` field for `relationship=resolved`
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `story-connect-verdict-field-for-relationship-resolved-split-from-the-p0-enum-fix-as-non-blocking-follow-up-ac6ac252`
 

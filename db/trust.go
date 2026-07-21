@@ -50,14 +50,37 @@ type TrustResult struct {
 }
 
 type trustAccum struct {
-	node       Node
-	raw        float64
-	neighbours map[string]int // node_kind -> count, for trust_basis
+	node            Node
+	raw             float64
+	inbound         float64
+	highTierSupport bool
+	neighbours      map[string]int // node_kind -> count, for trust_basis
+}
+
+// TrustAssessment holds a per-node trust basis and low-trust predicate result.
+// Used by orient inline annotation and filing-time nudges — no normalised score.
+type TrustAssessment struct {
+	TrustBasis string `json:"trust_basis"`
+	IsLowTrust bool   `json:"is_low_trust"`
+}
+
+const defaultTrustRecencyWindow = 90
+
+func isHighTierKind(kind string) bool {
+	return intrinsicWeightOf(kind) >= 1.0
+}
+
+func isLowTrust(a *trustAccum) bool {
+	// No inbound edges yet — neighbourhood trust is undefined, not low.
+	if len(a.neighbours) == 0 {
+		return false
+	}
+	return a.inbound <= 0 || !a.highTierSupport
 }
 
 const trustSelectColumns = `n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
 	       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.node_kind,
-	       e.relationship, n2.node_kind,
+	       e.relationship, n2.node_kind, n2.id,
 	       (1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS decay`
 
 const trustJoins = `FROM nodes n
@@ -90,7 +113,7 @@ func (s *Store) GetTrust(domain string, limit, recencyWindowDays int, tags, node
 	      ` + trustJoins + `
 	      WHERE ` + strings.Join(conds, " AND ")
 
-	accum, order, err := s.scanTrustRows(q, args)
+	accum, order, err := s.scanTrustRows(q, args, nil)
 	if err != nil {
 		return TrustResult{}, fmt.Errorf("GetTrust: %w", err)
 	}
@@ -114,7 +137,7 @@ func (s *Store) getTrustByNodeIDs(nodeIDs []string, domain string, recencyWindow
 	      ` + trustJoins + `
 	      WHERE ` + strings.Join(conds, " AND ")
 
-	accum, order, err := s.scanTrustRows(q, args)
+	accum, order, err := s.scanTrustRows(q, args, nil)
 	if err != nil {
 		return TrustResult{}, fmt.Errorf("getTrustByNodeIDs: %w", err)
 	}
@@ -133,7 +156,9 @@ func (s *Store) GetTrustForMemoryID(nodeID string, depth int, recencyWindowDays 
 
 // scanTrustRows runs query and accumulates one trustAccum per target node,
 // summing the weighted contribution of every qualifying inbound edge.
-func (s *Store) scanTrustRows(query string, args []interface{}) (map[string]*trustAccum, []string, error) {
+// excludeInboundFrom skips inbound edges whose from-node is in the set (used when
+// assessing dependency trust so the filing/revising node does not inflate its deps).
+func (s *Store) scanTrustRows(query string, args []interface{}, excludeInboundFrom map[string]struct{}) (map[string]*trustAccum, []string, error) {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, nil, err
@@ -147,12 +172,12 @@ func (s *Store) scanTrustRows(query string, args []interface{}) (map[string]*tru
 		var desc, why, tagsCol sql.NullString
 		var occurredAt, archivedAt sql.NullTime
 		var nodeKind string
-		var relationship, neighbourKind sql.NullString
+		var relationship, neighbourKind, neighbourID sql.NullString
 		var decay sql.NullFloat64
 		if err := rows.Scan(
 			&n.ID, &n.Label, &desc, &why, &tagsCol, &n.Domain,
 			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
-			&relationship, &neighbourKind, &decay,
+			&relationship, &neighbourKind, &neighbourID, &decay,
 		); err != nil {
 			return nil, nil, fmt.Errorf("scan: %w", err)
 		}
@@ -165,12 +190,26 @@ func (s *Store) scanTrustRows(query string, args []interface{}) (map[string]*tru
 
 		a, ok := accum[n.ID]
 		if !ok {
-			a = &trustAccum{node: n, raw: intrinsicWeightOf(nodeKind), neighbours: map[string]int{}}
+			a = &trustAccum{
+				node:       n,
+				raw:        intrinsicWeightOf(nodeKind),
+				neighbours: map[string]int{},
+			}
 			accum[n.ID] = a
 			order = append(order, n.ID)
 		}
 		if relationship.Valid && neighbourKind.Valid && decay.Valid {
-			a.raw += edgeWeight(relationship.String) * intrinsicWeightOf(neighbourKind.String) * decay.Float64
+			if excludeInboundFrom != nil && neighbourID.Valid {
+				if _, skip := excludeInboundFrom[neighbourID.String]; skip {
+					continue
+				}
+			}
+			contrib := edgeWeight(relationship.String) * intrinsicWeightOf(neighbourKind.String) * decay.Float64
+			a.raw += contrib
+			a.inbound += contrib
+			if contrib > 0 && isHighTierKind(neighbourKind.String) {
+				a.highTierSupport = true
+			}
 			a.neighbours[neighbourKind.String]++
 		}
 	}
@@ -228,6 +267,50 @@ func (s *Store) finishTrust(accum map[string]*trustAccum, order []string, domain
 	}
 
 	return TrustResult{Nodes: nodes, CallID: callID}, nil
+}
+
+// AssessTrustForNodeIDs computes trust basis and the low-trust predicate for each
+// node ID without normalising scores or writing significance_log rows.
+// excludeInboundFrom omits inbound edges from those node IDs (typically the node
+// being filed or revised, so its depends_on link does not mask low-trust deps).
+func (s *Store) AssessTrustForNodeIDs(nodeIDs []string, recencyWindowDays int, excludeInboundFrom ...string) (map[string]TrustAssessment, error) {
+	if recencyWindowDays <= 0 {
+		recencyWindowDays = defaultTrustRecencyWindow
+	}
+	result := map[string]TrustAssessment{}
+	if len(nodeIDs) == 0 {
+		return result, nil
+	}
+	var exclude map[string]struct{}
+	if len(excludeInboundFrom) > 0 {
+		exclude = make(map[string]struct{}, len(excludeInboundFrom))
+		for _, id := range excludeInboundFrom {
+			if id != "" {
+				exclude[id] = struct{}{}
+			}
+		}
+	}
+	ph, idArgs := inClause(nodeIDs)
+	conds := []string{"n.id IN (" + ph + ")", "n.archived_at IS NULL", "n.node_kind NOT IN ('reference', 'transient')"}
+	args := append([]interface{}{recencyWindowDays}, idArgs...)
+	q := `SELECT ` + trustSelectColumns + `
+	      ` + trustJoins + `
+	      WHERE ` + strings.Join(conds, " AND ")
+	accum, _, err := s.scanTrustRows(q, args, exclude)
+	if err != nil {
+		return nil, fmt.Errorf("AssessTrustForNodeIDs: %w", err)
+	}
+	for _, id := range nodeIDs {
+		a, ok := accum[id]
+		if !ok {
+			continue
+		}
+		result[id] = TrustAssessment{
+			TrustBasis: formatTrustBasis(a.node.NodeKind, a.neighbours),
+			IsLowTrust: isLowTrust(a),
+		}
+	}
+	return result, nil
 }
 
 // formatTrustBasis builds a human-readable audit trail: the node's own kind,

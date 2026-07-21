@@ -275,6 +275,10 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 				ImportanceScore: sn.ImportanceScore,
 			}
 		}
+		sigEntries, err = h.annotateSignificantTrust(sigEntries)
+		if err != nil {
+			return orientDomainEntry{}, err
+		}
 		entry.Significant = digestScoredSection(sigEntries, digest)
 		entry.SignificantResultsTruncated = sigResult.StructuralResultsTruncated
 	}
@@ -382,6 +386,10 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 			leanEntry:       toLeanEntry(sn.Node),
 			ImportanceScore: sn.ImportanceScore,
 		}
+	}
+	sigEntries, err = h.annotateSignificantTrust(sigEntries)
+	if err != nil {
+		return nil, err
 	}
 	rulesEntries := toLeanEntries(rulesNodes)
 

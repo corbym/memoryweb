@@ -64,11 +64,13 @@ because agents never reach them.
    search, not exact ID, and can silently pick the wrong node) — both remain
    useful for their own purpose (chain narration, fuzzy concept lookup), just
    not as contradiction-pair proof when IDs are known.
-   Once verified, call `connect(relationship=resolved)` (or `resolved_by` /
-   `supersedes` — whichever fits *is* the verdict; memoryweb's `connect` has
-   no separate `verdict` field). Additive — the original `contradicts` edge
-   stays on the record, and the pair stops surfacing in `audit(mode=stale)`
-   automatically.
+   Once verified, call `connect(relationship=resolved, verdict=...)` (or
+   `resolved_by` / `supersedes` as the relationship type). On `resolved`,
+   optional `verdict` (`false_positive`, `reconciled`, `supersedes`)
+   classifies *how* the pair was adjudicated — stored on the edge and
+   returned by `recall`/`why_connected`. Additive — the original
+   `contradicts` edge stays on the record, and the pair stops surfacing in
+   `audit(mode=stale)` automatically.
 8. Say nothing about any audit if all three come back clean. Only speak up for
    an unresolved orphan or a live contradiction still awaiting the user's
    call — no routine "orphans checked / stale checked / conflicts checked"
@@ -143,7 +145,7 @@ then the decision with a `depends_on`/`caused_by` connection pointing at it.
 | `contradicts` | A and B directly conflict |
 | `governed_by` | A must satisfy a standing rule or constraint B |
 | `is_example_of` | A illustrates B |
-| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair. **Verify the exact pair first** via `why_connected(from_id=..., to_id=...)` — preferred — or `recall(id)`'s `edges` array (Layer 1 step 7). Do not rely on `trace` or label-only `why_connected`. Additive; no separate `verdict` parameter — the type chosen *is* the verdict. |
+| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair. **Verify the exact pair first** via `why_connected(from_id=..., to_id=...)` — preferred — or `recall(id)`'s `edges` array (Layer 1 step 7). Do not rely on `trace` or label-only `why_connected`. Additive. On `relationship=resolved`, optional `verdict` (`false_positive`, `reconciled`, `supersedes`) classifies *how* the contradiction was adjudicated — stored on the edge and returned by `recall`/`why_connected`. |
 
 Custom relationship strings are accepted as a fallback; prefer a typed one
 from the table above.
@@ -211,7 +213,21 @@ Two different operations move memories between domains; don't confuse them:
 - `significance(mode=trust)` ranks memories by computed epistemic trust
   (from `node_kind` and connected relationship types). A `contradicts` edge
   lowers trust; resolving it lifts the penalty automatically. Only
-  meaningful if `node_kind` is filed honestly.
+  meaningful if `node_kind` is filed honestly. `orient(domain=X)`'s
+  `significant` section also annotates load-bearing low-trust nodes inline
+  (`trust: "low — …"`). `remember`/`revise` may return an advisory
+  `trust_nudge` when filing onto a low-trust dependency neighbourhood
+  (assessed before `related_to` edges are created on `remember`). On
+  `revise`, only when `label`, `description`, `why_matters`, or `node_kind`
+  change — not tags-only or domain-only updates. Batch `items` entries carry
+  the same optional fields per node. Creating a new domain may return
+  `possible_misdomain`, `suggested_domain`, and `suggested_memory_id` when
+  workspace KNN finds a closer existing domain — requires Ollama embeddings
+  and sqlite-vec; absent when embeddings are unavailable.
+- `audit(mode=kind_coverage)` returns per-kind counts, legacy
+  decision/standing dominance, and `migration_candidates` — decision nodes
+  whose text suggests a different `node_kind`. Candidate-surfacing only;
+  never auto-revise.
 
 ### Lean output — `recall(id)` before acting on content
 
@@ -237,8 +253,9 @@ complete.
 | `audit(mode=orphans)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}` |
 | `audit(mode=archived)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}`; **default cap 25**; raise `limit` to enumerate |
 | `audit(mode=conflicts)` | `{candidates, results_truncated}` — empty is `{candidates: [], results_truncated: false}` |
+| `audit(mode=kind_coverage)` | `{total_nodes, by_kind, legacy_dominant_pct, migration_candidates, results_truncated}` |
 | `significance` | section booleans: `declared_results_truncated`, `structural_results_truncated`, `uncurated_results_truncated`, `potentially_stale_results_truncated`; `call_id` is opaque analytics metadata — ignore |
-| `orient(domain=X)` | `significant_results_truncated`, `recent_results_truncated`, `declared_spine_results_truncated`, `rules_results_truncated` |
+| `orient(domain=X)` | `significant_results_truncated`, `recent_results_truncated`, `declared_spine_results_truncated`, `rules_results_truncated`; low-trust nodes in `significant` carry optional `trust` |
 | `orient()` (no domain) | `{domains, results_truncated}` — each domain entry has `recent_results_truncated`; pass `limit` to raise per-domain recent cap (default 5) |
 
 Per-node excerpt truncation uses `truncated` on lean entries — distinct from
@@ -277,12 +294,12 @@ than assuming this document is still accurate.
 | `suggest_connections(id)` | Candidates to wire up after filing |
 | `connect(...)` | Wire memories together; adjudicate contradictions via `relationship=resolved` (verify the pair via `why_connected(from_id, to_id)` first) |
 | `disconnect(id)` | Hard-delete an edge by edge ID — irreversible |
-| `remember(...)` | File a new memory |
-| `revise(id, ...)` | Update an existing memory; also handles single-node domain moves |
+| `remember(...)` | File a new memory; may return `trust_nudge`, `possible_misdomain`/`suggested_domain`/`suggested_memory_id` on new-domain creation (KNN requires embeddings) |
+| `revise(id, ...)` | Update an existing memory; optional `trust_nudge` on content-changing updates; also handles single-node domain moves |
 | `rename_domain(old, new)` | Rename an entire domain in place |
 | `forget(id, reason)` / `forget_all(items=[...])` | Archive — confirmation required |
 | `restore(id)` | Un-archive |
-| `audit(mode=...)` | `stale` / `orphans` / `archived` / `conflicts` |
+| `audit(mode=...)` | `stale` / `orphans` / `archived` / `conflicts` / `kind_coverage` |
 | `visualise(domain=X)` / `visualise(memory_id=X)` | Mermaid graph, human inspection only |
 | `trace(from_id, to_id)` | Shortest multi-hop chain — narration, not pair verification |
 | `why_connected(from_id, to_id)` | Direct edges between exact IDs — preferred pair verification |

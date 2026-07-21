@@ -953,3 +953,43 @@ func TestFindDrift_ShadowDomainRowsSurvivesLimit(t *testing.T) {
 		t.Errorf("shadow row should survive limit=5 (rule 2 runs before superseded labels); got %d candidates", len(candidates))
 	}
 }
+
+func TestFindKindCoverage_ResultsTruncated(t *testing.T) {
+	s := newStore(t)
+	domain := "kind-cov-trunc"
+	for i := 0; i < 3; i++ {
+		mustAddNode(t, s, "We found that pattern alpha", domain)
+	}
+	result, err := s.FindKindCoverage(domain, 1, nil, nil)
+	if err != nil {
+		t.Fatalf("FindKindCoverage: %v", err)
+	}
+	if len(result.MigrationCandidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(result.MigrationCandidates))
+	}
+	if !result.ResultsTruncated {
+		t.Error("expected results_truncated=true when more migration candidates exist")
+	}
+}
+
+func TestFindKindCoverage_WhyMattersPattern(t *testing.T) {
+	s := newStore(t)
+	domain := "kind-cov-why"
+	n, err := s.AddNode("plain label", "", "We verified the behaviour in staging", domain, nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	result, err := s.FindKindCoverage(domain, 10, nil, nil)
+	if err != nil {
+		t.Fatalf("FindKindCoverage: %v", err)
+	}
+	found := false
+	for _, c := range result.MigrationCandidates {
+		if c.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected migration candidate when why_matters matches finding pattern")
+	}
+}

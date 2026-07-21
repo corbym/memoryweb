@@ -8,6 +8,27 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
+var connectVerdictValues = []string{"false_positive", "reconciled", "superseded"}
+
+func validateConnectVerdict(verdict string) error {
+	if verdict == "" {
+		return nil
+	}
+	for _, v := range connectVerdictValues {
+		if verdict == v {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid verdict %q — must be one of: %s", verdict, strings.Join(connectVerdictValues, ", "))
+}
+
+func connectVerdictForRelationship(relationship, verdict string) string {
+	if relationship == "resolved" {
+		return verdict
+	}
+	return ""
+}
+
 func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
 	return dispatchBatch(args, "connect", h.addEdgeSingle, h.addEdgesBatch)
 }
@@ -23,6 +44,7 @@ func (h *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
 		ToMemory     string `json:"to_memory"`
 		Relationship string `json:"relationship"`
 		Narrative    string `json:"narrative"`
+		Verdict      string `json:"verdict"`
 	}
 	if err := decodeParams(args, &a, "connect"); err != nil {
 		return nil, err
@@ -33,7 +55,10 @@ func (h *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
 	}); err != nil {
 		return nil, err
 	}
-	edge, err := h.store.AddEdge(a.FromMemory, a.ToMemory, a.Relationship, a.Narrative)
+	if err := validateConnectVerdict(a.Verdict); err != nil {
+		return errorResult(err.Error()), nil
+	}
+	edge, err := h.store.AddEdge(a.FromMemory, a.ToMemory, a.Relationship, a.Narrative, connectVerdictForRelationship(a.Relationship, a.Verdict))
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +98,7 @@ func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 		ToMemory     string `json:"to_memory"`
 		Relationship string `json:"relationship"`
 		Narrative    string `json:"narrative"`
+		Verdict      string `json:"verdict"`
 	}
 	var rawItems []json.RawMessage
 	if err := json.Unmarshal(items, &rawItems); err != nil {
@@ -89,11 +115,15 @@ func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	}
 	inputs := make([]db.EdgeInput, len(edgeList))
 	for i, e := range edgeList {
+		if err := validateConnectVerdict(e.Verdict); err != nil {
+			return errorResult(fmt.Sprintf("item %d: %s", i, err.Error())), nil
+		}
 		inputs[i] = db.EdgeInput{
 			FromNode:     e.FromMemory,
 			ToNode:       e.ToMemory,
 			Relationship: e.Relationship,
 			Narrative:    e.Narrative,
+			Verdict:      connectVerdictForRelationship(e.Relationship, e.Verdict),
 		}
 	}
 	edges, err := h.store.AddEdgesBatch(inputs)
@@ -118,12 +148,12 @@ func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 	if a.Limit <= 0 {
 		a.Limit = 5
 	}
-	if a.Limit > 500 {
-		a.Limit = 500
-	}
 	suggestions, err := h.store.SuggestEdges(a.ID, a.Limit)
 	if err != nil {
 		return nil, err
+	}
+	if suggestions == nil {
+		suggestions = []db.EdgeSuggestion{}
 	}
 	b, _ := json.MarshalIndent(suggestions, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -140,7 +170,7 @@ func (h *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
 		return nil, fmt.Errorf("id is required")
 	}
 	if err := h.store.DeleteEdge(a.ID); err != nil {
-		return nil, err
+		return errorResult(err.Error()), nil
 	}
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Connection %q removed.", a.ID)}}}, nil
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Edge %q removed.", a.ID)}}}, nil
 }

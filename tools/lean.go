@@ -98,6 +98,7 @@ func toLeanEntries(nodes []db.Node) []leanEntry {
 type scoredLeanEntry struct {
 	leanEntry
 	ImportanceScore float64 `json:"importance_score"`
+	Trust           string  `json:"trust,omitempty"`
 }
 
 // leanSignificanceResult mirrors db.SignificanceResult with lean node entries —
@@ -192,7 +193,11 @@ func digestLinesFromEntries(entries []leanEntry) []string {
 }
 
 func digestLineFromScored(e scoredLeanEntry) string {
-	return fmt.Sprintf("%s (score: %.2f)", digestLineFromEntry(e.leanEntry), e.ImportanceScore)
+	line := fmt.Sprintf("%s (score: %.2f)", digestLineFromEntry(e.leanEntry), e.ImportanceScore)
+	if e.Trust != "" {
+		line += fmt.Sprintf(" (trust: %s)", sanitiseDigestField(e.Trust))
+	}
+	return line
 }
 
 func digestLineFromSearchNode(n leanSearchNode) string {

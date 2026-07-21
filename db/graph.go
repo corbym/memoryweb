@@ -134,7 +134,7 @@ func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) 
 	args := append(phArgs, phArgs...)
 
 	rows, err := s.db.Query(
-		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
+		`SELECT `+edgeSelectColumns+` FROM edges
 		 WHERE from_node IN (`+ph+`) OR to_node IN (`+ph+`)`,
 		args...,
 	)
@@ -145,8 +145,8 @@ func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) 
 
 	var edges []Edge
 	for rows.Next() {
-		var e Edge
-		if err := rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+		e, err := scanEdge(rows)
+		if err != nil {
 			return nil, err
 		}
 		edges = append(edges, e)
@@ -239,7 +239,7 @@ func (s *Store) resolveConnectionEndpoint(id, label, domain string) (*Node, erro
 
 func (s *Store) connectionResultBetween(from, to *Node) (*ConnectionResult, error) {
 	rows, err := s.db.Query(
-		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
+		`SELECT `+edgeSelectColumns+` FROM edges
 		 WHERE (from_node = ? AND to_node = ?) OR (from_node = ? AND to_node = ?)`,
 		from.ID, to.ID, to.ID, from.ID,
 	)
@@ -250,8 +250,8 @@ func (s *Store) connectionResultBetween(from, to *Node) (*ConnectionResult, erro
 
 	var edges []Edge
 	for rows.Next() {
-		var e Edge
-		if err := rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+		e, err := scanEdge(rows)
+		if err != nil {
 			return nil, err
 		}
 		edges = append(edges, e)
@@ -341,7 +341,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 	ph2, nodePhArgs := inClause(mapSlice(nodes, func(n Node) string { return n.ID }))
 	edgeArgs := append(nodePhArgs, nodePhArgs...)
 	eRows, eErr := s.db.Query(
-		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges `+
+		`SELECT `+edgeSelectColumns+` FROM edges `+
 			`WHERE from_node IN (`+ph2+`) AND to_node IN (`+ph2+`)`,
 		edgeArgs...,
 	)
@@ -350,8 +350,8 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 		return
 	}
 	for eRows.Next() {
-		var e Edge
-		if eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt) == nil {
+		e, scanErr := scanEdge(eRows)
+		if scanErr == nil {
 			edges = append(edges, e)
 		}
 	}
@@ -769,14 +769,14 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 	// Fetch all edges where both endpoints are in the live neighbourhood set.
 	eArgs := append(nArgs, nArgs...)
 	edgeRows, err := s.db.Query(
-		`SELECT id, from_node, to_node, relationship, narrative, created_at
+		`SELECT `+edgeSelectColumns+`
 		 FROM edges WHERE from_node IN (`+ph+`) AND to_node IN (`+ph+`)`, eArgs...)
 	if err != nil {
 		return nil, nil, err
 	}
 	for edgeRows.Next() {
-		var e Edge
-		if scanErr := edgeRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); scanErr != nil {
+		e, scanErr := scanEdge(edgeRows)
+		if scanErr != nil {
 			edgeRows.Close()
 			return nil, nil, scanErr
 		}
@@ -853,4 +853,55 @@ func (s *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, er
 		ids = append(ids, id)
 	}
 	return ids, anchorDomain, nil
+}
+
+// MisdomainCandidate is the top workspace KNN match suggesting a different domain
+// for a newly-created domain's first memory.
+type MisdomainCandidate struct {
+	SuggestedDomain   string
+	SuggestedMemoryID string
+}
+
+// FindMisdomainCandidate runs workspace-wide KNN from nodeID's embedding with
+// only the similarity floor applied (no domain-affinity reranking). Returns nil
+// when no embedding exists, vec is unavailable, or no cross-domain match clears
+// the floor.
+func (s *Store) FindMisdomainCandidate(nodeID, requestedDomain string) (*MisdomainCandidate, error) {
+	if !s.vecAvailable {
+		return nil, nil
+	}
+	requestedDomain = s.ResolveAlias(requestedDomain)
+	var blob []byte
+	if err := s.db.QueryRow(`SELECT embedding FROM node_embeddings WHERE node_id = ?`, nodeID).Scan(&blob); err != nil {
+		return nil, nil
+	}
+	if len(blob) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`
+		SELECT n.id, n.domain, vec_distance_cosine(e.embedding, ?) AS dist
+		FROM node_embeddings e
+		JOIN nodes n ON n.id = e.node_id
+		WHERE n.id != ?
+		  AND n.archived_at IS NULL
+		ORDER BY dist ASC
+		LIMIT 20`, blob, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, domain string
+		var dist float64
+		if err := rows.Scan(&id, &domain, &dist); err != nil {
+			return nil, err
+		}
+		if dist > CandidateSimilarityFloor {
+			break
+		}
+		if domain != requestedDomain {
+			return &MisdomainCandidate{SuggestedDomain: domain, SuggestedMemoryID: id}, nil
+		}
+	}
+	return nil, rows.Err()
 }

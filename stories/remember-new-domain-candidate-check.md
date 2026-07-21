@@ -1,6 +1,6 @@
 # remember: filing-time candidate check on new-domain creation
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `extend-filing-time-candidate-check-story-145-148-to-fire-on-new-domain-creation-in-remember-a38efa36`
 

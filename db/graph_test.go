@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"hash/fnv"
@@ -321,5 +322,54 @@ func TestSuggestEdges_RealWordsStillMatch(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("node B (%s) sharing a real word should appear in suggestions", nB.ID)
+	}
+}
+
+func TestFindMisdomainCandidate_CrossDomainMatch(t *testing.T) {
+	s := newStore(t)
+	anchor, _ := s.AddNode("Anchor marker-mis-a content", "d", "w", "canonical-domain", nil, "", "decision")
+	newNode, _ := s.AddNode("New marker-mis-b content", "d", "w", "brand-new-domain", nil, "", "decision")
+
+	sharedVec := makeDenseVector(50)
+	withFakeEmbeddings(t, map[string][]float32{
+		"marker-mis-a": sharedVec,
+		"marker-mis-b": sharedVec,
+	})
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	candidate, err := s.FindMisdomainCandidate(newNode.ID, "brand-new-domain")
+	if err != nil {
+		t.Fatalf("FindMisdomainCandidate: %v", err)
+	}
+	if candidate == nil {
+		t.Fatal("expected cross-domain misdomain candidate")
+	}
+	if candidate.SuggestedDomain != "canonical-domain" {
+		t.Errorf("SuggestedDomain: got %q want canonical-domain", candidate.SuggestedDomain)
+	}
+	if candidate.SuggestedMemoryID != anchor.ID {
+		t.Errorf("SuggestedMemoryID: got %q want %s", candidate.SuggestedMemoryID, anchor.ID)
+	}
+}
+
+func TestLogDomainCreationFlagged_WritesAuditRow(t *testing.T) {
+	dbPath, s := newStoreAtPath(t)
+	n := mustAddNode(t, s, "new domain seed", "fresh-domain")
+	if err := s.LogDomainCreationFlagged(n.ID, n.Label, "suggested domain \"other\""); err != nil {
+		t.Fatalf("LogDomainCreationFlagged: %v", err)
+	}
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open rawDB: %v", err)
+	}
+	defer rawDB.Close()
+	var action string
+	if err := rawDB.QueryRow(`SELECT action FROM audit_log WHERE node_id = ?`, n.ID).Scan(&action); err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if action != "domain_creation_flagged" {
+		t.Errorf("action: got %q", action)
 	}
 }

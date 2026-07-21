@@ -7,12 +7,15 @@ import (
 	"time"
 )
 
+const edgeSelectColumns = `id, from_node, to_node, relationship, narrative, verdict, created_at`
+
 type Edge struct {
 	ID           string    `json:"id"`
 	FromNode     string    `json:"from_memory"`
 	ToNode       string    `json:"to_memory"`
 	Relationship string    `json:"relationship"`
 	Narrative    string    `json:"narrative"`
+	Verdict      string    `json:"verdict,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -22,9 +25,31 @@ type EdgeInput struct {
 	ToNode       string
 	Relationship string
 	Narrative    string
+	Verdict      string
 }
 
-func (s *Store) AddEdge(fromID, toID, relationship, narrative string) (*Edge, error) {
+func scanEdge(scanner interface {
+	Scan(dest ...any) error
+}) (Edge, error) {
+	var e Edge
+	var verdict sql.NullString
+	if err := scanner.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &verdict, &e.CreatedAt); err != nil {
+		return Edge{}, err
+	}
+	if verdict.Valid {
+		e.Verdict = verdict.String
+	}
+	return e, nil
+}
+
+func (s *Store) AddEdge(fromID, toID, relationship, narrative string, verdict ...string) (*Edge, error) {
+	v := ""
+	if len(verdict) > 0 {
+		v = verdict[0]
+	}
+	if relationship != "resolved" {
+		v = ""
+	}
 	// Look up from node and get its domain.
 	var fromDomain string
 	if err := s.db.QueryRow(`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, fromID).Scan(&fromDomain); err != nil {
@@ -47,15 +72,20 @@ func (s *Store) AddEdge(fromID, toID, relationship, narrative string) (*Edge, er
 	}
 	id := "edge-" + shortID()
 	now := time.Now().UTC()
+	var verdictVal interface{}
+	if v != "" {
+		verdictVal = v
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO edges (id, from_node, to_node, relationship, narrative, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		id, fromID, toID, relationship, narrative, now,
+		`INSERT INTO edges (id, from_node, to_node, relationship, narrative, verdict, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, fromID, toID, relationship, narrative, verdictVal, now,
 	)
 	if err != nil {
 		return nil, err
 	}
-	return &Edge{id, fromID, toID, relationship, narrative, now}, nil
+	edge := Edge{id, fromID, toID, relationship, narrative, v, now}
+	return &edge, nil
 }
 
 // AddEdgesBatch inserts all edges in a single transaction.
@@ -93,23 +123,24 @@ func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
 			}
 			return nil, fmt.Errorf("memory not found: %q — verify the ID with recall or search (filing domain was %q)", inp.ToNode, fromDomain)
 		}
+		verdict := inp.Verdict
+		if inp.Relationship != "resolved" {
+			verdict = ""
+		}
 		id := "edge-" + shortID()
+		var verdictVal interface{}
+		if verdict != "" {
+			verdictVal = verdict
+		}
 		if _, err := tx.Exec(
-			`INSERT INTO edges (id, from_node, to_node, relationship, narrative, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			id, inp.FromNode, inp.ToNode, inp.Relationship, inp.Narrative, now,
+			`INSERT INTO edges (id, from_node, to_node, relationship, narrative, verdict, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, inp.FromNode, inp.ToNode, inp.Relationship, inp.Narrative, verdictVal, now,
 		); err != nil {
 			tx.Rollback()
 			return nil, err
 		}
-		edges = append(edges, &Edge{
-			ID:           id,
-			FromNode:     inp.FromNode,
-			ToNode:       inp.ToNode,
-			Relationship: inp.Relationship,
-			Narrative:    inp.Narrative,
-			CreatedAt:    now,
-		})
+		edges = append(edges, &Edge{id, inp.FromNode, inp.ToNode, inp.Relationship, inp.Narrative, verdict, now})
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -117,9 +148,6 @@ func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
 	return edges, nil
 }
 
-// ── disconnect ────────────────────────────────────────────────────────────────
-
-// DeleteEdge hard-deletes an edge by ID. Returns an error if the edge does not exist.
 func (s *Store) DeleteEdge(id string) error {
 	res, err := s.db.Exec(`DELETE FROM edges WHERE id = ?`, id)
 	if err != nil {
@@ -139,7 +167,7 @@ func collectEdges(db *sql.DB, nodes []Node) []Edge {
 	}
 	nodeIDs := mapSlice(nodes, func(n Node) string { return n.ID })
 	ph, ids := inClause(nodeIDs)
-	edgeQ := "SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges WHERE from_node IN (" +
+	edgeQ := "SELECT " + edgeSelectColumns + " FROM edges WHERE from_node IN (" +
 		ph + ") AND to_node IN (" + ph + ")"
 	eRows, err := db.Query(edgeQ, append(ids, ids...)...)
 	if err != nil {
@@ -148,8 +176,8 @@ func collectEdges(db *sql.DB, nodes []Node) []Edge {
 	defer eRows.Close()
 	var edges []Edge
 	for eRows.Next() {
-		var e Edge
-		if err := eRows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+		e, err := scanEdge(eRows)
+		if err != nil {
 			log.Printf("[memoryweb] collectEdges scan: %v", err)
 			continue
 		}

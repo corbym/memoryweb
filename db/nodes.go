@@ -110,7 +110,7 @@ func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
 	n.ArchivedAt = nullTimeToPtr(aa)
 
 	rows, err := s.db.Query(
-		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
+		`SELECT `+edgeSelectColumns+` FROM edges
 		 WHERE from_node = ? OR to_node = ?`, id, id,
 	)
 	if err != nil {
@@ -120,8 +120,10 @@ func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
 
 	var edges []Edge
 	for rows.Next() {
-		var e Edge
-		rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
+		e, err := scanEdge(rows)
+		if err != nil {
+			return nil, err
+		}
 		edges = append(edges, e)
 	}
 
@@ -443,6 +445,16 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 	}
 
 	return nodes, nil
+}
+
+// LogDomainCreationFlagged records a domain_creation_flagged audit event when
+// remember() creates a new domain that KNN suggests may be mis-assigned.
+func (s *Store) LogDomainCreationFlagged(nodeID, nodeLabel, reason string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"auditlog-"+shortID(), "domain_creation_flagged", nodeID, nodeLabel, reason, time.Now().UTC(),
+	)
+	return err
 }
 
 // ── archive / restore ─────────────────────────────────────────────────────────

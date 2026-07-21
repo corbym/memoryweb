@@ -1,6 +1,6 @@
 # significance(mode=trust): inline low-trust annotation on orient's significant section
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `surfacing-vector-inline-trust-an-ebe05e3e`
 

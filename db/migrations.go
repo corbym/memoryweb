@@ -214,6 +214,14 @@ CREATE INDEX IF NOT EXISTS idx_significance_log_call_id ON significance_log(call
 			return err
 		},
 	},
+	{
+		version: 14,
+		desc:    "edges: add verdict TEXT column",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`ALTER TABLE edges ADD COLUMN verdict TEXT`)
+			return err
+		},
+	},
 }
 
 // migrate creates the schema_migrations tracking table (if needed) then applies

@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -53,6 +54,11 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	if a.ID == "" {
 		return nil, fmt.Errorf("id is required")
 	}
+	existingNwe, err := h.store.GetNode(a.ID)
+	if err != nil {
+		return nil, err
+	}
+	contentTouched := reviseContentTouched(existingNwe.Node, a.Label, a.Description, a.WhyMatters, a.NodeKind)
 	var occurredAt *time.Time
 	if a.OccurredAt != nil {
 		t, err := time.Parse(time.RFC3339, *a.OccurredAt)
@@ -66,23 +72,13 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	}
 	if occurredAt != nil {
 		callHasWhyMatters := a.WhyMatters != nil && *a.WhyMatters != ""
-		if !callHasWhyMatters {
-			existing, err := h.store.GetNode(a.ID)
-			if err != nil {
-				return nil, err
-			}
-			if existing.Node.WhyMatters == "" {
-				return nil, fmt.Errorf("occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.")
-			}
+		if !callHasWhyMatters && existingNwe.Node.WhyMatters == "" {
+			return nil, fmt.Errorf("occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.")
 		}
 	}
 	if a.Domain != nil {
-		existing, err := h.store.GetNode(a.ID)
-		if err != nil {
-			return nil, err
-		}
 		resolved := h.store.ResolveAlias(*a.Domain)
-		if resolved == existing.Node.Domain {
+		if resolved == existingNwe.Node.Domain {
 			a.Domain = nil
 		} else if a.Reason == nil || strings.TrimSpace(*a.Reason) == "" {
 			return errorResult("reason is required when changing domain — confirm the target domain with the user before moving"), nil
@@ -102,7 +98,25 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(node, "", "  ")
+	var trustNudge string
+	if contentTouched {
+		nwe, err := h.store.GetNode(a.ID)
+		if err != nil {
+			return nil, err
+		}
+		trustNudge, err = h.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, a.ID), a.ID)
+		if err != nil {
+			log.Printf("[memoryweb] trust nudge for %s: %v", a.ID, err)
+		}
+	}
+	resp := struct {
+		*db.Node
+		TrustNudge string `json:"trust_nudge,omitempty"`
+	}{
+		Node:       node,
+		TrustNudge: trustNudge,
+	}
+	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
@@ -134,10 +148,16 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	inputs := make([]db.NodeUpdateInput, len(updateList))
+	contentTouched := make([]bool, len(updateList))
 	for i, u := range updateList {
 		if u.ID == "" {
 			return nil, fmt.Errorf("update %d: id is required", i)
 		}
+		existingNwe, err := h.store.GetNode(u.ID)
+		if err != nil {
+			return nil, fmt.Errorf("update %d: %w", i, err)
+		}
+		contentTouched[i] = reviseContentTouched(existingNwe.Node, u.Label, u.Description, u.WhyMatters, u.NodeKind)
 		var occurredAt *time.Time
 		if u.OccurredAt != nil {
 			t, err := time.Parse(time.RFC3339, *u.OccurredAt)
@@ -151,23 +171,13 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		}
 		if occurredAt != nil {
 			callHasWhyMatters := u.WhyMatters != nil && *u.WhyMatters != ""
-			if !callHasWhyMatters {
-				existing, err := h.store.GetNode(u.ID)
-				if err != nil {
-					return nil, fmt.Errorf("update %d: %w", i, err)
-				}
-				if existing.Node.WhyMatters == "" {
-					return nil, fmt.Errorf("update %d: occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.", i)
-				}
+			if !callHasWhyMatters && existingNwe.Node.WhyMatters == "" {
+				return nil, fmt.Errorf("update %d: occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.", i)
 			}
 		}
 		if u.Domain != nil {
-			existing, err := h.store.GetNode(u.ID)
-			if err != nil {
-				return nil, fmt.Errorf("update %d: %w", i, err)
-			}
 			resolved := h.store.ResolveAlias(*u.Domain)
-			if resolved == existing.Node.Domain {
+			if resolved == existingNwe.Node.Domain {
 				u.Domain = nil
 			} else if u.Reason == nil || strings.TrimSpace(*u.Reason) == "" {
 				return errorResult(fmt.Sprintf("update %d: reason is required when changing domain", i)), nil
@@ -200,9 +210,30 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	type updatedEntry struct {
+		*db.Node
+		TrustNudge string `json:"trust_nudge,omitempty"`
+	}
+	updated := make([]updatedEntry, len(nodes))
+	for i, node := range nodes {
+		entry := updatedEntry{Node: node}
+		if contentTouched[i] {
+			nwe, err := h.store.GetNode(node.ID)
+			if err != nil {
+				return nil, err
+			}
+			nudge, err := h.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, node.ID), node.ID)
+			if err != nil {
+				log.Printf("[memoryweb] trust nudge for %s: %v", node.ID, err)
+			} else {
+				entry.TrustNudge = nudge
+			}
+		}
+		updated[i] = entry
+	}
 	resp := struct {
-		Updated []*db.Node `json:"updated"`
-	}{Updated: nodes}
+		Updated []updatedEntry `json:"updated"`
+	}{Updated: updated}
 	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

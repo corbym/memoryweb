@@ -58,10 +58,16 @@ func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	if a.NodeKind == "" {
 		a.NodeKind = "decision"
 	}
+	domainExists, err := h.store.DomainExists(a.Domain)
+	if err != nil {
+		return nil, err
+	}
 	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags, a.NodeKind)
 	if err != nil {
 		return nil, err
 	}
+
+	extras := h.rememberFilingExtras(node, a.RelatedTo, domainExists)
 
 	skipped := processRelatedTo(h, node.ID, a.RelatedTo)
 
@@ -75,6 +81,14 @@ func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		duplicates = []db.Node{}
 	}
 
+	var misdomain *misdomainFlag
+	if extras.PossibleMisdomain {
+		misdomain = &misdomainFlag{
+			SuggestedDomain:   extras.SuggestedDomain,
+			SuggestedMemoryID: extras.SuggestedMemoryID,
+		}
+	}
+
 	orphanWarning := ""
 	if len(a.RelatedTo) == 0 || (len(a.RelatedTo) > 0 && len(skipped) == len(a.RelatedTo)) {
 		orphanWarning = "No connections were made. Call connect with from_memory/to_memory to link these memories — connect takes no domain parameter, memory IDs are global. Suggested connections may be in other domains; that's context only, not a connect argument."
@@ -86,12 +100,22 @@ func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		PossibleDuplicates   []db.Node           `json:"possible_duplicates"`
 		SkippedConnections   []skippedConnection `json:"skipped_connections,omitempty"`
 		OrphanWarning        string              `json:"orphan_warning,omitempty"`
+		TrustNudge           string              `json:"trust_nudge,omitempty"`
+		PossibleMisdomain    bool                `json:"possible_misdomain,omitempty"`
+		SuggestedDomain      string              `json:"suggested_domain,omitempty"`
+		SuggestedMemoryID    string              `json:"suggested_memory_id,omitempty"`
 	}{
 		Node:                 node,
 		SuggestedConnections: suggestions,
 		PossibleDuplicates:   duplicates,
 		SkippedConnections:   skipped,
 		OrphanWarning:        orphanWarning,
+		TrustNudge:           extras.TrustNudge,
+	}
+	if misdomain != nil {
+		resp.PossibleMisdomain = true
+		resp.SuggestedDomain = misdomain.SuggestedDomain
+		resp.SuggestedMemoryID = misdomain.SuggestedMemoryID
 	}
 	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -210,10 +234,23 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
+	domains := make([]string, len(nodeList))
+	for i, n := range nodeList {
+		domains[i] = n.Domain
+	}
+	domainSnap, err := h.snapshotDomainExistence(domains)
+	if err != nil {
+		return nil, err
+	}
+
 	type entry struct {
 		Node                 *db.Node            `json:"node"`
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
 		SkippedConnections   []skippedConnection `json:"skipped_connections,omitempty"`
+		TrustNudge           string              `json:"trust_nudge,omitempty"`
+		PossibleMisdomain    bool                `json:"possible_misdomain,omitempty"`
+		SuggestedDomain      string              `json:"suggested_domain,omitempty"`
+		SuggestedMemoryID    string              `json:"suggested_memory_id,omitempty"`
 	}
 	result := make([]entry, len(nodes))
 	anyConnected := false
@@ -222,11 +259,20 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		if suggestions == nil {
 			suggestions = []db.EdgeSuggestion{}
 		}
+		extras := h.rememberFilingExtras(n, nodeList[i].RelatedTo, domainSnap[h.store.ResolveAlias(nodeList[i].Domain)])
 		skipped := processRelatedTo(h, n.ID, nodeList[i].RelatedTo)
 		if len(nodeList[i].RelatedTo) > 0 && len(skipped) < len(nodeList[i].RelatedTo) {
 			anyConnected = true
 		}
-		result[i] = entry{Node: n, SuggestedConnections: suggestions, SkippedConnections: skipped}
+		result[i] = entry{
+			Node:                 n,
+			SuggestedConnections: suggestions,
+			SkippedConnections:   skipped,
+			TrustNudge:           extras.TrustNudge,
+			PossibleMisdomain:    extras.PossibleMisdomain,
+			SuggestedDomain:      extras.SuggestedDomain,
+			SuggestedMemoryID:    extras.SuggestedMemoryID,
+		}
 	}
 	orphanWarning := ""
 	if len(nodes) > 0 && !anyConnected {
@@ -276,4 +322,24 @@ func detectLegacyDecisionTypeKey(raw json.RawMessage) string {
 		return "decision_type has been renamed to node_kind — use node_kind instead. Call tools/list to refresh your schema."
 	}
 	return ""
+}
+
+type misdomainFlag struct {
+	SuggestedDomain   string
+	SuggestedMemoryID string
+}
+
+func (h *Handler) checkNewDomainMisdomain(node *db.Node) (*misdomainFlag, error) {
+	candidate, err := h.store.FindMisdomainCandidate(node.ID, node.Domain)
+	if err != nil || candidate == nil {
+		return nil, err
+	}
+	reason := fmt.Sprintf("suggested domain %q (anchor %s)", candidate.SuggestedDomain, candidate.SuggestedMemoryID)
+	if err := h.store.LogDomainCreationFlagged(node.ID, node.Label, reason); err != nil {
+		return nil, err
+	}
+	return &misdomainFlag{
+		SuggestedDomain:   candidate.SuggestedDomain,
+		SuggestedMemoryID: candidate.SuggestedMemoryID,
+	}, nil
 }

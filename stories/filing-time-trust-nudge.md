@@ -1,6 +1,6 @@
 # remember/revise: filing-time low-trust neighbourhood nudge
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `surfacing-vector-filing-time-tru-e9a9d9de`
 

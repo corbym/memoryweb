@@ -704,3 +704,134 @@ func (s *Store) FindDisconnected(domain string, tags, nodeKinds []string, limit 
 
 	return scanNodeRows(rows)
 }
+
+// KindCoverageResult is the response shape for audit(mode=kind_coverage).
+type KindCoverageResult struct {
+	TotalNodes          int            `json:"total_nodes"`
+	ByKind              map[string]int `json:"by_kind"`
+	LegacyDominantPct   float64        `json:"legacy_dominant_pct"`
+	MigrationCandidates []Node         `json:"migration_candidates"`
+	ResultsTruncated    bool           `json:"results_truncated"`
+}
+
+var findingKindPatterns = []string{
+	"found that", "observed", "confirmed", "verified", "discovered", "measured", "demonstrated",
+}
+var issueKindPatterns = []string{
+	"should we", "unclear whether", "open question", "unknown whether", "do we need",
+}
+
+func textMatchesAnyPattern(text string, patterns []string) bool {
+	lower := strings.ToLower(text)
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func kindMigrationPatternSQL() string {
+	allPatterns := append(append([]string{}, findingKindPatterns...), issueKindPatterns...)
+	var parts []string
+	for _, p := range allPatterns {
+		like := "'%" + strings.ReplaceAll(p, "'", "''") + "%'"
+		parts = append(parts, fmt.Sprintf(
+			"(LOWER(label) LIKE %s OR LOWER(description) LIKE %s OR LOWER(why_matters) LIKE %s)",
+			like, like, like,
+		))
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
+// FindKindCoverage returns per-kind counts, legacy-dominance measure, and
+// migration candidates for nodes whose node_kind looks stale relative to text.
+func (s *Store) FindKindCoverage(domain string, limit int, tags, nodeKinds []string) (KindCoverageResult, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	domain = s.ResolveAlias(domain)
+
+	conds := []string{"archived_at IS NULL"}
+	args := []interface{}{}
+	if domain != "" {
+		conds = append(conds, "domain = ?")
+		args = append(args, domain)
+	}
+	conds, args = tagFilter("tags", tags, conds, args)
+	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
+
+	rows, err := s.db.Query(
+		`SELECT node_kind, COUNT(*) FROM nodes WHERE `+strings.Join(conds, " AND ")+` GROUP BY node_kind`,
+		args...,
+	)
+	if err != nil {
+		return KindCoverageResult{}, err
+	}
+	defer rows.Close()
+
+	byKind := map[string]int{}
+	total := 0
+	legacy := 0
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return KindCoverageResult{}, err
+		}
+		if kind == "" {
+			kind = "decision"
+		}
+		byKind[kind] = count
+		total += count
+		if kind == "decision" || kind == "standing" {
+			legacy += count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return KindCoverageResult{}, err
+	}
+	if byKind == nil {
+		byKind = map[string]int{}
+	}
+
+	legacyPct := 0.0
+	if total > 0 {
+		legacyPct = float64(legacy) / float64(total) * 100
+	}
+
+	candidateConds := append([]string{}, conds...)
+	candidateConds = append(candidateConds, "node_kind = 'decision'", kindMigrationPatternSQL())
+	candidateArgs := append([]interface{}{}, args...)
+	candidateArgs = append(candidateArgs, limit+1)
+	candidateQ := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
+		FROM nodes WHERE ` + strings.Join(candidateConds, " AND ") + ` ORDER BY updated_at DESC LIMIT ?`
+	cRows, err := s.db.Query(candidateQ, candidateArgs...)
+	if err != nil {
+		return KindCoverageResult{}, err
+	}
+	defer cRows.Close()
+
+	candidates, err := scanNodeRows(cRows)
+	if err != nil {
+		return KindCoverageResult{}, err
+	}
+	if candidates == nil {
+		candidates = []Node{}
+	}
+	truncated := len(candidates) > limit
+	if truncated {
+		candidates = candidates[:limit]
+	}
+
+	return KindCoverageResult{
+		TotalNodes:          total,
+		ByKind:              byKind,
+		LegacyDominantPct:   legacyPct,
+		MigrationCandidates: candidates,
+		ResultsTruncated:    truncated,
+	}, nil
+}

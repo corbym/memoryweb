@@ -1,6 +1,6 @@
 # node_kind coverage / migration-readiness signal
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** none yet — this story is the prerequisite named inside
 `surfacing-vector-orient-header-l-d7dce0d6`, never itself filed as an issue/goal
