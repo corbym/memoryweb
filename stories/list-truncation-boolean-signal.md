@@ -1,6 +1,6 @@
 # List truncation — boolean more-available signal + Category A/B contract
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `list-shaped-responses-that-trunc-941da40a` (standing rule)
 

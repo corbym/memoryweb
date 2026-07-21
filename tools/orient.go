@@ -4,7 +4,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/corbym/memoryweb/db"
 )
+
+const (
+	orientSignificantCap = 10
+	orientRecentCap      = 5
+	orientSpineCap       = 20
+	orientRulesCap       = 20
+	orientRelevantCap    = 5
+)
+
+type orientSectionTruncation struct {
+	SignificantResultsTruncated   bool `json:"significant_results_truncated"`
+	RecentResultsTruncated        bool `json:"recent_results_truncated"`
+	DeclaredSpineResultsTruncated bool `json:"declared_spine_results_truncated"`
+	RulesResultsTruncated         bool `json:"rules_results_truncated"`
+	RelevantResultsTruncated      bool `json:"relevant_results_truncated"`
+}
+
+func cappedNodes(nodes []db.Node, cap int) ([]db.Node, bool) {
+	return trimWithTruncation(nodes, cap)
+}
 
 func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 	// Fetch a broad slice of recent nodes across all domains then group,
@@ -27,17 +49,20 @@ func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 	const perDomain = 5
 	grouped := make(map[string][]recentEntry)
 	domainOrder := []string{}
+	resultsTruncated := false
 	for _, n := range all {
 		if _, seen := grouped[n.Domain]; !seen {
 			domainOrder = append(domainOrder, n.Domain)
 		}
-		if len(grouped[n.Domain]) < perDomain {
-			grouped[n.Domain] = append(grouped[n.Domain], recentEntry{
-				ID:        n.ID,
-				Label:     n.Label,
-				UpdatedAt: n.UpdatedAt.Format(time.RFC3339),
-			})
+		if len(grouped[n.Domain]) >= perDomain {
+			resultsTruncated = true
+			continue
 		}
+		grouped[n.Domain] = append(grouped[n.Domain], recentEntry{
+			ID:        n.ID,
+			Label:     n.Label,
+			UpdatedAt: n.UpdatedAt.Format(time.RFC3339),
+		})
 	}
 
 	domains := make([]domainEntry, 0, len(domainOrder))
@@ -46,11 +71,13 @@ func (h *Handler) orientCrossDomain() (*ToolResult, error) {
 	}
 
 	resp := struct {
-		Mode    string        `json:"mode"`
-		Domains []domainEntry `json:"domains"`
+		Mode             string        `json:"mode"`
+		Domains          []domainEntry `json:"domains"`
+		ResultsTruncated bool          `json:"results_truncated"`
 	}{
-		Mode:    "cross_domain_snapshot",
-		Domains: domains,
+		Mode:             "cross_domain_snapshot",
+		Domains:          domains,
+		ResultsTruncated: resultsTruncated,
 	}
 	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -67,29 +94,34 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 	}
 	staleCount, _ := h.store.CountStaleDrift(domain)
 
-	result, err := h.store.SearchNodes(topic, domain, 5, "", nil)
+	result, err := h.store.SearchNodes(topic, domain, orientRelevantCap+1, "", nil)
 	if err != nil {
 		return nil, err
 	}
-
+	relevantTrunc := len(result.Nodes) > orientRelevantCap
+	if relevantTrunc {
+		result.Nodes = result.Nodes[:orientRelevantCap]
+	}
 	relevant := make([]leanEntry, len(result.Nodes))
 	for i, nr := range result.Nodes {
 		relevant[i] = toLeanEntry(nr.Node)
 	}
 
-	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, 20)
+	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, orientSpineCap+1)
 	if err != nil {
 		return nil, err
 	}
+	spineNodes, spineTrunc := cappedNodes(spineNodes, orientSpineCap)
 	spineEntries := toLeanEntries(spineNodes)
 
-	recent, err := h.store.RecentChanges(domain, 5, nil)
+	recentRaw, err := h.store.RecentChanges(domain, orientRecentCap+1, nil)
 	if err != nil {
 		return nil, err
 	}
-	recentEntries := toLeanEntries(recent)
+	recentRaw, recentTrunc := cappedNodes(recentRaw, orientRecentCap)
+	recentEntries := toLeanEntries(recentRaw)
 
-	rulesNodes, err := h.store.GetStandingNodes(domain)
+	rulesNodes, rulesTrunc, err := h.store.GetStandingNodes(domain, orientRulesCap)
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +142,7 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 		DeclaredSpine interface{} `json:"declared_spine"`
 		Relevant      interface{} `json:"relevant"`
 		Recent        interface{} `json:"recent"`
+		orientSectionTruncation
 	}{
 		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. relevant lists memories most similar to the supplied topic. declared_spine lists key decisions chronologically. rules lists the standing constraints and durable decisions that govern this domain. recent shows where work was last happening. Plain prose, no bullet points.",
 		ServerVersion: h.version,
@@ -120,6 +153,12 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 		DeclaredSpine: digestSection(spineEntries, digest),
 		Relevant:      digestSection(relevant, digest),
 		Recent:        digestSection(recentEntries, digest),
+		orientSectionTruncation: orientSectionTruncation{
+			RelevantResultsTruncated:      relevantTrunc,
+			RecentResultsTruncated:        recentTrunc,
+			DeclaredSpineResultsTruncated: spineTrunc,
+			RulesResultsTruncated:         rulesTrunc,
+		},
 	}
 
 	b, _ := json.MarshalIndent(resp, "", "  ")
@@ -138,6 +177,7 @@ type orientDomainEntry struct {
 	TotalNodes    int         `json:"total_nodes"`
 	ArchivedNodes int         `json:"archived_nodes"`
 	StaleCount    int         `json:"stale_count"`
+	orientSectionTruncation
 }
 
 // buildDomainEntry builds lean orient data for a single domain (no top-level
@@ -155,7 +195,7 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 	staleCount, _ := h.store.CountStaleDrift(domain)
 
 	// Standing rules.
-	rulesNodes, err := h.store.GetStandingNodes(domain)
+	rulesNodes, rulesTrunc, err := h.store.GetStandingNodes(domain, orientRulesCap)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
@@ -166,18 +206,20 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 	}
 
 	// Declared spine.
-	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, 20)
+	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, orientSpineCap+1)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
+	spineNodes, spineTrunc := cappedNodes(spineNodes, orientSpineCap)
 	spineEntries := toLeanEntries(spineNodes)
 
 	// Recent.
-	recent, err := h.store.RecentChanges(domain, 5, nil)
+	recentRaw, err := h.store.RecentChanges(domain, orientRecentCap+1, nil)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
-	recentEntries := toLeanEntries(recent)
+	recentRaw, recentTrunc := cappedNodes(recentRaw, orientRecentCap)
+	recentEntries := toLeanEntries(recentRaw)
 
 	entry := orientDomainEntry{
 		Domain:        domain,
@@ -187,20 +229,30 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 		TotalNodes:    liveNodes,
 		ArchivedNodes: archivedNodes,
 		StaleCount:    staleCount,
+		orientSectionTruncation: orientSectionTruncation{
+			RecentResultsTruncated:        recentTrunc,
+			DeclaredSpineResultsTruncated: spineTrunc,
+			RulesResultsTruncated:         rulesTrunc,
+		},
 	}
 
 	if topic != "" {
-		result, err := h.store.SearchNodes(topic, domain, 5, "", nil)
+		result, err := h.store.SearchNodes(topic, domain, orientRelevantCap+1, "", nil)
 		if err != nil {
 			return orientDomainEntry{}, err
+		}
+		relevantTrunc := len(result.Nodes) > orientRelevantCap
+		if relevantTrunc {
+			result.Nodes = result.Nodes[:orientRelevantCap]
 		}
 		relevant := make([]leanEntry, len(result.Nodes))
 		for i, nr := range result.Nodes {
 			relevant[i] = toLeanEntry(nr.Node)
 		}
 		entry.Relevant = digestSection(relevant, digest)
+		entry.RelevantResultsTruncated = relevantTrunc
 	} else {
-		sigResult, err := h.store.GetSignificance(domain, 10, 90, nil, nil)
+		sigResult, err := h.store.GetSignificance(domain, orientSignificantCap, 90, nil, nil, 0)
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
@@ -212,6 +264,7 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 			}
 		}
 		entry.Significant = digestScoredSection(sigEntries, digest)
+		entry.SignificantResultsTruncated = sigResult.StructuralResultsTruncated
 	}
 
 	return entry, nil
@@ -282,31 +335,33 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	staleCount, _ := h.store.CountStaleDrift(a.Domain)
 
 	// Step 2: fetch significant nodes (structurally load-bearing, recency-weighted inbound degree).
-	sigResult, err := h.store.GetSignificance(a.Domain, 10, 90, nil, nil)
+	sigResult, err := h.store.GetSignificance(a.Domain, orientSignificantCap, 90, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 3: fetch recent changes — capped at 5.
-	recent, err := h.store.RecentChanges(a.Domain, 5, nil)
+	// Step 3: fetch recent changes — capped at orientRecentCap.
+	recentRaw, err := h.store.RecentChanges(a.Domain, orientRecentCap+1, nil)
 	if err != nil {
 		return nil, err
 	}
+	recentRaw, recentTrunc := cappedNodes(recentRaw, orientRecentCap)
 
 	// Step 4: fetch declared decision spine (nodes with occurred_at set, chronological).
-	spineNodes, err := h.store.Timeline(a.Domain, true, nil, nil, nil, nil, 20)
+	spineNodes, err := h.store.Timeline(a.Domain, true, nil, nil, nil, nil, orientSpineCap+1)
 	if err != nil {
 		return nil, err
 	}
+	spineNodes, spineTrunc := cappedNodes(spineNodes, orientSpineCap)
 
 	// Step 4b: fetch standing nodes (rules)
-	rulesNodes, err := h.store.GetStandingNodes(a.Domain)
+	rulesNodes, rulesTrunc, err := h.store.GetStandingNodes(a.Domain, orientRulesCap)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 5: build lean response — id, label, truncated why_matters only; no description.
-	recentEntries := toLeanEntries(recent)
+	recentEntries := toLeanEntries(recentRaw)
 	spineEntries := toLeanEntries(spineNodes)
 	sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
 	for i, sn := range sigResult.Structural {
@@ -332,6 +387,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		DeclaredSpine interface{} `json:"declared_spine"`
 		Significant   interface{} `json:"significant"`
 		Recent        interface{} `json:"recent"`
+		orientSectionTruncation
 	}{
 		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. rules lists the standing constraints and durable decisions that govern this domain. significant lists structurally load-bearing memories right now. recent shows where work was last happening. Plain prose, no bullet points.",
 		ServerVersion: h.version,
@@ -342,6 +398,12 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		DeclaredSpine: digestSection(spineEntries, a.Digest),
 		Significant:   digestScoredSection(sigEntries, a.Digest),
 		Recent:        digestSection(recentEntries, a.Digest),
+		orientSectionTruncation: orientSectionTruncation{
+			SignificantResultsTruncated:   sigResult.StructuralResultsTruncated,
+			RecentResultsTruncated:        recentTrunc,
+			DeclaredSpineResultsTruncated: spineTrunc,
+			RulesResultsTruncated:         rulesTrunc,
+		},
 	}
 
 	b, _ := json.MarshalIndent(resp, "", "  ")

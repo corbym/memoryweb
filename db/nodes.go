@@ -526,8 +526,12 @@ func (s *Store) RestoreNode(id string) error {
 	return err
 }
 
-// ListArchived returns all archived nodes, optionally filtered by domain.
-func (s *Store) ListArchived(domain string, tags, nodeKinds []string) ([]Node, error) {
+// ListArchived returns archived nodes, optionally filtered by domain.
+// limit caps results (default 25 when limit <= 0); query fetches limit+1 to detect truncation.
+func (s *Store) ListArchived(domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
+	if limit <= 0 {
+		limit = 25
+	}
 	domain = s.ResolveAlias(domain)
 
 	conds := []string{"archived_at IS NOT NULL"}
@@ -539,9 +543,10 @@ func (s *Store) ListArchived(domain string, tags, nodeKinds []string) ([]Node, e
 	}
 	conds, args = tagFilter("tags", tags, conds, args)
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
+	args = append(args, limit+1)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
-		strings.Join(conds, " AND ") + " ORDER BY archived_at DESC"
+		strings.Join(conds, " AND ") + " ORDER BY archived_at DESC LIMIT ?"
 
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -619,8 +624,12 @@ func normaliseLabel(s string) string {
 }
 
 // GetStandingNodes returns live nodes with node_kind = 'standing' for the
-// given domain, ordered by inbound edge count descending, capped at 20.
-func (s *Store) GetStandingNodes(domain string) ([]Node, error) {
+// given domain, ordered by inbound edge count descending. limit caps results
+// (default 20 when limit <= 0). truncated is true when more standing nodes exist.
+func (s *Store) GetStandingNodes(domain string, limit int) ([]Node, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
 	domain = s.ResolveAlias(domain)
 	rows, err := s.db.Query(`
 		SELECT n.id, n.label, n.description, n.why_matters, n.domain,
@@ -632,12 +641,12 @@ func (s *Store) GetStandingNodes(domain string) ([]Node, error) {
 		WHERE n.domain = ? AND n.archived_at IS NULL AND n.node_kind = 'standing'
 		GROUP BY n.id
 		ORDER BY inbound_count DESC
-		LIMIT 20`, domain)
+		LIMIT ?`, domain, limit+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
-	return scanRows(rows, func(r *sql.Rows) (Node, error) {
+	nodes, err := scanRows(rows, func(r *sql.Rows) (Node, error) {
 		var n Node
 		var oa, aa sql.NullTime
 		var inboundCount int64
@@ -649,4 +658,12 @@ func (s *Store) GetStandingNodes(domain string) ([]Node, error) {
 		n.ArchivedAt = nullTimeToPtr(aa)
 		return n, nil
 	})
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(nodes) > limit
+	if truncated {
+		nodes = nodes[:limit]
+	}
+	return nodes, truncated, nil
 }

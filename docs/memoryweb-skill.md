@@ -55,14 +55,15 @@ because agents never reach them.
    `resolved`/`resolved_by`/`supersedes` edge already links the two IDs —
    that edge is the canonical close signal. A `RESOLVED` label prefix on
    either side is a legacy backstop only; do not treat a label alone as
-   closed if the adjudication edge is missing. Once decided, verify the exact pair before adjudicating —
-   `recall(id)` on one side, check its `edges` array for a direct edge
-   naming the other ID. Do **not** rely on `trace(from_id, to_id)` alone (a
-   6-hop BFS that can report a path through an unrelated third memory, not
-   a direct edge) or `why_connected(from_label, to_label)` alone (resolves
-   each side by best-match label search, not exact ID, and can silently
-   pick the wrong node) — both remain useful for their own purpose (chain
-   narration, label-based lookup), just not as contradiction-pair proof.
+   closed if the adjudication edge is missing.    Once decided, verify the exact pair via
+   `why_connected(from_id=..., to_id=...)` — preferred for exact-ID pair
+   verification — or `recall(id)`'s `edges` array. Do **not** rely on
+   `trace(from_id, to_id)` alone (a 6-hop BFS that can report a path through an
+   unrelated third memory, not a direct edge) or label-only
+   `why_connected(from_label, to_label)` (resolves each side by best-match label
+   search, not exact ID, and can silently pick the wrong node) — both remain
+   useful for their own purpose (chain narration, fuzzy concept lookup), just
+   not as contradiction-pair proof when IDs are known.
    Once verified, call `connect(relationship=resolved)` (or `resolved_by` /
    `supersedes` — whichever fits *is* the verdict; memoryweb's `connect` has
    no separate `verdict` field). Additive — the original `contradicts` edge
@@ -142,7 +143,7 @@ then the decision with a `depends_on`/`caused_by` connection pointing at it.
 | `contradicts` | A and B directly conflict |
 | `governed_by` | A must satisfy a standing rule or constraint B |
 | `is_example_of` | A illustrates B |
-| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair. **Verify the exact pair first** via `recall(id)`'s `edges` array (Layer 1 step 7) — not `trace`/`why_connected` alone. Additive; no separate `verdict` parameter — the type chosen *is* the verdict. |
+| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair. **Verify the exact pair first** via `why_connected(from_id=..., to_id=...)` — preferred — or `recall(id)`'s `edges` array (Layer 1 step 7). Do not rely on `trace` or label-only `why_connected`. Additive; no separate `verdict` parameter — the type chosen *is* the verdict. |
 
 Custom relationship strings are accepted as a fallback; prefer a typed one
 from the table above.
@@ -220,6 +221,29 @@ never the full `description`. Treat these as an index, not the content.
 Before quoting, citing, or acting on what a memory actually says, call
 `recall(id)` for the full node plus its `edges` array.
 
+### List truncation — `results_truncated`
+
+Multi-result tools return wrapped objects, not bare arrays. Each includes
+`results_truncated: true|false` (or section-specific booleans on `orient` and
+`significance`). When `true`, raise `limit` (or `declared_limit` on
+`significance`) and call again until `false` before concluding the list is
+complete.
+
+| Tool | Response shape |
+|---|---|
+| `recent` | `{nodes, results_truncated}` or `{groups, results_truncated}` when `group_by_domain=true` |
+| `history` | `{nodes, results_truncated}` |
+| `audit(mode=stale)` | `{candidates, results_truncated}` |
+| `audit(mode=orphans)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}` |
+| `audit(mode=archived)` | `{nodes, results_truncated}` — **default cap 25**; raise `limit` to enumerate |
+| `audit(mode=conflicts)` | `{candidates, results_truncated}` |
+| `significance` | section booleans: `declared_results_truncated`, `structural_results_truncated`, `uncurated_results_truncated`, `potentially_stale_results_truncated` |
+| `orient(domain=X)` | `significant_results_truncated`, `recent_results_truncated`, `declared_spine_results_truncated`, `rules_results_truncated` |
+| `orient()` (no domain) | `{domains, results_truncated}` on cross-domain snapshot |
+
+Per-node excerpt truncation uses `truncated` on lean entries — distinct from
+list-level `results_truncated`.
+
 ### Search notes
 
 - `search` is lexical (LIKE) unless Ollama is running, in which case it also
@@ -251,7 +275,7 @@ than assuming this document is still accurate.
 | `significance()` | Dual-signal importance (declared + structural) |
 | `significance(mode=trust)` | Epistemic trust ranking |
 | `suggest_connections(id)` | Candidates to wire up after filing |
-| `connect(...)` | Wire memories together; adjudicate contradictions via `relationship=resolved` (verify the pair via `recall` first) |
+| `connect(...)` | Wire memories together; adjudicate contradictions via `relationship=resolved` (verify the pair via `why_connected(from_id, to_id)` first) |
 | `disconnect(id)` | Hard-delete an edge by edge ID — irreversible |
 | `remember(...)` | File a new memory |
 | `revise(id, ...)` | Update an existing memory; also handles single-node domain moves |
@@ -260,8 +284,9 @@ than assuming this document is still accurate.
 | `restore(id)` | Un-archive |
 | `audit(mode=...)` | `stale` / `orphans` / `archived` / `conflicts` |
 | `visualise(domain=X)` / `visualise(memory_id=X)` | Mermaid graph, human inspection only |
-| `trace(from_id, to_id)` | Shortest connection chain — narration, not pair verification |
-| `why_connected(from_label, to_label)` | Connections by best-match label — not exact-ID, not pair verification |
+| `trace(from_id, to_id)` | Shortest multi-hop chain — narration, not pair verification |
+| `why_connected(from_id, to_id)` | Direct edges between exact IDs — preferred pair verification |
+| `why_connected(from_label, to_label)` | Fuzzy label best-match — not exact-ID verification |
 
 `purge` and `merge_domains` are CLI-only — never call them as MCP tools;
 they don't exist as one.

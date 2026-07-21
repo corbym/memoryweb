@@ -13,6 +13,7 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		MemoryID      string `json:"memory_id"`
 		Depth         int    `json:"depth"`
 		Limit         int    `json:"limit"`
+		DeclaredLimit int    `json:"declared_limit"`
 		RecencyWindow int    `json:"recency_window"`
 		Tags          string `json:"tags"`
 		NodeKind      string `json:"node_kind"`
@@ -27,6 +28,12 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 	}
 	if a.Limit <= 0 {
 		a.Limit = 10
+	}
+	if a.DeclaredLimit <= 0 {
+		a.DeclaredLimit = 100
+	}
+	if a.DeclaredLimit > 500 {
+		a.DeclaredLimit = 500
 	}
 	if a.RecencyWindow <= 0 {
 		a.RecencyWindow = 90
@@ -75,7 +82,7 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		}
 		res, err = h.store.GetSignificanceForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow, nodeKinds)
 	} else {
-		res, err = h.store.GetSignificance(a.Domain, a.Limit, a.RecencyWindow, tags, nodeKinds)
+		res, err = h.store.GetSignificance(a.Domain, a.Limit, a.RecencyWindow, tags, nodeKinds, a.DeclaredLimit)
 	}
 	if err != nil {
 		return errorResult(err.Error()), nil

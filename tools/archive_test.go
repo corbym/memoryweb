@@ -3,6 +3,7 @@ package tools_test
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -42,13 +43,16 @@ func TestForgetNode_DoesNotDelete(t *testing.T) {
 	archivedTr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": "test"})
 	mustNotError(t, archivedTr)
 
-	var nodes []struct {
-		ID         string `json:"id"`
-		ArchivedAt string `json:"archived_at"`
+	var resp struct {
+		Nodes []struct {
+			ID         string `json:"id"`
+			ArchivedAt string `json:"archived_at"`
+		} `json:"nodes"`
 	}
-	if err := json.Unmarshal([]byte(text(t, archivedTr)), &nodes); err != nil {
+	if err := json.Unmarshal([]byte(text(t, archivedTr)), &resp); err != nil {
 		t.Fatalf("parse list_archived response: %v", err)
 	}
+	nodes := resp.Nodes
 
 	found := false
 	for _, n := range nodes {
@@ -164,12 +168,15 @@ func TestListArchived_ScopedByDomain(t *testing.T) {
 	archivedTr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": "domain-1"})
 	mustNotError(t, archivedTr)
 
-	var nodes []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	if err := json.Unmarshal([]byte(text(t, archivedTr)), &nodes); err != nil {
+	if err := json.Unmarshal([]byte(text(t, archivedTr)), &resp); err != nil {
 		t.Fatalf("parse list_archived response: %v", err)
 	}
+	nodes := resp.Nodes
 
 	foundFirst := false
 	for _, n := range nodes {
@@ -221,10 +228,13 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	}
 	recentIDs := func() []string {
 		tr := call(t, h, "recent", map[string]any{"domain": "project-alpha"})
-		var nodes []struct {
-			ID string `json:"id"`
+		var resp struct {
+			Nodes []struct {
+				ID string `json:"id"`
+			} `json:"nodes"`
 		}
-		json.Unmarshal([]byte(text(t, tr)), &nodes)
+		json.Unmarshal([]byte(text(t, tr)), &resp)
+		nodes := resp.Nodes
 		ids := make([]string, len(nodes))
 		for i, n := range nodes {
 			ids[i] = n.ID
@@ -238,10 +248,13 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	// Verify it appears in list_archived
 	archivedTr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": "project-alpha"})
 	mustNotError(t, archivedTr)
-	var archivedNodes []struct {
-		ID string `json:"id"`
+	var archivedResp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	json.Unmarshal([]byte(text(t, archivedTr)), &archivedNodes)
+	json.Unmarshal([]byte(text(t, archivedTr)), &archivedResp)
+	archivedNodes := archivedResp.Nodes
 	foundInArchived := false
 	for _, n := range archivedNodes {
 		if n.ID == id {
@@ -266,7 +279,8 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	// Verify it's no longer in list_archived
 	archivedTr = call(t, h, "audit", map[string]any{"mode": "archived", "domain": "project-alpha"})
 	mustNotError(t, archivedTr)
-	json.Unmarshal([]byte(text(t, archivedTr)), &archivedNodes)
+	json.Unmarshal([]byte(text(t, archivedTr)), &archivedResp)
+	archivedNodes = archivedResp.Nodes
 	for _, n := range archivedNodes {
 		if n.ID == id {
 			t.Error("restored node should no longer be in list_archived")
@@ -1080,9 +1094,7 @@ func TestAudit_Stale_TagsFilter(t *testing.T) {
 	mustNotError(t, tr)
 
 	var candidates []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &candidates); err != nil {
-		t.Fatalf("parse audit stale result: %v", err)
-	}
+	candidates = unmarshalAuditStaleCandidates[map[string]any](t, tr.Content[0].Text)
 	for _, c := range candidates {
 		n, _ := c["node"].(map[string]any)
 		if n == nil {
@@ -1110,10 +1122,13 @@ func TestAudit_Orphans_TagsFilter(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var nodes []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+	var resp struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &resp); err != nil {
 		t.Fatalf("parse audit orphans result: %v", err)
 	}
+	nodes := resp.Nodes
 	ids := make([]string, 0)
 	for _, n := range nodes {
 		if id, ok := n["id"].(string); ok {
@@ -1146,10 +1161,13 @@ func TestAudit_Archived_TagsFilter(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var nodes []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+	var resp struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &resp); err != nil {
 		t.Fatalf("parse audit archived result: %v", err)
 	}
+	nodes := resp.Nodes
 	ids := make([]string, 0)
 	for _, n := range nodes {
 		if id, ok := n["id"].(string); ok {
@@ -1180,10 +1198,7 @@ func TestAudit_Stale_MemoryID(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var candidates []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &candidates); err != nil {
-		t.Fatalf("parse audit stale memory_id result: %v", err)
-	}
+	candidates := unmarshalAuditStaleCandidates[map[string]any](t, tr.Content[0].Text)
 	for _, c := range candidates {
 		n, _ := c["node"].(map[string]any)
 		if n == nil {
@@ -1217,10 +1232,7 @@ func TestAudit_ExistingBehaviourUnchanged(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var candidates []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &candidates); err != nil {
-		t.Fatalf("parse audit result: %v", err)
-	}
+	candidates := unmarshalAuditStaleCandidates[map[string]any](t, tr.Content[0].Text)
 	if len(candidates) == 0 {
 		t.Error("expected at least one stale candidate without tags/memory_id filter")
 	}
@@ -1288,10 +1300,7 @@ func TestAudit_Stale_GoalNode_NoCompletionSignal_NotFlagged(t *testing.T) {
 	body := text(t, tr)
 
 	// Neither node should be flagged with the placeholder reason
-	var candidates []map[string]any
-	if err := json.Unmarshal([]byte(body), &candidates); err != nil {
-		t.Fatalf("parse audit result: %v", err)
-	}
+	candidates := unmarshalAuditStaleCandidates[map[string]any](t, body)
 	for _, c := range candidates {
 		n, _ := c["node"].(map[string]any)
 		reason, _ := c["reason"].(string)
@@ -1322,10 +1331,7 @@ func TestAudit_Stale_OrphanGoal_NotDoubleFlaged(t *testing.T) {
 	mustNotError(t, tr)
 	body := text(t, tr)
 
-	var candidates []map[string]any
-	if err := json.Unmarshal([]byte(body), &candidates); err != nil {
-		t.Fatalf("parse audit result: %v", err)
-	}
+	candidates := unmarshalAuditStaleCandidates[map[string]any](t, body)
 	for _, c := range candidates {
 		n, _ := c["node"].(map[string]any)
 		reason, _ := c["reason"].(string)
@@ -1366,5 +1372,95 @@ func TestAudit_Stale_Placeholder_ReasonString_InOutput(t *testing.T) {
 	}
 	if !strings.Contains(body, "revise or archive") {
 		t.Errorf("expected reason to contain 'revise or archive'; got:\n%s", body)
+	}
+}
+
+func TestAudit_Orphans_EmptyReturnsWrapper(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "orphan-empty"
+	idA := addNode(t, h, "Connected A", domain, nil)
+	idB := addNode(t, h, "Connected B", domain, nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": idA, "to_memory": idB, "relationship": "connects_to",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{"mode": "orphans", "domain": "orphan-empty"})
+	mustNotError(t, tr)
+	var resp struct {
+		Nodes            []any `json:"nodes"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orphans empty: %v\nbody: %s", err, text(t, tr))
+	}
+	if len(resp.Nodes) != 0 {
+		t.Errorf("expected empty nodes array, got %d", len(resp.Nodes))
+	}
+	if resp.ResultsTruncated {
+		t.Error("results_truncated should be false for empty orphans result")
+	}
+}
+
+func TestAudit_Archived_RaiseLimitReturnsMore(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "archived-raise"
+	var ids []string
+	for i := 0; i < 4; i++ {
+		id := addNode(t, h, fmt.Sprintf("Archive me %d", i), domain, nil)
+		mustNotError(t, call(t, h, "forget", map[string]any{"id": id, "reason": "test archive"}))
+		ids = append(ids, id)
+	}
+
+	trLow := call(t, h, "audit", map[string]any{"mode": "archived", "domain": domain, "limit": 2})
+	mustNotError(t, trLow)
+	var low struct {
+		Nodes            []any `json:"nodes"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	json.Unmarshal([]byte(text(t, trLow)), &low)
+	if len(low.Nodes) != 2 || !low.ResultsTruncated {
+		t.Fatalf("limit 2: want 2 truncated nodes, got %d truncated=%v", len(low.Nodes), low.ResultsTruncated)
+	}
+
+	trHigh := call(t, h, "audit", map[string]any{"mode": "archived", "domain": domain, "limit": 10})
+	mustNotError(t, trHigh)
+	var high struct {
+		Nodes            []any `json:"nodes"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	json.Unmarshal([]byte(text(t, trHigh)), &high)
+	if len(high.Nodes) <= len(low.Nodes) {
+		t.Errorf("raising limit should return more archived nodes: low=%d high=%d", len(low.Nodes), len(high.Nodes))
+	}
+	if high.ResultsTruncated {
+		t.Error("results_truncated should be false when limit covers all archived nodes")
+	}
+}
+
+func TestAudit_Stale_RaiseLimitReturnsMore(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "stale-raise"
+	for i := 0; i < 3; i++ {
+		addNode(t, h, "duplicate stale label", domain, nil)
+	}
+	addNode(t, h, "duplicate stale label", domain, nil)
+
+	trLow := call(t, h, "audit", map[string]any{"mode": "stale", "domain": domain, "limit": 1})
+	mustNotError(t, trLow)
+	var low struct {
+		Candidates       []any `json:"candidates"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	json.Unmarshal([]byte(text(t, trLow)), &low)
+
+	trHigh := call(t, h, "audit", map[string]any{"mode": "stale", "domain": domain, "limit": 10})
+	mustNotError(t, trHigh)
+	var high struct {
+		Candidates       []any `json:"candidates"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	json.Unmarshal([]byte(text(t, trHigh)), &high)
+	if len(high.Candidates) <= len(low.Candidates) {
+		t.Errorf("raising limit should return more stale candidates: low=%d high=%d", len(low.Candidates), len(high.Candidates))
 	}
 }

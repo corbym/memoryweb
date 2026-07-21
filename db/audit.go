@@ -669,8 +669,13 @@ func (s *Store) CountStaleDrift(domain string) (int, error) {
 	return len(candidates), nil
 }
 
-// FindDisconnected returns live, non-transient nodes that have no edges// (neither as from_node nor as to_node), optionally scoped to a domain.
-func (s *Store) FindDisconnected(domain string, tags, nodeKinds []string) ([]Node, error) {
+// FindDisconnected returns live, non-transient nodes that have no edges
+// (neither as from_node nor as to_node), optionally scoped to a domain.
+// limit caps results (default 50 when limit <= 0); query fetches limit+1 rows.
+func (s *Store) FindDisconnected(domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
+	if limit <= 0 {
+		limit = 50
+	}
 	domain = s.ResolveAlias(domain)
 
 	conds := []string{
@@ -686,7 +691,7 @@ func (s *Store) FindDisconnected(domain string, tags, nodeKinds []string) ([]Nod
 	}
 	conds, args = tagFilter("tags", tags, conds, args)
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
-	args = append(args, 50)
+	args = append(args, limit+1)
 
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY created_at DESC LIMIT ?"

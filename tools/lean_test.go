@@ -113,10 +113,13 @@ func TestRecent_LeanFormat_NoDescription(t *testing.T) {
 	tr := call(t, h, "recent", map[string]any{"domain": "recent-lean"})
 	mustNotError(t, tr)
 
-	var nodes []map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(text(t, tr)), &nodes); err != nil {
+	var resp struct {
+		Nodes []map[string]json.RawMessage `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse recent response: %v", err)
 	}
+	nodes := resp.Nodes
 	if len(nodes) == 0 {
 		t.Fatal("expected at least one recent result")
 	}
@@ -189,10 +192,13 @@ func TestHistory_LeanFormat_NoDescription(t *testing.T) {
 	tr := call(t, h, "history", map[string]any{"domain": "history-lean"})
 	mustNotError(t, tr)
 
-	var nodes []map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(text(t, tr)), &nodes); err != nil {
+	var resp struct {
+		Nodes []map[string]json.RawMessage `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse history response: %v", err)
 	}
+	nodes := resp.Nodes
 	if len(nodes) == 0 {
 		t.Fatal("expected at least one history result")
 	}

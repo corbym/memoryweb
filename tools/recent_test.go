@@ -14,10 +14,13 @@ func TestRecentChanges_ReturnsNodes(t *testing.T) {
 	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
-	var nodes []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &nodes)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	nodes := resp.Nodes
 	ids := make([]string, len(nodes))
 	for i, n := range nodes {
 		ids[i] = n.ID
@@ -35,10 +38,13 @@ func TestRecentChanges_ArchivedNodeExcluded(t *testing.T) {
 	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
-	var nodes []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &nodes)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	nodes := resp.Nodes
 	for _, n := range nodes {
 		if n.ID == id {
 			t.Error("archived node should not appear in recent_changes")
@@ -54,10 +60,13 @@ func TestRecentChanges_DomainIsolation(t *testing.T) {
 	tr := call(t, h, "recent", map[string]any{"domain": "domain-a"})
 	mustNotError(t, tr)
 
-	var nodes []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &nodes)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	nodes := resp.Nodes
 	for _, n := range nodes {
 		if n.ID != idA {
 			t.Errorf("domain-a recent_changes returned node from wrong domain: %s", n.ID)
@@ -85,16 +94,20 @@ func TestRecentChanges_GroupByDomain_MultipleDomains(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	// Response is a JSON array of {domain, nodes} objects.
-	var groups []struct {
-		Domain string `json:"domain"`
-		Nodes  []struct {
-			ID string `json:"id"`
-		} `json:"nodes"`
+	// Response is {groups, results_truncated}.
+	var resp struct {
+		Groups []struct {
+			Domain string `json:"domain"`
+			Nodes  []struct {
+				ID string `json:"id"`
+			} `json:"nodes"`
+		} `json:"groups"`
+		ResultsTruncated bool `json:"results_truncated"`
 	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &groups); err != nil {
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse grouped response: %v", err)
 	}
+	groups := resp.Groups
 
 	// Build a flat map of domain → IDs for easy assertion.
 	byDomain := map[string][]string{}
@@ -131,20 +144,26 @@ func TestRecentChanges_GroupByDomain_PerDomainLimit(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var groups []struct {
-		Domain string `json:"domain"`
-		Nodes  []struct {
-			ID string `json:"id"`
-		} `json:"nodes"`
+	var resp struct {
+		Groups []struct {
+			Domain string `json:"domain"`
+			Nodes  []struct {
+				ID string `json:"id"`
+			} `json:"nodes"`
+		} `json:"groups"`
+		ResultsTruncated bool `json:"results_truncated"`
 	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &groups); err != nil {
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse grouped response: %v", err)
 	}
 
-	for _, g := range groups {
+	for _, g := range resp.Groups {
 		if g.Domain == "limit-domain" && len(g.Nodes) > 2 {
 			t.Errorf("per-domain limit of 2 exceeded: got %d nodes", len(g.Nodes))
 		}
+	}
+	if !resp.ResultsTruncated {
+		t.Error("results_truncated should be true when domain has more than limit entries")
 	}
 }
 
@@ -160,13 +179,16 @@ func TestRecentChanges_GroupByDomain_WithDomainSpecified_BehavesNormal(t *testin
 	})
 	mustNotError(t, tr)
 
-	// Response should be a flat array of nodes (normal mode), not grouped.
-	var nodes []struct {
-		ID string `json:"id"`
+	// Response should be a flat list of nodes (normal mode), not grouped.
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &nodes); err != nil {
-		t.Fatalf("expected flat node array when domain is specified: %v\nbody: %s", err, text(t, tr))
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("expected wrapped node list when domain is specified: %v\nbody: %s", err, text(t, tr))
 	}
+	nodes := resp.Nodes
 	if len(nodes) != 1 || nodes[0].ID != idA {
 		t.Errorf("expected only domain-a node; got %+v", nodes)
 	}
@@ -182,13 +204,16 @@ func TestRecentChanges_GroupByDomain_False_BehavesAsNormal(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	// Should be a flat array.
-	var nodes []struct {
-		ID string `json:"id"`
+	// Should be a flat list.
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &nodes); err != nil {
-		t.Fatalf("expected flat node array: %v", err)
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("expected wrapped node list: %v", err)
 	}
+	nodes := resp.Nodes
 	ids := make([]string, len(nodes))
 	for i, n := range nodes {
 		ids[i] = n.ID
@@ -213,10 +238,13 @@ func TestRecent_TagsFilter(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var nodes []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+	var resp struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &resp); err != nil {
 		t.Fatalf("parse recent result: %v", err)
 	}
+	nodes := resp.Nodes
 	if len(nodes) != 1 {
 		t.Errorf("expected 1 result, got %d", len(nodes))
 	}
@@ -244,10 +272,13 @@ func TestRecent_MemoryID_ScopesNeighbourhood(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var nodes []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+	var resp struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &resp); err != nil {
 		t.Fatalf("parse recent result: %v", err)
 	}
+	nodes := resp.Nodes
 	ids := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		if id, ok := n["id"].(string); ok {
@@ -281,10 +312,13 @@ func TestRecent_TagsAndMemoryID_Combined(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var nodes []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+	var resp struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &resp); err != nil {
 		t.Fatalf("parse recent result: %v", err)
 	}
+	nodes := resp.Nodes
 	ids := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		if id, ok := n["id"].(string); ok {
@@ -309,10 +343,13 @@ func TestRecent_ExistingBehaviourUnchanged(t *testing.T) {
 	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
-	var nodes []map[string]any
-	if err := json.Unmarshal([]byte(tr.Content[0].Text), &nodes); err != nil {
+	var resp struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(tr.Content[0].Text), &resp); err != nil {
 		t.Fatalf("parse recent result: %v", err)
 	}
+	nodes := resp.Nodes
 	ids := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		if id, ok := n["id"].(string); ok {

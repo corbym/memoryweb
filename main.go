@@ -244,7 +244,7 @@ func runDream(store *db.Store, out io.Writer) error {
 	fmt.Fprintln(out)
 
 	// ── disconnected nodes ────────────────────────────────────────────────────
-	disconnected, err := store.FindDisconnected("", nil, nil)
+	disconnected, err := store.FindDisconnected("", nil, nil, 50)
 	if err != nil {
 		return fmt.Errorf("find disconnected: %w", err)
 	}

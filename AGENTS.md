@@ -86,24 +86,34 @@ session.** A node with no connections is nearly worthless.
   `why_matters`, and `tags`. Returns `truncated: true` when results hit the
   limit. Use words that appear in stored content — not conceptual paraphrases.
   When Ollama is running, results include a `semantic_distance` field.
-- `recent` — what was filed recently. Set `group_by_domain=true` (with no
-  domain) to see activity broken down per domain.
-- `history` — nodes ordered by when they actually occurred. Supports `from`/`to`
-  date range filtering, `tags` filtering, and `important_only` for curated spine
-  entries only.
-- `why_connected` — find the reasoning linking two named concepts (by label).
+- `recent` — what was filed recently. Returns `{nodes, results_truncated}`.
+  Set `group_by_domain=true` (with no domain) for `{groups, results_truncated}`
+  broken down per domain. When `results_truncated` is true, raise `limit`.
+- `history` — nodes ordered by when they actually occurred. Returns
+  `{nodes, results_truncated}`. Supports `from`/`to` date range filtering,
+  `tags` filtering, and `important_only` for curated spine entries only.
+- `why_connected` — direct edges between two memories. Prefer
+  `from_id`/`to_id` for exact pair verification; `from_label`/`to_label` for
+  fuzzy lookup.
 - `trace` — shortest path between two nodes by ID, up to 6 hops. Returns
   intermediate nodes and edges. Synthesise the result as a narrative.
-- `orient` — full domain summary: all nodes, recent activity, and the declared
-  spine. Includes `total_nodes` and `server_version`.
+- `orient` — full domain summary: rules, declared spine, significant, and
+  recent sections. Includes `*_results_truncated` booleans per section.
+  Cross-domain bootstrap (no domain) returns `{domains, results_truncated}`.
+  When any truncation flag is true, use `search` for exhaustive retrieval.
+  Includes `total_nodes` and `server_version`.
+- `significance` — dual-signal importance analysis. Returns four sections
+  plus `declared_results_truncated`, `structural_results_truncated`,
+  `uncurated_results_truncated`, and `potentially_stale_results_truncated`.
+  Raise `declared_limit` or `limit` when truncated.
+
 - `visualise` — Mermaid flowchart for a domain or a single node's neighbourhood
   (pass `memory_id`). Always output the mermaid string inside a mermaid code block.
-- `significance` — dual-signal importance analysis for a domain. Returns four
-  sections: `declared` (nodes with `occurred_at` set), `structural` (ranked by
-  recency-weighted inbound degree), `uncurated` (structural top-N without
-  `occurred_at` — curation candidates), and `potentially_stale` (declared but
-  low structural score). The gap between uncurated and potentially_stale is the
-  most actionable output.
+
+**List truncation:** Multi-result tools return wrapped objects with
+`results_truncated: true|false`. When true, raise `limit` (or `declared_limit`
+on `significance`) and call again until false before treating the list as
+complete. `audit(mode=archived)` defaults to 25 results — not a full listing.
 
 **All retrieval tools only return live nodes.** Archived nodes are invisible.
 If something seems to be missing, call `audit(mode=archived)` to check whether
@@ -115,11 +125,13 @@ it was archived, or `audit(mode=stale)` to surface drift candidates.
   below.
 - `forget_all` — archive multiple nodes atomically in a single call.
 - `restore` — restore an archived node so it surfaces in search again.
-- `audit` — surface nodes that need attention. Four modes:
-  - `mode=stale` — stale, contradicted, duplicated, or overdue transient nodes
-  - `mode=orphans` — live nodes with zero connections
-  - `mode=archived` — review what has been archived
-  - `mode=conflicts` — semantically adjacent pairs that may warrant contradiction review
+- `audit` — surface nodes that need attention. All modes return wrapped
+  objects with `results_truncated`:
+  - `mode=stale` — `{candidates, results_truncated}` (default limit 10)
+  - `mode=orphans` — `{nodes, results_truncated}` (default limit 50)
+  - `mode=archived` — `{nodes, results_truncated}` (**default limit 25** —
+    raise limit to enumerate all archived nodes)
+  - `mode=conflicts` — `{candidates, results_truncated}` (default limit 10)
 
 Run `audit(mode=orphans)`, `audit(mode=stale)`, and `audit(mode=conflicts)` as
 **three separate steps** — never one combined pass or report. Orphans: resolve
@@ -263,7 +275,7 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 
 ---
 
-## What is available now (v1.39.0)
+## What is available now (v1.40.0)
 
 | Tool | Status |
 |------|--------|

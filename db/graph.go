@@ -199,18 +199,41 @@ func (s *Store) bestMatch(term, domain string) (*Node, error) {
 }
 
 func (s *Store) FindConnections(fromTerm, toTerm, domain string) (*ConnectionResult, error) {
-	from, err := s.bestMatch(fromTerm, domain)
+	return s.FindConnectionsResolved("", fromTerm, "", toTerm, domain)
+}
+
+// FindConnectionsResolved returns direct edges between two nodes. Each side is
+// resolved by id (exact live node) or label (bestMatch fuzzy search).
+func (s *Store) FindConnectionsResolved(fromID, fromLabel, toID, toLabel, domain string) (*ConnectionResult, error) {
+	from, err := s.resolveConnectionEndpoint(fromID, fromLabel, domain)
 	if err != nil {
 		return nil, err
 	}
-	to, err := s.bestMatch(toTerm, domain)
+	to, err := s.resolveConnectionEndpoint(toID, toLabel, domain)
 	if err != nil {
 		return nil, err
 	}
 	if from == nil || to == nil {
 		return &ConnectionResult{From: from, To: to, Edges: nil}, nil
 	}
+	return s.connectionResultBetween(from, to)
+}
 
+func (s *Store) resolveConnectionEndpoint(id, label, domain string) (*Node, error) {
+	if id != "" {
+		nwe, err := s.GetNode(id)
+		if err != nil {
+			return nil, err
+		}
+		return &nwe.Node, nil
+	}
+	if label != "" {
+		return s.bestMatch(label, domain)
+	}
+	return nil, nil
+}
+
+func (s *Store) connectionResultBetween(from, to *Node) (*ConnectionResult, error) {
 	rows, err := s.db.Query(
 		`SELECT id, from_node, to_node, relationship, narrative, created_at FROM edges
 		 WHERE (from_node = ? AND to_node = ?) OR (from_node = ? AND to_node = ?)`,
@@ -224,8 +247,13 @@ func (s *Store) FindConnections(fromTerm, toTerm, domain string) (*ConnectionRes
 	var edges []Edge
 	for rows.Next() {
 		var e Edge
-		rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt)
+		if err := rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+			return nil, err
+		}
 		edges = append(edges, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return &ConnectionResult{From: from, To: to, Edges: edges}, nil
 }

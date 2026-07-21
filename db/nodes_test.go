@@ -90,7 +90,7 @@ func TestArchiveNode_SetsArchivedAt(t *testing.T) {
 	}
 
 	// ListArchived should now include this node
-	archived, err := s.ListArchived("", nil, nil)
+	archived, err := s.ListArchived("", nil, nil, 0)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestRestoreNode_RemovedFromListArchived(t *testing.T) {
 	s.ArchiveNode(n.ID, "reason")
 	s.RestoreNode(n.ID)
 
-	archived, err := s.ListArchived("", nil, nil)
+	archived, err := s.ListArchived("", nil, nil, 0)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestListArchived_DomainFilter(t *testing.T) {
 	s.ArchiveNode(nA.ID, "")
 	s.ArchiveNode(nB.ID, "")
 
-	archived, err := s.ListArchived("domain-a", nil, nil)
+	archived, err := s.ListArchived("domain-a", nil, nil, 0)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestListArchived_Empty(t *testing.T) {
 	s := newStore(t)
 	mustAddNode(t, s, "live node", "proj")
 
-	archived, err := s.ListArchived("", nil, nil)
+	archived, err := s.ListArchived("", nil, nil, 0)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestListArchived_NoDomainReturnsAll(t *testing.T) {
 	s.ArchiveNode(nA.ID, "")
 	s.ArchiveNode(nB.ID, "")
 
-	archived, err := s.ListArchived("", nil, nil)
+	archived, err := s.ListArchived("", nil, nil, 0)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestListArchived_LiveNodesNotIncluded(t *testing.T) {
 	archived := mustAddNode(t, s, "archived", "proj")
 	s.ArchiveNode(archived.ID, "reason")
 
-	listed, err := s.ListArchived("", nil, nil)
+	listed, err := s.ListArchived("", nil, nil, 0)
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
@@ -541,7 +541,7 @@ func TestAddNode_NodeKind_AllValues(t *testing.T) {
 func TestGetStandingNodes_Empty(t *testing.T) {
 	s := newStore(t)
 	mustAddNode(t, s, "just a decision", "proj")
-	nodes, err := s.GetStandingNodes("proj")
+	nodes, _, err := s.GetStandingNodes("proj", 0)
 	if err != nil {
 		t.Fatalf("GetStandingNodes: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestGetStandingNodes_OrderedByInboundEdgeCount(t *testing.T) {
 	s.AddEdge(linkerB.ID, two.ID, "governed_by", "")
 	s.AddEdge(linkerC.ID, two.ID, "governed_by", "")
 
-	nodes, err := s.GetStandingNodes("proj")
+	nodes, _, err := s.GetStandingNodes("proj", 0)
 	if err != nil {
 		t.Fatalf("GetStandingNodes: %v", err)
 	}
@@ -744,7 +744,7 @@ func TestListArchived_TagsFilter(t *testing.T) {
 	s.ArchiveNode(n1.ID, "test archive")
 	s.ArchiveNode(n2.ID, "test archive")
 
-	nodes, err := s.ListArchived("", []string{"spike"}, nil)
+	nodes, err := s.ListArchived("", []string{"spike"}, nil, 0)
 	if err != nil {
 		t.Fatalf("ListArchived with tags: %v", err)
 	}

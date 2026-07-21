@@ -17,11 +17,15 @@ type ScoredNode struct {
 
 // SignificanceResult holds the four sections returned by GetSignificance.
 type SignificanceResult struct {
-	Declared         []Node       `json:"declared"`
-	Structural       []ScoredNode `json:"structural"`
-	Uncurated        []ScoredNode `json:"uncurated"`
-	PotentiallyStale []Node       `json:"potentially_stale"`
-	CallID           string       `json:"call_id"`
+	Declared                         []Node       `json:"declared"`
+	Structural                       []ScoredNode `json:"structural"`
+	Uncurated                        []ScoredNode `json:"uncurated"`
+	PotentiallyStale                 []Node       `json:"potentially_stale"`
+	CallID                           string       `json:"call_id"`
+	DeclaredResultsTruncated         bool         `json:"declared_results_truncated"`
+	StructuralResultsTruncated       bool         `json:"structural_results_truncated"`
+	UncuratedResultsTruncated        bool         `json:"uncurated_results_truncated"`
+	PotentiallyStaleResultsTruncated bool         `json:"potentially_stale_results_truncated"`
 }
 
 // GetSignificance returns a dual-signal importance analysis for a domain.
@@ -38,7 +42,7 @@ type SignificanceResult struct {
 // Every call writes rows to significance_log (one per returned node in
 // structural, uncurated, potentially_stale) so the decay function can be
 // validated over time.
-func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int, tags, nodeKinds []string) (SignificanceResult, error) {
+func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int, tags, nodeKinds []string, declaredLimit int) (SignificanceResult, error) {
 	callID := shortID()
 	var res SignificanceResult
 	res.CallID = callID
@@ -51,6 +55,10 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	declaredQ := `SELECT id, label, description, why_matters, tags, domain,
 		       created_at, updated_at, occurred_at, archived_at, node_kind
 		FROM nodes WHERE ` + strings.Join(declaredConds, " AND ") + ` ORDER BY occurred_at ASC`
+	if declaredLimit > 0 {
+		declaredQ += ` LIMIT ?`
+		declaredArgs = append(declaredArgs, declaredLimit+1)
+	}
 	declaredRows, err := s.db.Query(declaredQ, declaredArgs...)
 	if err != nil {
 		return res, fmt.Errorf("GetSignificance declared: %w", err)
@@ -69,6 +77,12 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	if res.Declared == nil {
 		res.Declared = []Node{}
 	}
+	if declaredLimit > 0 {
+		res.DeclaredResultsTruncated = len(res.Declared) > declaredLimit
+		if res.DeclaredResultsTruncated {
+			res.Declared = res.Declared[:declaredLimit]
+		}
+	}
 
 	// ── structural ────────────────────────────────────────────────────────────
 	structConds := []string{
@@ -80,7 +94,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	structArgs := []interface{}{domain, recencyWindowDays}
 	structConds, structArgs = tagFilter("n.tags", tags, structConds, structArgs)
 	structConds, structArgs = nodeKindFilter("n.node_kind", nodeKinds, structConds, structArgs)
-	structArgs = append(structArgs, limit)
+	structArgs = append(structArgs, limit+1)
 	structQ := `SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
 		       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.node_kind,
 		       SUM(1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS importance_score
@@ -124,6 +138,14 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	if res.Structural == nil {
 		res.Structural = []ScoredNode{}
 	}
+	res.StructuralResultsTruncated = len(res.Structural) > limit
+	if res.StructuralResultsTruncated {
+		res.Structural = res.Structural[:limit]
+		structIDs = map[string]bool{}
+		for _, sn := range res.Structural {
+			structIDs[sn.ID] = true
+		}
+	}
 
 	// ── uncurated: structural top-N with no occurred_at ───────────────────────
 	for _, sn := range res.Structural {
@@ -134,15 +156,52 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	if res.Uncurated == nil {
 		res.Uncurated = []ScoredNode{}
 	}
+	res.UncuratedResultsTruncated = res.StructuralResultsTruncated
 
-	// ── potentially_stale: declared but not in structural ─────────────────────
-	for _, n := range res.Declared {
-		if !structIDs[n.ID] {
-			res.PotentiallyStale = append(res.PotentiallyStale, n)
+	// ── potentially_stale: declared but not in structural top-N ─────────────────
+	psConds := []string{"domain = ?", "occurred_at IS NOT NULL", "archived_at IS NULL"}
+	psArgs := []interface{}{domain}
+	psConds, psArgs = tagFilter("tags", tags, psConds, psArgs)
+	psConds, psArgs = nodeKindFilter("node_kind", nodeKinds, psConds, psArgs)
+	if len(structIDs) > 0 {
+		structIDList := make([]string, 0, len(structIDs))
+		for id := range structIDs {
+			structIDList = append(structIDList, id)
 		}
+		ph, phArgs := inClause(structIDList)
+		psConds = append(psConds, "id NOT IN ("+ph+")")
+		psArgs = append(psArgs, phArgs...)
+	}
+	psQ := `SELECT id, label, description, why_matters, tags, domain,
+	       created_at, updated_at, occurred_at, archived_at, node_kind
+	FROM nodes WHERE ` + strings.Join(psConds, " AND ") + ` ORDER BY occurred_at ASC`
+	if declaredLimit > 0 {
+		psQ += ` LIMIT ?`
+		psArgs = append(psArgs, declaredLimit+1)
+	}
+	psRows, err := s.db.Query(psQ, psArgs...)
+	if err != nil {
+		return res, fmt.Errorf("GetSignificance potentially_stale: %w", err)
+	}
+	defer psRows.Close()
+	for psRows.Next() {
+		n, err := scanNode(psRows)
+		if err != nil {
+			return res, fmt.Errorf("GetSignificance scan potentially_stale: %w", err)
+		}
+		res.PotentiallyStale = append(res.PotentiallyStale, n)
+	}
+	if err := psRows.Err(); err != nil {
+		return res, fmt.Errorf("GetSignificance potentially_stale rows: %w", err)
 	}
 	if res.PotentiallyStale == nil {
 		res.PotentiallyStale = []Node{}
+	}
+	if declaredLimit > 0 {
+		res.PotentiallyStaleResultsTruncated = len(res.PotentiallyStale) > declaredLimit
+		if res.PotentiallyStaleResultsTruncated {
+			res.PotentiallyStale = res.PotentiallyStale[:declaredLimit]
+		}
 	}
 
 	// ── log ───────────────────────────────────────────────────────────────────

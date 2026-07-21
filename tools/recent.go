@@ -36,19 +36,21 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	if a.MemoryID != "" {
-		nodes, err := h.store.RecentChangesScoped(a.MemoryID, 2, "", tags, nodeKinds, a.Limit)
+		nodes, err := h.store.RecentChangesScoped(a.MemoryID, 2, "", tags, nodeKinds, a.Limit+1)
 		if err != nil {
 			return nil, err
 		}
-		return marshalRecentList(toLeanEntries(nodes), a.Digest)
+		nodes, truncated := trimWithTruncation(nodes, a.Limit)
+		return marshalRecentList(toLeanEntries(nodes), truncated, a.Digest)
 	}
 
 	if len(tags) > 0 || len(nodeKinds) > 0 {
-		nodes, err := h.store.RecentChangesScoped("", 2, a.Domain, tags, nodeKinds, a.Limit)
+		nodes, err := h.store.RecentChangesScoped("", 2, a.Domain, tags, nodeKinds, a.Limit+1)
 		if err != nil {
 			return nil, err
 		}
-		return marshalRecentList(toLeanEntries(nodes), a.Digest)
+		nodes, truncated := trimWithTruncation(nodes, a.Limit)
+		return marshalRecentList(toLeanEntries(nodes), truncated, a.Digest)
 	}
 
 	if a.GroupByDomain && a.Domain == "" {
@@ -59,22 +61,29 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		}
 		grouped := make(map[string][]db.Node)
 		domainOrder := []string{}
+		resultsTruncated := false
 		for _, n := range all {
 			if _, seen := grouped[n.Domain]; !seen {
 				domainOrder = append(domainOrder, n.Domain)
 			}
-			if len(grouped[n.Domain]) < perDomain {
-				grouped[n.Domain] = append(grouped[n.Domain], n)
+			if len(grouped[n.Domain]) >= perDomain {
+				resultsTruncated = true
+				continue
 			}
+			grouped[n.Domain] = append(grouped[n.Domain], n)
 		}
 		if a.Digest {
-			out := make([]digestGroupedRecent, 0, len(domainOrder))
+			groups := make([]digestGroupedRecent, 0, len(domainOrder))
 			for _, d := range domainOrder {
-				out = append(out, digestGroupedRecent{
+				groups = append(groups, digestGroupedRecent{
 					Domain: d,
 					Lines:  digestLinesFromEntries(toLeanEntries(grouped[d])),
 				})
 			}
+			out := struct {
+				Groups           []digestGroupedRecent `json:"groups"`
+				ResultsTruncated bool                  `json:"results_truncated"`
+			}{Groups: groups, ResultsTruncated: resultsTruncated}
 			b, _ := json.MarshalIndent(out, "", "  ")
 			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 		}
@@ -82,29 +91,39 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 			Domain string      `json:"domain"`
 			Nodes  []leanEntry `json:"nodes"`
 		}
-		out := make([]groupedResult, 0, len(domainOrder))
+		groups := make([]groupedResult, 0, len(domainOrder))
 		for _, d := range domainOrder {
-			out = append(out, groupedResult{Domain: d, Nodes: toLeanEntries(grouped[d])})
+			groups = append(groups, groupedResult{Domain: d, Nodes: toLeanEntries(grouped[d])})
 		}
+		out := struct {
+			Groups           []groupedResult `json:"groups"`
+			ResultsTruncated bool            `json:"results_truncated"`
+		}{Groups: groups, ResultsTruncated: resultsTruncated}
 		b, _ := json.MarshalIndent(out, "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 
-	nodes, err := h.store.RecentChanges(a.Domain, a.Limit, nodeKinds)
+	nodes, err := h.store.RecentChanges(a.Domain, a.Limit+1, nodeKinds)
 	if err != nil {
 		return nil, err
 	}
-	return marshalRecentList(toLeanEntries(nodes), a.Digest)
+	nodes, truncated := trimWithTruncation(nodes, a.Limit)
+	return marshalRecentList(toLeanEntries(nodes), truncated, a.Digest)
 }
 
-func marshalRecentList(entries []leanEntry, digest bool) (*ToolResult, error) {
+func marshalRecentList(entries []leanEntry, resultsTruncated bool, digest bool) (*ToolResult, error) {
 	if digest {
 		out := struct {
-			Lines []string `json:"lines"`
-		}{Lines: digestLinesFromEntries(entries)}
+			Lines            []string `json:"lines"`
+			ResultsTruncated bool     `json:"results_truncated"`
+		}{Lines: digestLinesFromEntries(entries), ResultsTruncated: resultsTruncated}
 		b, _ := json.MarshalIndent(out, "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
-	b, _ := json.MarshalIndent(entries, "", "  ")
+	out := struct {
+		Nodes            []leanEntry `json:"nodes"`
+		ResultsTruncated bool        `json:"results_truncated"`
+	}{Nodes: entries, ResultsTruncated: resultsTruncated}
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

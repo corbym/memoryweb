@@ -136,3 +136,11 @@ func decodeBatchItems[T any](items json.RawMessage, toolName string) ([]T, error
 	}
 	return out, nil
 }
+
+// trimWithTruncation caps items at limit and reports whether more existed.
+func trimWithTruncation[T any](items []T, limit int) ([]T, bool) {
+	if limit <= 0 || len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
+}

@@ -10,22 +10,30 @@ import (
 
 func (h *Handler) findConnections(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
+		FromID    string `json:"from_id"`
 		FromLabel string `json:"from_label"`
+		ToID      string `json:"to_id"`
 		ToLabel   string `json:"to_label"`
 		Domain    string `json:"domain"`
 	}
 	if err := decodeParams(args, &a, "why_connected"); err != nil {
 		return nil, err
 	}
-	if err := requireNonEmpty(map[string]string{
-		"from_label": a.FromLabel,
-		"to_label":   a.ToLabel,
-	}); err != nil {
-		return nil, err
+	if a.FromID != "" && a.FromLabel != "" {
+		return errorResult("cannot supply both from_id and from_label"), nil
 	}
-	result, err := h.store.FindConnections(a.FromLabel, a.ToLabel, a.Domain)
+	if a.ToID != "" && a.ToLabel != "" {
+		return errorResult("cannot supply both to_id and to_label"), nil
+	}
+	if a.FromID == "" && a.FromLabel == "" {
+		return errorResult("from_id or from_label is required"), nil
+	}
+	if a.ToID == "" && a.ToLabel == "" {
+		return errorResult("to_id or to_label is required"), nil
+	}
+	result, err := h.store.FindConnectionsResolved(a.FromID, a.FromLabel, a.ToID, a.ToLabel, a.Domain)
 	if err != nil {
-		return nil, err
+		return errorResult(err.Error()), nil
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil

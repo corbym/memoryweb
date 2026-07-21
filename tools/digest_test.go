@@ -199,10 +199,7 @@ func TestAudit_DigestMode_Stale(t *testing.T) {
 	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": "digest-audit-stale", "digest": true})
 	mustNotError(t, tr)
 
-	var lines []string
-	if err := json.Unmarshal([]byte(text(t, tr)), &lines); err != nil {
-		t.Fatalf("digest audit stale with 2+ items must return string array, got: %s", text(t, tr))
-	}
+	lines := unmarshalDigestLines(t, text(t, tr))
 	if len(lines) < 2 {
 		t.Fatalf("expected at least 2 stale digest lines, got %d", len(lines))
 	}
@@ -216,10 +213,7 @@ func TestAudit_DigestMode_Orphans(t *testing.T) {
 	tr := call(t, h, "audit", map[string]any{"mode": "orphans", "domain": "digest-audit", "digest": true})
 	mustNotError(t, tr)
 
-	var lines []string
-	if err := json.Unmarshal([]byte(text(t, tr)), &lines); err != nil {
-		t.Fatalf("digest audit orphans must return string array at top level, got: %s", text(t, tr))
-	}
+	lines := unmarshalDigestLines(t, text(t, tr))
 	if len(lines) < 2 {
 		t.Fatalf("expected at least 2 digest lines for orphans, got %d", len(lines))
 	}
@@ -291,10 +285,7 @@ func TestAudit_DigestMode_Stale_SingleEntryReturnsLinesArray(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var lines []string
-	if err := json.Unmarshal([]byte(text(t, tr)), &lines); err != nil {
-		t.Fatalf("digest audit with 1 result must return string array, got: %s", text(t, tr))
-	}
+	lines := unmarshalDigestLines(t, text(t, tr))
 	if len(lines) != 1 {
 		t.Fatalf("expected exactly 1 digest line, got %d", len(lines))
 	}
@@ -332,10 +323,7 @@ func TestAudit_DigestMode_Orphans_SingleEntryReturnsLinesArray(t *testing.T) {
 	tr := call(t, h, "audit", map[string]any{"mode": "orphans", "domain": "digest-audit-single", "digest": true})
 	mustNotError(t, tr)
 
-	var lines []string
-	if err := json.Unmarshal([]byte(text(t, tr)), &lines); err != nil {
-		t.Fatalf("digest audit with 1 orphan must return string array, got: %s", text(t, tr))
-	}
+	lines := unmarshalDigestLines(t, text(t, tr))
 	if len(lines) != 1 {
 		t.Fatalf("expected exactly 1 digest line, got %d", len(lines))
 	}
@@ -352,10 +340,13 @@ func TestAudit_DigestMode_Archived(t *testing.T) {
 	tr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": "digest-archived", "digest": true})
 	mustNotError(t, tr)
 
-	var lines []string
-	if err := json.Unmarshal([]byte(text(t, tr)), &lines); err != nil {
-		t.Fatalf("digest audit archived with 2+ items must return string array, got: %s", text(t, tr))
+	var resp struct {
+		Nodes []string `json:"nodes"`
 	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("digest audit archived response: %v", err)
+	}
+	lines := resp.Nodes
 	if len(lines) < 2 {
 		t.Fatalf("expected at least 2 archived digest lines, got %d", len(lines))
 	}

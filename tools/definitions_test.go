@@ -119,7 +119,7 @@ func TestListTools_DescriptionsPresent(t *testing.T) {
 		"recall":              "Retrieve a memory and all its connections by ID",
 		"search":              "Search memories by text",
 		"recent":              "List the most recently added or updated memories",
-		"why_connected":       "Find how two concepts are related",
+		"why_connected":       "Find direct connections between two memories",
 		"history":             "Returns memories in chronological order by effective date",
 		"significance":        "Dual-signal importance analysis",
 		"alias":               "Manage domain aliases",
@@ -132,7 +132,7 @@ func TestListTools_DescriptionsPresent(t *testing.T) {
 		"suggest_connections": "Given a memory ID, return up to 5 candidate connections",
 		"domains":             "Return all known domains and registered aliases",
 		"disconnect":          "Remove a connection between two memories by edge ID",
-		"trace":               "Find the shortest chain of relationships",
+		"trace":               "Find the shortest multi-hop chain",
 		"visualise":           "Generate a Mermaid.js flowchart",
 		"rename_domain":       "Rename a domain",
 	}

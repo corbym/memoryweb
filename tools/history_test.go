@@ -21,10 +21,13 @@ func TestTimeline_OrderedByOccurredAt(t *testing.T) {
 	tr := call(t, h, "history", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
-	var nodes []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &nodes)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	nodes := resp.Nodes
 	if len(nodes) < 2 {
 		t.Fatalf("expected 2 timeline nodes, got %d", len(nodes))
 	}
@@ -45,10 +48,13 @@ func TestTimeline_ExcludesNodesWithoutOccurredAt(t *testing.T) {
 	tr := call(t, h, "history", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
-	var nodes []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &nodes)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	nodes := resp.Nodes
 	for _, n := range nodes {
 		if n.ID == idDated {
 			return // found it — pass
@@ -68,10 +74,13 @@ func TestTimeline_ArchivedNodeExcluded(t *testing.T) {
 	tr := call(t, h, "history", map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
-	var nodes []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &nodes)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	nodes := resp.Nodes
 	for _, n := range nodes {
 		if n.ID == id {
 			t.Error("archived node should not appear in timeline")
@@ -101,10 +110,13 @@ func TestTimeline_DateRangeFilter(t *testing.T) {
 	})
 	mustNotError(t, tr)
 
-	var nodes []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
 	}
-	json.Unmarshal([]byte(text(t, tr)), &nodes)
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	nodes := resp.Nodes
 	if len(nodes) != 1 || nodes[0].ID != idMar {
 		t.Errorf("date range should return only Mar event; got %+v", nodes)
 	}
@@ -126,12 +138,9 @@ func TestTimeline_EmptyReturnsGracefully(t *testing.T) {
 
 func historyIDs(t *testing.T, tr *tools.ToolResult) []string {
 	t.Helper()
-	var nodes []struct {
+	nodes := unmarshalNodesList[struct {
 		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(text(t, tr)), &nodes); err != nil {
-		t.Fatalf("parse history response: %v", err)
-	}
+	}](t, text(t, tr))
 	ids := make([]string, len(nodes))
 	for i, n := range nodes {
 		ids[i] = n.ID

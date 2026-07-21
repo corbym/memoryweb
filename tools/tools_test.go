@@ -112,6 +112,39 @@ func text(t *testing.T, tr *tools.ToolResult) string {
 	return tr.Content[0].Text
 }
 
+func unmarshalNodesList[T any](t *testing.T, body string) []T {
+	t.Helper()
+	var resp struct {
+		Nodes []T `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("parse nodes list response: %v\nbody: %s", err, body)
+	}
+	return resp.Nodes
+}
+
+func unmarshalAuditStaleCandidates[T any](t *testing.T, body string) []T {
+	t.Helper()
+	var resp struct {
+		Candidates []T `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("parse audit stale response: %v\nbody: %s", err, body)
+	}
+	return resp.Candidates
+}
+
+func unmarshalDigestLines(t *testing.T, body string) []string {
+	t.Helper()
+	var resp struct {
+		Lines []string `json:"lines"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("parse digest lines response: %v\nbody: %s", err, body)
+	}
+	return resp.Lines
+}
+
 // mustNotError fails the test if the ToolResult is an error.
 func mustNotError(t *testing.T, tr *tools.ToolResult) {
 	t.Helper()

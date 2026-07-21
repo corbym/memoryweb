@@ -16,7 +16,7 @@ var minimalArgs = map[string]map[string]any{
 	"recall":              {"id": "test-id"},
 	"search":              {"query": "x"},
 	"recent":              {},
-	"why_connected":       {"from_label": "a", "to_label": "b"},
+	"why_connected":       {"from_id": "a-id", "to_id": "b-id"},
 	"history":             {"domain": "d"},
 	"significance":        {"domain": "d"},
 	"alias":               {"action": "list"},

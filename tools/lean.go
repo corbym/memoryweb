@@ -104,11 +104,15 @@ type scoredLeanEntry struct {
 // id, label, truncated why_matters, occurred_at where set; description and
 // tags omitted, consistent with the other lean retrieval tools.
 type leanSignificanceResult struct {
-	Declared         []leanEntry       `json:"declared"`
-	Structural       []scoredLeanEntry `json:"structural"`
-	Uncurated        []scoredLeanEntry `json:"uncurated"`
-	PotentiallyStale []leanEntry       `json:"potentially_stale"`
-	CallID           string            `json:"call_id"`
+	Declared                         []leanEntry       `json:"declared"`
+	Structural                       []scoredLeanEntry `json:"structural"`
+	Uncurated                        []scoredLeanEntry `json:"uncurated"`
+	PotentiallyStale                 []leanEntry       `json:"potentially_stale"`
+	CallID                           string            `json:"call_id"`
+	DeclaredResultsTruncated         bool              `json:"declared_results_truncated"`
+	StructuralResultsTruncated       bool              `json:"structural_results_truncated"`
+	UncuratedResultsTruncated        bool              `json:"uncurated_results_truncated"`
+	PotentiallyStaleResultsTruncated bool              `json:"potentially_stale_results_truncated"`
 }
 
 // leanTrustNode mirrors db.TrustNode with a lean entry — id, label, truncated
@@ -150,11 +154,15 @@ func toLeanSignificanceResult(r db.SignificanceResult) leanSignificanceResult {
 		uncurated[i] = scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore}
 	}
 	return leanSignificanceResult{
-		Declared:         toLeanEntries(r.Declared),
-		Structural:       structural,
-		Uncurated:        uncurated,
-		PotentiallyStale: toLeanEntries(r.PotentiallyStale),
-		CallID:           r.CallID,
+		Declared:                         toLeanEntries(r.Declared),
+		Structural:                       structural,
+		Uncurated:                        uncurated,
+		PotentiallyStale:                 toLeanEntries(r.PotentiallyStale),
+		CallID:                           r.CallID,
+		DeclaredResultsTruncated:         r.DeclaredResultsTruncated,
+		StructuralResultsTruncated:       r.StructuralResultsTruncated,
+		UncuratedResultsTruncated:        r.UncuratedResultsTruncated,
+		PotentiallyStaleResultsTruncated: r.PotentiallyStaleResultsTruncated,
 	}
 }
 
@@ -219,11 +227,15 @@ func toDigestSearchResult(r *db.SearchResult) digestSearchResult {
 }
 
 type digestSignificanceResult struct {
-	Declared         []string `json:"declared"`
-	Structural       []string `json:"structural"`
-	Uncurated        []string `json:"uncurated"`
-	PotentiallyStale []string `json:"potentially_stale"`
-	CallID           string   `json:"call_id"`
+	Declared                         []string `json:"declared"`
+	Structural                       []string `json:"structural"`
+	Uncurated                        []string `json:"uncurated"`
+	PotentiallyStale                 []string `json:"potentially_stale"`
+	CallID                           string   `json:"call_id"`
+	DeclaredResultsTruncated         bool     `json:"declared_results_truncated"`
+	StructuralResultsTruncated       bool     `json:"structural_results_truncated"`
+	UncuratedResultsTruncated        bool     `json:"uncurated_results_truncated"`
+	PotentiallyStaleResultsTruncated bool     `json:"potentially_stale_results_truncated"`
 }
 
 func toDigestSignificanceResult(r db.SignificanceResult) digestSignificanceResult {
@@ -236,11 +248,15 @@ func toDigestSignificanceResult(r db.SignificanceResult) digestSignificanceResul
 		uncurated[i] = digestLineFromScored(scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore})
 	}
 	return digestSignificanceResult{
-		Declared:         digestLinesFromEntries(toLeanEntries(r.Declared)),
-		Structural:       structural,
-		Uncurated:        uncurated,
-		PotentiallyStale: digestLinesFromEntries(toLeanEntries(r.PotentiallyStale)),
-		CallID:           r.CallID,
+		Declared:                         digestLinesFromEntries(toLeanEntries(r.Declared)),
+		Structural:                       structural,
+		Uncurated:                        uncurated,
+		PotentiallyStale:                 digestLinesFromEntries(toLeanEntries(r.PotentiallyStale)),
+		CallID:                           r.CallID,
+		DeclaredResultsTruncated:         r.DeclaredResultsTruncated,
+		StructuralResultsTruncated:       r.StructuralResultsTruncated,
+		UncuratedResultsTruncated:        r.UncuratedResultsTruncated,
+		PotentiallyStaleResultsTruncated: r.PotentiallyStaleResultsTruncated,
 	}
 }
 
@@ -294,13 +310,6 @@ func digestLineFromDrift(c db.DriftCandidate) string {
 	reason := sanitiseDigestField(c.Reason)
 	line := digestLineFromEntry(toLeanEntry(c.Node))
 	return fmt.Sprintf("%s (%s, edges: %d)", line, reason, c.EdgeCount)
-}
-
-func digestAuditResults(candidates []db.DriftCandidate, digest bool) interface{} {
-	if !digest {
-		return candidates
-	}
-	return digestLines(candidates, digestLineFromDrift)
 }
 
 func digestNodeList(nodes []db.Node, digest bool) interface{} {

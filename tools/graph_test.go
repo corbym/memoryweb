@@ -2,6 +2,7 @@ package tools_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -55,6 +56,96 @@ func TestFindConnections_NoMatchReturnsNilNodes(t *testing.T) {
 	}
 }
 
+func TestWhyConnected_FromIDToID_ReturnsDirectEdges(t *testing.T) {
+	_, h := newEnv(t)
+	to := addNode(t, h, "Target memory", "deep-game", nil)
+	from := addNode(t, h, "Source memory", "deep-game", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": from, "to_memory": to, "relationship": "depends_on",
+		"narrative": "source depends on target",
+	}))
+
+	tr := call(t, h, "why_connected", map[string]any{"from_id": from, "to_id": to})
+	mustNotError(t, tr)
+
+	var result struct {
+		From  map[string]any   `json:"from"`
+		To    map[string]any   `json:"to"`
+		Edges []map[string]any `json:"edges"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if result.From["id"] != from || result.To["id"] != to {
+		t.Errorf("expected exact nodes %q -> %q; got %v -> %v", from, to, result.From["id"], result.To["id"])
+	}
+	if len(result.Edges) == 0 {
+		t.Error("expected at least one direct edge")
+	}
+}
+
+func TestWhyConnected_UnknownIDErrors(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "Known node", "deep-game", nil)
+
+	tr := call(t, h, "why_connected", map[string]any{
+		"from_id": id, "to_id": "no-such-id-abcdef12",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "no-such-id-abcdef12") {
+		t.Errorf("error should name missing id; got: %s", text(t, tr))
+	}
+}
+
+func TestWhyConnected_IDAndLabelConflictErrors(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "Some node", "deep-game", nil)
+
+	tr := call(t, h, "why_connected", map[string]any{
+		"from_id": id, "from_label": "Some node", "to_label": "other",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "from_id") || !strings.Contains(text(t, tr), "from_label") {
+		t.Errorf("expected from_id/from_label conflict error; got: %s", text(t, tr))
+	}
+}
+
+func TestWhyConnected_MixedIDAndLabel(t *testing.T) {
+	_, h := newEnv(t)
+	to := addNode(t, h, "Mixed target", "deep-game", nil)
+	from := addNode(t, h, "Mixed source", "deep-game", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": from, "to_memory": to, "relationship": "connects_to",
+	}))
+
+	tr := call(t, h, "why_connected", map[string]any{
+		"from_id": from, "to_label": "Mixed target", "domain": "deep-game",
+	})
+	mustNotError(t, tr)
+
+	var result struct {
+		From map[string]any `json:"from"`
+		To   map[string]any `json:"to"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &result); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if result.From["id"] != from || result.To["id"] != to {
+		t.Errorf("mixed id/label resolution failed: got %v -> %v", result.From["id"], result.To["id"])
+	}
+}
+
+func TestWhyConnected_IDDoesNotFallbackToLabel(t *testing.T) {
+	_, h := newEnv(t)
+	labelMatch := addNode(t, h, "Label match node", "deep-game", nil)
+	addNode(t, h, "Other node", "deep-game", nil)
+
+	tr := call(t, h, "why_connected", map[string]any{
+		"from_id": "wrong-id-12345678", "to_id": labelMatch,
+	})
+	mustError(t, tr)
+}
+
 func TestFindConnections_ArchivedNodeNotMatched(t *testing.T) {
 	store, h := newEnv(t)
 	id := addNode(t, h, "Invisible archived node", "deep-game", nil)
@@ -72,6 +163,219 @@ func TestFindConnections_ArchivedNodeNotMatched(t *testing.T) {
 	json.Unmarshal([]byte(text(t, tr)), &result)
 	if result.From != nil {
 		t.Error("archived node should not be matched by find_connections")
+	}
+}
+
+func TestWhyConnected_StrictDecode_RejectsUnknownFields(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "why_connected", map[string]any{
+		"from_label": "a", "to_label": "b", "bogus": true,
+	})
+	mustError(t, tr)
+}
+
+func TestOrient_ResultsTruncatedWhenRecentExceedsCap(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "orient-trunc-recent"
+	for i := 0; i < 7; i++ {
+		addNode(t, h, fmt.Sprintf("Recent node %d", i), domain, nil)
+	}
+	tr := call(t, h, "orient", map[string]any{"domain": domain})
+	mustNotError(t, tr)
+	var resp struct {
+		RecentResultsTruncated bool `json:"recent_results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient: %v", err)
+	}
+	if !resp.RecentResultsTruncated {
+		t.Error("recent_results_truncated should be true when domain has more than 5 recent updates")
+	}
+}
+
+func TestSignificance_DeclaredResultsTruncated(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "sig-trunc-declared"
+	for i := 0; i < 3; i++ {
+		addNode(t, h, fmt.Sprintf("Declared %d", i), domain, map[string]any{
+			"occurred_at": fmt.Sprintf("2026-01-%02d", i+1),
+			"why_matters": "declared spine entry",
+		})
+	}
+	tr := call(t, h, "significance", map[string]any{"domain": domain, "declared_limit": 2})
+	mustNotError(t, tr)
+	var resp struct {
+		Declared                 []any `json:"declared"`
+		DeclaredResultsTruncated bool  `json:"declared_results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse significance: %v", err)
+	}
+	if len(resp.Declared) != 2 {
+		t.Errorf("declared_limit 2: want 2 entries, got %d", len(resp.Declared))
+	}
+	if !resp.DeclaredResultsTruncated {
+		t.Error("declared_results_truncated should be true")
+	}
+}
+
+func TestAudit_Stale_ResultsTruncated(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "audit-trunc-stale"
+	for i := 0; i < 3; i++ {
+		addNode(t, h, fmt.Sprintf("duplicate label %d", i), domain, nil)
+	}
+	addNode(t, h, "duplicate label", domain, nil)
+	addNode(t, h, "duplicate label", domain, nil)
+
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": domain, "limit": 1})
+	mustNotError(t, tr)
+	var resp struct {
+		Candidates       []any `json:"candidates"`
+		ResultsTruncated bool  `json:"results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse audit stale: %v", err)
+	}
+	if len(resp.Candidates) != 1 {
+		t.Errorf("limit 1: want 1 candidate, got %d", len(resp.Candidates))
+	}
+	if !resp.ResultsTruncated {
+		t.Error("results_truncated should be true")
+	}
+}
+
+func TestSignificance_RaiseDeclaredLimitReturnsMore(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "sig-raise-declared"
+	for i := 0; i < 4; i++ {
+		addNode(t, h, fmt.Sprintf("Declared raise %d", i), domain, map[string]any{
+			"occurred_at": fmt.Sprintf("2026-02-%02d", i+1),
+			"why_matters": "declared entry",
+		})
+	}
+
+	trLow := call(t, h, "significance", map[string]any{"domain": domain, "declared_limit": 2})
+	mustNotError(t, trLow)
+	var low struct {
+		Declared                 []any `json:"declared"`
+		DeclaredResultsTruncated bool  `json:"declared_results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, trLow)), &low); err != nil {
+		t.Fatalf("parse low: %v", err)
+	}
+	if len(low.Declared) != 2 || !low.DeclaredResultsTruncated {
+		t.Fatalf("declared_limit 2: want 2 truncated entries, got %d truncated=%v", len(low.Declared), low.DeclaredResultsTruncated)
+	}
+
+	trHigh := call(t, h, "significance", map[string]any{"domain": domain, "declared_limit": 4})
+	mustNotError(t, trHigh)
+	var high struct {
+		Declared                 []any `json:"declared"`
+		DeclaredResultsTruncated bool  `json:"declared_results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, trHigh)), &high); err != nil {
+		t.Fatalf("parse high: %v", err)
+	}
+	if len(high.Declared) <= len(low.Declared) {
+		t.Errorf("raising declared_limit should return more entries: low=%d high=%d", len(low.Declared), len(high.Declared))
+	}
+	if high.DeclaredResultsTruncated {
+		t.Error("declared_results_truncated should be false when limit covers all entries")
+	}
+}
+
+func TestSignificance_RaiseStructuralLimitReturnsMore(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "sig-raise-structural"
+	for i := 0; i < 4; i++ {
+		target := addNode(t, h, fmt.Sprintf("Structural target %d", i), domain, nil)
+		source := addNode(t, h, fmt.Sprintf("Structural source %d", i), domain, nil)
+		mustNotError(t, call(t, h, "connect", map[string]any{
+			"from_memory": source, "to_memory": target, "relationship": "depends_on",
+		}))
+	}
+
+	trLow := call(t, h, "significance", map[string]any{"domain": domain, "limit": 1})
+	mustNotError(t, trLow)
+	var low struct {
+		Structural                 []any `json:"structural"`
+		StructuralResultsTruncated bool  `json:"structural_results_truncated"`
+	}
+	json.Unmarshal([]byte(text(t, trLow)), &low)
+	if len(low.Structural) != 1 || !low.StructuralResultsTruncated {
+		t.Fatalf("limit 1: want 1 truncated structural entry, got %d truncated=%v", len(low.Structural), low.StructuralResultsTruncated)
+	}
+
+	trHigh := call(t, h, "significance", map[string]any{"domain": domain, "limit": 5})
+	mustNotError(t, trHigh)
+	var high struct {
+		Structural                 []any `json:"structural"`
+		StructuralResultsTruncated bool  `json:"structural_results_truncated"`
+	}
+	json.Unmarshal([]byte(text(t, trHigh)), &high)
+	if len(high.Structural) <= len(low.Structural) {
+		t.Errorf("raising limit should return more structural entries: low=%d high=%d", len(low.Structural), len(high.Structural))
+	}
+}
+
+func TestSignificance_UncuratedResultsTruncatedMirrorsStructural(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "sig-uncurated-trunc"
+	for i := 0; i < 4; i++ {
+		target := addNode(t, h, fmt.Sprintf("Uncurated target %d", i), domain, nil)
+		source := addNode(t, h, fmt.Sprintf("Uncurated source %d", i), domain, nil)
+		mustNotError(t, call(t, h, "connect", map[string]any{
+			"from_memory": source, "to_memory": target, "relationship": "depends_on",
+		}))
+	}
+
+	tr := call(t, h, "significance", map[string]any{"domain": domain, "limit": 1})
+	mustNotError(t, tr)
+	var resp struct {
+		StructuralResultsTruncated bool `json:"structural_results_truncated"`
+		UncuratedResultsTruncated  bool `json:"uncurated_results_truncated"`
+	}
+	json.Unmarshal([]byte(text(t, tr)), &resp)
+	if !resp.StructuralResultsTruncated {
+		t.Fatal("structural_results_truncated should be true")
+	}
+	if resp.UncuratedResultsTruncated != resp.StructuralResultsTruncated {
+		t.Errorf("uncurated_results_truncated should mirror structural: uncurated=%v structural=%v",
+			resp.UncuratedResultsTruncated, resp.StructuralResultsTruncated)
+	}
+}
+
+func TestOrient_CrossDomain_ResultsTruncated(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "orient-cross-trunc"
+	for i := 0; i < 8; i++ {
+		addNode(t, h, fmt.Sprintf("Cross domain node %d", i), domain, nil)
+	}
+
+	tr := call(t, h, "orient", map[string]any{})
+	mustNotError(t, tr)
+	var resp struct {
+		ResultsTruncated bool `json:"results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse cross-domain orient: %v", err)
+	}
+	if !resp.ResultsTruncated {
+		t.Error("results_truncated should be true when a domain has more than 5 recent updates")
+	}
+}
+
+func TestOrient_RulesResultsTruncatedFalseIsPresent(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "orient-rules-false"
+	addNode(t, h, "Only node", domain, nil)
+
+	tr := call(t, h, "orient", map[string]any{"domain": domain})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, `"rules_results_truncated": false`) {
+		t.Errorf("rules_results_truncated:false should be present in JSON; got:\n%s", body)
 	}
 }
 

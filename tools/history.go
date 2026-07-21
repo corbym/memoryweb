@@ -62,24 +62,31 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 	}
 	nodeKinds := splitNodeKinds(a.NodeKind)
 	var nodes []db.Node
+	fetchLimit := a.Limit + 1
 	if a.MemoryID != "" {
 		if a.Depth <= 0 {
 			a.Depth = 2
 		}
-		nodes, err = h.store.GetHistoryForMemoryID(a.MemoryID, a.Depth, a.ImportantOnly, tags, nodeKinds, from, to, a.Limit)
+		nodes, err = h.store.GetHistoryForMemoryID(a.MemoryID, a.Depth, a.ImportantOnly, tags, nodeKinds, from, to, fetchLimit)
 	} else {
-		nodes, err = h.store.Timeline(a.Domain, a.ImportantOnly, tags, nodeKinds, from, to, a.Limit)
+		nodes, err = h.store.Timeline(a.Domain, a.ImportantOnly, tags, nodeKinds, from, to, fetchLimit)
 	}
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
+	nodes, resultsTruncated := trimWithTruncation(nodes, a.Limit)
 	if a.Digest {
 		out := struct {
-			Lines []string `json:"lines"`
-		}{Lines: digestLinesFromEntries(toLeanEntries(nodes))}
+			Lines            []string `json:"lines"`
+			ResultsTruncated bool     `json:"results_truncated"`
+		}{Lines: digestLinesFromEntries(toLeanEntries(nodes)), ResultsTruncated: resultsTruncated}
 		b, _ := json.MarshalIndent(out, "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
-	b, _ := json.MarshalIndent(toLeanEntries(nodes), "", "  ")
+	out := struct {
+		Nodes            []leanEntry `json:"nodes"`
+		ResultsTruncated bool        `json:"results_truncated"`
+	}{Nodes: toLeanEntries(nodes), ResultsTruncated: resultsTruncated}
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

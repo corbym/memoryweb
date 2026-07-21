@@ -52,14 +52,29 @@ func (h *Handler) restoreNode(args json.RawMessage) (*ToolResult, error) {
 	}}}, nil
 }
 
+const auditArchivedDefaultLimit = 25
+
 func (h *Handler) listArchived(a auditArgs) (*ToolResult, error) {
+	if a.Limit <= 0 {
+		a.Limit = auditArchivedDefaultLimit
+	}
+	if a.Limit > 500 {
+		a.Limit = 500
+	}
 	tags := splitTags(a.Tags)
 	nodeKinds := splitNodeKinds(a.NodeKind)
-	nodes, err := h.store.ListArchived(a.Domain, tags, nodeKinds)
+	nodes, err := h.store.ListArchived(a.Domain, tags, nodeKinds, a.Limit)
 	if err != nil {
 		return nil, err
 	}
-	out := digestNodeList(nodes, a.Digest)
+	resultsTruncated := len(nodes) > a.Limit
+	if resultsTruncated {
+		nodes = nodes[:a.Limit]
+	}
+	out := auditArchivedResult{
+		Nodes:            digestNodeList(nodes, a.Digest),
+		ResultsTruncated: resultsTruncated,
+	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
@@ -119,8 +134,29 @@ func (h *Handler) auditTool(args json.RawMessage) (*ToolResult, error) {
 
 // ConflictCandidatesResult is the response shape for audit(mode=conflicts).
 type ConflictCandidatesResult struct {
-	Candidates []db.ConflictCandidate `json:"candidates"`
-	Truncated  bool                   `json:"truncated"`
+	Candidates       []db.ConflictCandidate `json:"candidates"`
+	ResultsTruncated bool                   `json:"results_truncated"`
+	Truncated        bool                   `json:"truncated,omitempty"` // deprecated alias
+}
+
+type auditStaleResult struct {
+	Candidates       []db.DriftCandidate `json:"candidates"`
+	ResultsTruncated bool                `json:"results_truncated"`
+}
+
+type auditOrphansResult struct {
+	Nodes            []db.Node `json:"nodes"`
+	ResultsTruncated bool      `json:"results_truncated"`
+}
+
+type auditArchivedResult struct {
+	Nodes            interface{} `json:"nodes"`
+	ResultsTruncated bool        `json:"results_truncated"`
+}
+
+type auditStaleDigestResult struct {
+	Lines            []string `json:"lines"`
+	ResultsTruncated bool     `json:"results_truncated"`
 }
 
 // findConflictCandidates handles mode=conflicts: returns semantically adjacent
@@ -148,8 +184,9 @@ func (h *Handler) findConflictCandidates(a auditArgs) (*ToolResult, error) {
 	}
 
 	out := ConflictCandidatesResult{
-		Candidates: candidates,
-		Truncated:  truncated,
+		Candidates:       candidates,
+		ResultsTruncated: truncated,
+		Truncated:        truncated,
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -167,26 +204,58 @@ func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 	}
 	tags := splitTags(a.Tags)
 	nodeKinds := splitNodeKinds(a.NodeKind)
-	candidates, err := h.store.FindDrift(a.Domain, a.Limit, tags, nodeKinds, a.MemoryID, a.Depth)
+	candidates, err := h.store.FindDrift(a.Domain, a.Limit+1, tags, nodeKinds, a.MemoryID, a.Depth)
 	if err != nil {
 		return nil, err
 	}
-	out := digestAuditResults(candidates, a.Digest)
+	resultsTruncated := len(candidates) > a.Limit
+	if resultsTruncated {
+		candidates = candidates[:a.Limit]
+	}
+	if a.Digest {
+		out := auditStaleDigestResult{
+			Lines:            digestLines(candidates, digestLineFromDrift),
+			ResultsTruncated: resultsTruncated,
+		}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	}
+	out := auditStaleResult{Candidates: candidates, ResultsTruncated: resultsTruncated}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
 func (h *Handler) findDisconnected(a auditArgs) (*ToolResult, error) {
+	if a.Limit <= 0 {
+		a.Limit = 50
+	}
+	if a.Limit > 500 {
+		a.Limit = 500
+	}
 	tags := splitTags(a.Tags)
 	nodeKinds := splitNodeKinds(a.NodeKind)
-	nodes, err := h.store.FindDisconnected(a.Domain, tags, nodeKinds)
+	nodes, err := h.store.FindDisconnected(a.Domain, tags, nodeKinds, a.Limit)
 	if err != nil {
 		return nil, err
 	}
 	if len(nodes) == 0 {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "No disconnected memories found."}}}, nil
+		out := auditOrphansResult{Nodes: []db.Node{}, ResultsTruncated: false}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
-	out := digestNodeList(nodes, a.Digest)
+	resultsTruncated := len(nodes) > a.Limit
+	if resultsTruncated {
+		nodes = nodes[:a.Limit]
+	}
+	if a.Digest {
+		out := auditStaleDigestResult{
+			Lines:            digestLinesFromEntries(toLeanEntries(nodes)),
+			ResultsTruncated: resultsTruncated,
+		}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	}
+	out := auditOrphansResult{Nodes: nodes, ResultsTruncated: resultsTruncated}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

@@ -1,6 +1,6 @@
 # why_connected: from_id/to_id exact-match pair verification
 
-**Status:** OPEN
+**Status:** COMPLETE
 
 **Shared-surface node:** `decision-why-connected-gains-explicit-from-id-to-id-params-exact-match-error-on-miss-becomes-the-recommended-pair-verification-tool-not-trace-2d31785f`
 

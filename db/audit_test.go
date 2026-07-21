@@ -427,7 +427,7 @@ func TestGetOrphans_ExcludesReference(t *testing.T) {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	orphans, err := s.FindDisconnected("orphans-ref", nil, nil)
+	orphans, err := s.FindDisconnected("orphans-ref", nil, nil, 50)
 	if err != nil {
 		t.Fatalf("FindDisconnected: %v", err)
 	}
@@ -656,7 +656,7 @@ func TestFindDisconnected_TagsFilter(t *testing.T) {
 	inResult := mustAddNodeWithTags(t, s, "orphan review", "proj", "review")
 	mustAddNodeWithTags(t, s, "orphan other", "proj", "other")
 
-	nodes, err := s.FindDisconnected("", []string{"review"}, nil)
+	nodes, err := s.FindDisconnected("", []string{"review"}, nil, 50)
 	if err != nil {
 		t.Fatalf("FindDisconnected with tags: %v", err)
 	}
