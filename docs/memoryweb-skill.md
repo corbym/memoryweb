@@ -108,8 +108,11 @@ is easier to reason about before more nodes pile on top of it.
 
 `audit(mode=conflicts)` surfaces semantically close pairs as *candidates*,
 not confirmed contradictions — a density signal, not a queue to drive to
-zero. Connecting a flagged pair (any relationship) suppresses it from future
-sweeps; a later substantive revision to either memory lifts the suppression.
+zero. A pair is suppressed from future conflicts sweeps only when linked by
+`contradicts`, `resolved`, `resolved_by`, or `supersedes` — the same edges
+that close a contradiction. Other relationships (`caused_by`, `depends_on`,
+`connects_to`, etc.) do not suppress semantic adjacency; pre-connected pairs
+can still surface as candidates.
 
 ### `node_kind` taxonomy
 
@@ -216,18 +219,21 @@ Two different operations move memories between domains; don't confuse them:
   meaningful if `node_kind` is filed honestly. `orient(domain=X)`'s
   `significant` section also annotates load-bearing low-trust nodes inline
   (`trust: "low — …"`). `remember`/`revise` may return an advisory
-  `trust_nudge` when filing onto a low-trust dependency neighbourhood
-  (assessed before `related_to` edges are created on `remember`). On
-  `revise`, only when `label`, `description`, `why_matters`, or `node_kind`
-  change — not tags-only or domain-only updates. Batch `items` entries carry
-  the same optional fields per node. Creating a new domain may return
+  `trust_nudge` when resting on a low-trust dependency neighbourhood. On
+  `remember`, targets named in `related_to` are assessed before edges are
+  created. On `revise`, only when `label`, `description`, `why_matters`, or
+  `node_kind` change — not tags-only or domain-only updates — and outbound
+  `connects_to`, `depends_on`, `caused_by`, or `blocked_by` edges reach
+  low-trust targets. Batch `items` entries carry the same optional fields per
+  node. Creating a new domain may return
   `possible_misdomain`, `suggested_domain`, and `suggested_memory_id` when
   workspace KNN finds a closer existing domain — requires Ollama embeddings
   and sqlite-vec; absent when embeddings are unavailable.
 - `audit(mode=kind_coverage)` returns per-kind counts, legacy
-  decision/standing dominance, and `migration_candidates` — decision nodes
-  whose text suggests a different `node_kind`. Candidate-surfacing only;
-  never auto-revise.
+  decision/standing dominance, and lean `migration_candidates` (`id`, `label`,
+  truncated `why_matters`) — decision nodes whose text suggests a different
+  `node_kind`. Call `recall(id)` before acting on content. Candidate-surfacing
+  only; never auto-revise.
 
 ### Lean output — `recall(id)` before acting on content
 
@@ -295,7 +301,7 @@ than assuming this document is still accurate.
 | `connect(...)` | Wire memories together; adjudicate contradictions via `relationship=resolved` (verify the pair via `why_connected(from_id, to_id)` first) |
 | `disconnect(id)` | Hard-delete an edge by edge ID — irreversible |
 | `remember(...)` | File a new memory; may return `trust_nudge`, `possible_misdomain`/`suggested_domain`/`suggested_memory_id` on new-domain creation (KNN requires embeddings) |
-| `revise(id, ...)` | Update an existing memory; optional `trust_nudge` on content-changing updates; also handles single-node domain moves |
+| `revise(id, ...)` | Update an existing memory; optional `trust_nudge` on content-changing updates when outbound `connects_to`/`depends_on`/`caused_by`/`blocked_by` reach low-trust targets; also handles single-node domain moves |
 | `rename_domain(old, new)` | Rename an entire domain in place |
 | `forget(id, reason)` / `forget_all(items=[...])` | Archive — confirmation required |
 | `restore(id)` | Un-archive |

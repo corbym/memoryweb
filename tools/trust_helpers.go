@@ -100,7 +100,7 @@ func outboundDependencyIDs(edges []db.Edge, nodeID string) []string {
 			continue
 		}
 		switch e.Relationship {
-		case "depends_on", "caused_by", "blocked_by":
+		case "connects_to", "depends_on", "caused_by", "blocked_by":
 			ids = append(ids, e.ToNode)
 		}
 	}

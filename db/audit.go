@@ -705,7 +705,8 @@ func (s *Store) FindDisconnected(domain string, tags, nodeKinds []string, limit 
 	return scanNodeRows(rows)
 }
 
-// KindCoverageResult is the response shape for audit(mode=kind_coverage).
+// KindCoverageResult is the store-layer result for audit(mode=kind_coverage).
+// The audit tool maps MigrationCandidates to lean entries before responding.
 type KindCoverageResult struct {
 	TotalNodes          int            `json:"total_nodes"`
 	ByKind              map[string]int `json:"by_kind"`

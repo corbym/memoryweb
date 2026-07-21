@@ -286,6 +286,14 @@ func (h *Handler) findDisconnected(a auditArgs) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
+type auditKindCoverageResult struct {
+	TotalNodes          int            `json:"total_nodes"`
+	ByKind              map[string]int `json:"by_kind"`
+	LegacyDominantPct   float64        `json:"legacy_dominant_pct"`
+	MigrationCandidates []leanEntry    `json:"migration_candidates"`
+	ResultsTruncated    bool           `json:"results_truncated"`
+}
+
 func (h *Handler) findKindCoverage(a auditArgs) (*ToolResult, error) {
 	if a.Limit <= 0 {
 		a.Limit = 50
@@ -299,6 +307,13 @@ func (h *Handler) findKindCoverage(a auditArgs) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(result, "", "  ")
+	out := auditKindCoverageResult{
+		TotalNodes:          result.TotalNodes,
+		ByKind:              result.ByKind,
+		LegacyDominantPct:   result.LegacyDominantPct,
+		MigrationCandidates: toLeanEntries(result.MigrationCandidates),
+		ResultsTruncated:    result.ResultsTruncated,
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

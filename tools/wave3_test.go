@@ -208,6 +208,47 @@ func TestConnect_InvalidVerdictRejected(t *testing.T) {
 	}
 }
 
+func TestRevise_TrustNudgeOnConnectsToFromRelatedTo(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	domain := "revise-trust-connects"
+	assumption := addNode(t, h, "weak premise connects", domain, map[string]any{"node_kind": "assumption"})
+	for i := 0; i < 2; i++ {
+		a := addNode(t, h, "extra assumption", domain, map[string]any{"node_kind": "assumption"})
+		mustNotError(t, call(t, h, "connect", map[string]any{
+			"from_memory": a, "to_memory": assumption, "relationship": "connects_to",
+		}))
+	}
+
+	tr := call(t, h, "remember", map[string]any{
+		"label": "decision from related_to", "domain": domain, "why_matters": "rests on weak base",
+		"related_to": []any{assumption},
+	})
+	mustNotError(t, tr)
+	var filed struct {
+		Node struct {
+			ID string `json:"id"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &filed); err != nil {
+		t.Fatalf("parse remember: %v", err)
+	}
+
+	tr = call(t, h, "revise", map[string]any{
+		"id": filed.Node.ID, "description": "updated after filing via related_to",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		TrustNudge string `json:"trust_nudge"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.TrustNudge == "" {
+		t.Errorf("expected trust_nudge on content-changing revise via connects_to from related_to; got:\n%s", text(t, tr))
+	}
+}
+
 func TestRevise_TrustNudgeOnContentChange(t *testing.T) {
 	disableOllama(t)
 	_, store, h := newEnvWithPath(t)
@@ -429,6 +470,10 @@ func TestAudit_KindCoverage(t *testing.T) {
 	}
 	if len(resp.MigrationCandidates) == 0 {
 		t.Errorf("expected migration candidate for finding-like decision text; got:\n%s", text(t, tr))
+	}
+	body := text(t, tr)
+	if strings.Contains(body, `"description"`) {
+		t.Errorf("migration_candidates must be lean (no description); got:\n%s", body)
 	}
 }
 
