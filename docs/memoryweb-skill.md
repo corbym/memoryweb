@@ -66,7 +66,7 @@ because agents never reach them.
    not as contradiction-pair proof when IDs are known.
    Once verified, call `connect(relationship=resolved, verdict=...)` (or
    `resolved_by` / `supersedes` as the relationship type). On `resolved`,
-   optional `verdict` (`false_positive`, `reconciled`, `supersedes`)
+   optional `verdict` (`false_positive`, `reconciled`, `superseded`)
    classifies *how* the pair was adjudicated — stored on the edge and
    returned by `recall`/`why_connected`. Additive — the original
    `contradicts` edge stays on the record, and the pair stops surfacing in
@@ -148,7 +148,7 @@ then the decision with a `depends_on`/`caused_by` connection pointing at it.
 | `contradicts` | A and B directly conflict |
 | `governed_by` | A must satisfy a standing rule or constraint B |
 | `is_example_of` | A illustrates B |
-| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair. **Verify the exact pair first** via `why_connected(from_id=..., to_id=...)` — preferred — or `recall(id)`'s `edges` array (Layer 1 step 7). Do not rely on `trace` or label-only `why_connected`. Additive. On `relationship=resolved`, optional `verdict` (`false_positive`, `reconciled`, `supersedes`) classifies *how* the contradiction was adjudicated — stored on the edge and returned by `recall`/`why_connected`. |
+| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair. **Verify the exact pair first** via `why_connected(from_id=..., to_id=...)` — preferred — or `recall(id)`'s `edges` array (Layer 1 step 7). Do not rely on `trace` or label-only `why_connected`. Additive. On `relationship=resolved`, optional `verdict` (`false_positive`, `reconciled`, `superseded`) classifies *how* the contradiction was adjudicated — stored on the edge and returned by `recall`/`why_connected`. |
 
 Custom relationship strings are accepted as a fallback; prefer a typed one
 from the table above.

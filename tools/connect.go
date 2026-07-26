@@ -14,6 +14,9 @@ func validateConnectVerdict(verdict string) error {
 	if verdict == "" {
 		return nil
 	}
+	if verdict == "supersedes" {
+		return fmt.Errorf(`invalid verdict %q — use "superseded" (verdict enum is past tense; relationship type is "supersedes")`, verdict)
+	}
 	for _, v := range connectVerdictValues {
 		if verdict == v {
 			return nil

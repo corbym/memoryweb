@@ -41,11 +41,11 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"to_memory":    {Type: "string", Description: "ID of the target memory. Required in single mode; omit when using items."},
 					"relationship": {Type: "string", Description: "Type of relationship. Required in single mode. Use resolved (or resolved_by / supersedes) to adjudicate a contradicts pair — additive, does not remove the contradicts edge.", Enum: []string{"caused_by", "led_to", "blocked_by", "unblocks", "connects_to", "contradicts", "depends_on", "is_example_of", "governed_by", "resolved", "resolved_by", "supersedes"}},
 					"narrative":    {Type: "string", Description: "The story of this connection - why these two things are linked"},
-					"verdict":      {Type: "string", Description: "Optional outcome classification when relationship=resolved. Ignored (not stored) for other relationship types, but invalid enum values are still rejected. Values: false_positive, reconciled, superseded.", Enum: []string{"false_positive", "reconciled", "supersedes"}},
+					"verdict":      {Type: "string", Description: "Optional outcome classification when relationship=resolved. Ignored (not stored) for other relationship types, but invalid enum values are still rejected. Values: false_positive, reconciled, superseded.", Enum: []string{"false_positive", "reconciled", "superseded"}},
 					"items": {
 						Type:        "array",
 						Description: "Batch mode: array of edge objects. Each must have from_memory, to_memory, relationship (string). Optional: narrative (string), verdict (string, resolved only).",
-						Items:       json.RawMessage(`{"type":"object","properties":{"from_memory":{"type":"string"},"to_memory":{"type":"string"},"relationship":{"type":"string"},"narrative":{"type":"string"},"verdict":{"type":"string","enum":["false_positive","reconciled","supersedes"]}},"required":["from_memory","to_memory","relationship"]}`),
+						Items:       json.RawMessage(`{"type":"object","properties":{"from_memory":{"type":"string"},"to_memory":{"type":"string"},"relationship":{"type":"string"},"narrative":{"type":"string"},"verdict":{"type":"string","enum":["false_positive","reconciled","superseded"]}},"required":["from_memory","to_memory","relationship"]}`),
 					},
 				},
 			},

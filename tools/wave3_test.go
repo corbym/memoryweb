@@ -208,6 +208,82 @@ func TestConnect_InvalidVerdictRejected(t *testing.T) {
 	}
 }
 
+func TestConnect_SupersededVerdictStored(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "connect-verdict-superseded"
+	a := addNode(t, h, "old policy", domain, nil)
+	b := addNode(t, h, "new policy", domain, nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory": b, "to_memory": a, "relationship": "resolved",
+		"verdict": "superseded", "narrative": "new policy wins",
+	})
+	mustNotError(t, tr)
+	var edge struct {
+		Verdict string `json:"verdict"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &edge); err != nil {
+		t.Fatalf("parse edge: %v", err)
+	}
+	if edge.Verdict != "superseded" {
+		t.Errorf("verdict: got %q, want superseded", edge.Verdict)
+	}
+}
+
+func TestConnect_VerdictSupersedesRelationshipSpellingRejected(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "connect-verdict-supersedes-spelling"
+	a := addNode(t, h, "A", domain, nil)
+	b := addNode(t, h, "B", domain, nil)
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory": a, "to_memory": b, "relationship": "resolved", "verdict": "supersedes",
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "superseded") {
+		t.Errorf("error should steer to superseded verdict spelling; got: %s", text(t, tr))
+	}
+}
+
+func TestListTools_ConnectVerdictEnumMatchesValidation(t *testing.T) {
+	_, h := newEnv(t)
+	raw, err := h.ListTools()
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	b, _ := json.Marshal(raw)
+	var resp struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties struct {
+					Verdict struct {
+						Enum []string `json:"enum"`
+					} `json:"verdict"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	for _, td := range resp.Tools {
+		if td.Name != "connect" {
+			continue
+		}
+		want := []string{"false_positive", "reconciled", "superseded"}
+		if len(td.InputSchema.Properties.Verdict.Enum) != len(want) {
+			t.Fatalf("connect verdict enum: got %v, want %v", td.InputSchema.Properties.Verdict.Enum, want)
+		}
+		for i, v := range want {
+			if td.InputSchema.Properties.Verdict.Enum[i] != v {
+				t.Errorf("connect verdict enum[%d]: got %q, want %q", i, td.InputSchema.Properties.Verdict.Enum[i], v)
+			}
+		}
+		return
+	}
+	t.Fatal("connect tool not found in ListTools")
+}
+
 func TestRevise_TrustNudgeOnConnectsToFromRelatedTo(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
