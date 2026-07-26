@@ -275,7 +275,7 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 
 ---
 
-## What is available now (v1.41.1)
+## What is available now (v1.42.0)
 
 | Tool | Status |
 |------|--------|

@@ -261,3 +261,102 @@ func TestListTools_HistoryDescriptionTruncationDisclosure(t *testing.T) {
 		t.Error(`history description must contain "recall(id)" — truncation disclosure is missing`)
 	}
 }
+
+func TestSearch_LeanFormat_LifecycleStateResolved(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	issue := addNode(t, h, "lifecycle resolved issue", "lc-lean", map[string]any{
+		"node_kind":   "issue",
+		"why_matters": "open work item",
+	})
+	fix := addNode(t, h, "lifecycle fix shipped", "lc-lean", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": issue, "to_memory": fix,
+		"relationship": "resolved", "narrative": "shipped the fix",
+	}))
+
+	tr := call(t, h, "search", map[string]any{"query": "lifecycle resolved issue", "domain": "lc-lean"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			ID             string `json:"id"`
+			LifecycleState string `json:"lifecycle_state"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected at least one search result")
+	}
+	for _, n := range resp.Nodes {
+		if n.ID != issue {
+			continue
+		}
+		if n.LifecycleState != "resolved" {
+			t.Errorf("issue node lifecycle_state: got %q, want resolved", n.LifecycleState)
+		}
+		return
+	}
+	t.Fatalf("issue node %q not found in search results", issue)
+}
+
+func TestSearch_LeanFormat_LifecycleStateContested(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	a := addNode(t, h, "lifecycle claim alpha", "lc-contested", map[string]any{"why_matters": "first claim"})
+	b := addNode(t, h, "lifecycle claim beta", "lc-contested", map[string]any{"why_matters": "conflicting claim"})
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": a, "to_memory": b,
+		"relationship": "contradicts", "narrative": "direct conflict",
+	}))
+
+	tr := call(t, h, "search", map[string]any{"query": "lifecycle claim", "domain": "lc-contested"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			ID             string `json:"id"`
+			LifecycleState string `json:"lifecycle_state"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	if len(resp.Nodes) < 2 {
+		t.Fatalf("expected both contested nodes in search results, got %d", len(resp.Nodes))
+	}
+	for _, n := range resp.Nodes {
+		if n.LifecycleState != "contested" {
+			t.Errorf("node %q lifecycle_state: got %q, want contested", n.ID, n.LifecycleState)
+		}
+	}
+}
+
+func TestSearch_LeanFormat_OrdinaryDecisionNoLifecycleState(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "lifecycle ordinary decision", "lc-plain", map[string]any{
+		"node_kind":   "decision",
+		"why_matters": "routine decision",
+	})
+
+	tr := call(t, h, "search", map[string]any{"query": "lifecycle ordinary", "domain": "lc-plain"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			ID             string `json:"id"`
+			LifecycleState string `json:"lifecycle_state"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	for _, n := range resp.Nodes {
+		if n.ID == id && n.LifecycleState != "" {
+			t.Errorf("ordinary decision must omit lifecycle_state; got %q", n.LifecycleState)
+		}
+	}
+}

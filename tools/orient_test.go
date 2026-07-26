@@ -1081,6 +1081,56 @@ func TestOrient_NoDomain_ReturnsCrossDomainSnapshot(t *testing.T) {
 	}
 }
 
+func TestOrient_CrossDomain_LifecycleStateOnRecent(t *testing.T) {
+	_, h := newEnv(t)
+	issue := addNode(t, h, "cross domain lifecycle issue", "orient-cross-lc", map[string]any{
+		"node_kind": "issue",
+	})
+	fix := addNode(t, h, "cross domain lifecycle fix", "orient-cross-lc", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": issue, "to_memory": fix,
+		"relationship": "resolved", "narrative": "shipped",
+	}))
+
+	tr := call(t, h, "orient", map[string]any{})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Mode    string `json:"mode"`
+		Domains []struct {
+			Domain string `json:"domain"`
+			Recent []struct {
+				ID             string `json:"id"`
+				LifecycleState string `json:"lifecycle_state"`
+			} `json:"recent"`
+		} `json:"domains"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse cross-domain orient response: %v", err)
+	}
+	if resp.Mode != "cross_domain_snapshot" {
+		t.Fatalf("expected cross_domain_snapshot; got %q", resp.Mode)
+	}
+	found := false
+	for _, d := range resp.Domains {
+		if d.Domain != "orient-cross-lc" {
+			continue
+		}
+		for _, n := range d.Recent {
+			if n.ID != issue {
+				continue
+			}
+			found = true
+			if n.LifecycleState != "resolved" {
+				t.Errorf("cross-domain recent lifecycle_state: got %q, want resolved", n.LifecycleState)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("issue node %q not found in cross-domain orient recent", issue)
+	}
+}
+
 // TestOrient_WithDomain_Unchanged: orient with a domain must still return the
 // three-section response (declared_spine, significant, recent) unchanged.
 

@@ -75,18 +75,22 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 		return errorResult(err.Error()), nil
 	}
 	nodes, resultsTruncated := trimWithTruncation(nodes, a.Limit)
+	entries, err := h.leanEntriesFromNodes(nodes)
+	if err != nil {
+		return nil, err
+	}
 	if a.Digest {
 		out := struct {
 			Lines            []string `json:"lines"`
 			ResultsTruncated bool     `json:"results_truncated"`
-		}{Lines: digestLinesFromEntries(toLeanEntries(nodes)), ResultsTruncated: resultsTruncated}
+		}{Lines: digestLinesFromEntries(entries), ResultsTruncated: resultsTruncated}
 		b, _ := json.MarshalIndent(out, "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 	out := struct {
 		Nodes            []leanEntry `json:"nodes"`
 		ResultsTruncated bool        `json:"results_truncated"`
-	}{Nodes: toLeanEntries(nodes), ResultsTruncated: resultsTruncated}
+	}{Nodes: entries, ResultsTruncated: resultsTruncated}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

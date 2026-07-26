@@ -67,11 +67,12 @@ func truncateWhy(s string) (string, bool) {
 // description and tags are always omitted — callers needing full content use
 // recall(id).
 type leanEntry struct {
-	ID         string  `json:"id"`
-	Label      string  `json:"label"`
-	WhyMatters string  `json:"why_matters,omitempty"`
-	Truncated  bool    `json:"truncated,omitempty"`
-	OccurredAt *string `json:"occurred_at,omitempty"`
+	ID             string  `json:"id"`
+	Label          string  `json:"label"`
+	WhyMatters     string  `json:"why_matters,omitempty"`
+	Truncated      bool    `json:"truncated,omitempty"`
+	OccurredAt     *string `json:"occurred_at,omitempty"`
+	LifecycleState string  `json:"lifecycle_state,omitempty"`
 }
 
 func toLeanEntry(n db.Node) leanEntry {
@@ -185,6 +186,9 @@ func digestLineFromEntry(e leanEntry) string {
 	if e.OccurredAt != nil {
 		line += fmt.Sprintf(" (%s)", *e.OccurredAt)
 	}
+	if e.LifecycleState != "" {
+		line += fmt.Sprintf(" (%s)", e.LifecycleState)
+	}
 	return line
 }
 
@@ -297,29 +301,8 @@ func digestLines[T any](items []T, render func(T) string) []string {
 	return lines
 }
 
-func digestSection(entries []leanEntry, digest bool) interface{} {
-	if !digest {
-		return entries
-	}
-	return digestLinesFromEntries(entries)
-}
-
-func digestScoredSection(entries []scoredLeanEntry, digest bool) interface{} {
-	if !digest {
-		return entries
-	}
-	return digestLines(entries, digestLineFromScored)
-}
-
 func digestLineFromDrift(c db.DriftCandidate) string {
 	reason := sanitiseDigestField(c.Reason)
 	line := digestLineFromEntry(toLeanEntry(c.Node))
 	return fmt.Sprintf("%s (%s, edges: %d)", line, reason, c.EdgeCount)
-}
-
-func digestNodeList(nodes []db.Node, digest bool) interface{} {
-	if !digest {
-		return nodes
-	}
-	return digestLinesFromEntries(toLeanEntries(nodes))
 }

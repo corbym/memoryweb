@@ -89,13 +89,22 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 	}
 
 	var out []byte
+	var err2 error
 	if a.Digest {
-		out, err = json.Marshal(toDigestSignificanceResult(res))
+		digest, err := h.digestSignificanceResult(res)
+		if err != nil {
+			return nil, err
+		}
+		out, err2 = json.Marshal(digest)
 	} else {
-		out, err = json.Marshal(toLeanSignificanceResult(res))
+		lean, err := h.leanSignificanceResult(res)
+		if err != nil {
+			return nil, err
+		}
+		out, err2 = json.Marshal(lean)
 	}
-	if err != nil {
-		return nil, err
+	if err2 != nil {
+		return nil, err2
 	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
 }

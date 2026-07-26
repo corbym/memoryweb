@@ -41,10 +41,22 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	var b []byte
+	var err2 error
 	if a.Digest {
-		b, _ = json.MarshalIndent(toDigestSearchResult(result), "", "  ")
+		digest, err := h.digestSearchResult(result)
+		if err != nil {
+			return nil, err
+		}
+		b, err2 = json.MarshalIndent(digest, "", "  ")
 	} else {
-		b, _ = json.MarshalIndent(toLeanSearchResult(result), "", "  ")
+		lean, err := h.leanSearchResult(result)
+		if err != nil {
+			return nil, err
+		}
+		b, err2 = json.MarshalIndent(lean, "", "  ")
+	}
+	if err2 != nil {
+		return nil, err2
 	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

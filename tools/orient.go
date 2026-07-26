@@ -28,6 +28,37 @@ func cappedNodes(nodes []db.Node, cap int) ([]db.Node, bool) {
 	return trimWithTruncation(nodes, cap)
 }
 
+type crossDomainRecentEntry struct {
+	ID             string `json:"id"`
+	Label          string `json:"label"`
+	UpdatedAt      string `json:"updated_at"`
+	LifecycleState string `json:"lifecycle_state,omitempty"`
+}
+
+func (h *Handler) crossDomainRecentEntries(nodes []db.Node) ([]crossDomainRecentEntry, error) {
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	states, err := h.store.LifecycleStates(ids)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]crossDomainRecentEntry, len(nodes))
+	for i, n := range nodes {
+		entries[i] = crossDomainRecentEntry{
+			ID:             n.ID,
+			Label:          n.Label,
+			UpdatedAt:      n.UpdatedAt.Format(time.RFC3339),
+			LifecycleState: string(states[n.ID]),
+		}
+	}
+	return entries, nil
+}
+
 func (h *Handler) orientCrossDomain(limit int) (*ToolResult, error) {
 	if limit <= 0 {
 		limit = orientRecentCap
@@ -42,18 +73,13 @@ func (h *Handler) orientCrossDomain(limit int) (*ToolResult, error) {
 		return nil, err
 	}
 
-	type recentEntry struct {
-		ID        string `json:"id"`
-		Label     string `json:"label"`
-		UpdatedAt string `json:"updated_at"`
-	}
 	type domainEntry struct {
-		Domain                 string        `json:"domain"`
-		Recent                 []recentEntry `json:"recent"`
-		RecentResultsTruncated bool          `json:"recent_results_truncated"`
+		Domain                 string                   `json:"domain"`
+		Recent                 []crossDomainRecentEntry `json:"recent"`
+		RecentResultsTruncated bool                     `json:"recent_results_truncated"`
 	}
 
-	grouped := make(map[string][]recentEntry)
+	grouped := make(map[string][]db.Node)
 	domainTruncated := make(map[string]bool)
 	domainOrder := []string{}
 	resultsTruncated := false
@@ -66,18 +92,18 @@ func (h *Handler) orientCrossDomain(limit int) (*ToolResult, error) {
 			resultsTruncated = true
 			continue
 		}
-		grouped[n.Domain] = append(grouped[n.Domain], recentEntry{
-			ID:        n.ID,
-			Label:     n.Label,
-			UpdatedAt: n.UpdatedAt.Format(time.RFC3339),
-		})
+		grouped[n.Domain] = append(grouped[n.Domain], n)
 	}
 
 	domains := make([]domainEntry, 0, len(domainOrder))
 	for _, d := range domainOrder {
+		recent, err := h.crossDomainRecentEntries(grouped[d])
+		if err != nil {
+			return nil, err
+		}
 		domains = append(domains, domainEntry{
 			Domain:                 d,
-			Recent:                 grouped[d],
+			Recent:                 recent,
 			RecentResultsTruncated: domainTruncated[d],
 		})
 	}
@@ -114,9 +140,9 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 	if relevantTrunc {
 		result.Nodes = result.Nodes[:orientRelevantCap]
 	}
-	relevant := make([]leanEntry, len(result.Nodes))
+	relevantNodes := make([]db.Node, len(result.Nodes))
 	for i, nr := range result.Nodes {
-		relevant[i] = toLeanEntry(nr.Node)
+		relevantNodes[i] = nr.Node
 	}
 
 	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, orientSpineCap+1)
@@ -124,24 +150,36 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 		return nil, err
 	}
 	spineNodes, spineTrunc := cappedNodes(spineNodes, orientSpineCap)
-	spineEntries := toLeanEntries(spineNodes)
 
 	recentRaw, err := h.store.RecentChanges(domain, orientRecentCap+1, nil)
 	if err != nil {
 		return nil, err
 	}
 	recentRaw, recentTrunc := cappedNodes(recentRaw, orientRecentCap)
-	recentEntries := toLeanEntries(recentRaw)
 
 	rulesNodes, rulesTrunc, err := h.store.GetStandingNodes(domain, orientRulesCap)
 	if err != nil {
 		return nil, err
 	}
-	rulesEntries := toLeanEntries(rulesNodes)
 
 	var rulesField interface{}
-	if len(rulesEntries) > 0 {
-		rulesField = digestSection(rulesEntries, digest)
+	if len(rulesNodes) > 0 {
+		rulesField, err = h.orientLeanSection(rulesNodes, digest)
+		if err != nil {
+			return nil, err
+		}
+	}
+	spineField, err := h.orientLeanSection(spineNodes, digest)
+	if err != nil {
+		return nil, err
+	}
+	relevantField, err := h.orientLeanSection(relevantNodes, digest)
+	if err != nil {
+		return nil, err
+	}
+	recentField, err := h.orientLeanSection(recentRaw, digest)
+	if err != nil {
+		return nil, err
 	}
 
 	resp := struct {
@@ -162,9 +200,9 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 		ArchivedNodes: archivedNodes,
 		StaleCount:    staleCount,
 		Rules:         rulesField,
-		DeclaredSpine: digestSection(spineEntries, digest),
-		Relevant:      digestSection(relevant, digest),
-		Recent:        digestSection(recentEntries, digest),
+		DeclaredSpine: spineField,
+		Relevant:      relevantField,
+		Recent:        recentField,
 		orientSectionTruncation: orientSectionTruncation{
 			RelevantResultsTruncated:      relevantTrunc,
 			RecentResultsTruncated:        recentTrunc,
@@ -211,33 +249,40 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
-	rulesEntries := toLeanEntries(rulesNodes)
 	var rulesField interface{}
-	if len(rulesEntries) > 0 {
-		rulesField = digestSection(rulesEntries, digest)
+	if len(rulesNodes) > 0 {
+		rulesField, err = h.orientLeanSection(rulesNodes, digest)
+		if err != nil {
+			return orientDomainEntry{}, err
+		}
 	}
 
-	// Declared spine.
 	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, orientSpineCap+1)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
 	spineNodes, spineTrunc := cappedNodes(spineNodes, orientSpineCap)
-	spineEntries := toLeanEntries(spineNodes)
 
-	// Recent.
 	recentRaw, err := h.store.RecentChanges(domain, orientRecentCap+1, nil)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
 	recentRaw, recentTrunc := cappedNodes(recentRaw, orientRecentCap)
-	recentEntries := toLeanEntries(recentRaw)
+
+	spineField, err := h.orientLeanSection(spineNodes, digest)
+	if err != nil {
+		return orientDomainEntry{}, err
+	}
+	recentField, err := h.orientLeanSection(recentRaw, digest)
+	if err != nil {
+		return orientDomainEntry{}, err
+	}
 
 	entry := orientDomainEntry{
 		Domain:        domain,
 		Rules:         rulesField,
-		DeclaredSpine: digestSection(spineEntries, digest),
-		Recent:        digestSection(recentEntries, digest),
+		DeclaredSpine: spineField,
+		Recent:        recentField,
 		TotalNodes:    liveNodes,
 		ArchivedNodes: archivedNodes,
 		StaleCount:    staleCount,
@@ -257,11 +302,14 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 		if relevantTrunc {
 			result.Nodes = result.Nodes[:orientRelevantCap]
 		}
-		relevant := make([]leanEntry, len(result.Nodes))
+		relevantNodes := make([]db.Node, len(result.Nodes))
 		for i, nr := range result.Nodes {
-			relevant[i] = toLeanEntry(nr.Node)
+			relevantNodes[i] = nr.Node
 		}
-		entry.Relevant = digestSection(relevant, digest)
+		entry.Relevant, err = h.orientLeanSection(relevantNodes, digest)
+		if err != nil {
+			return orientDomainEntry{}, err
+		}
 		entry.RelevantResultsTruncated = relevantTrunc
 	} else {
 		sigResult, err := h.store.GetSignificance(domain, orientSignificantCap, 90, nil, nil, 0)
@@ -279,7 +327,10 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
-		entry.Significant = digestScoredSection(sigEntries, digest)
+		entry.Significant, err = h.orientScoredSection(sigEntries, digest)
+		if err != nil {
+			return orientDomainEntry{}, err
+		}
 		entry.SignificantResultsTruncated = sigResult.StructuralResultsTruncated
 	}
 
@@ -377,9 +428,6 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	// Step 5: build lean response — id, label, truncated why_matters only; no description.
-	recentEntries := toLeanEntries(recentRaw)
-	spineEntries := toLeanEntries(spineNodes)
 	sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
 	for i, sn := range sigResult.Structural {
 		sigEntries[i] = scoredLeanEntry{
@@ -391,11 +439,25 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	rulesEntries := toLeanEntries(rulesNodes)
 
 	var rulesField interface{}
-	if len(rulesEntries) > 0 {
-		rulesField = digestSection(rulesEntries, a.Digest)
+	if len(rulesNodes) > 0 {
+		rulesField, err = h.orientLeanSection(rulesNodes, a.Digest)
+		if err != nil {
+			return nil, err
+		}
+	}
+	spineField, err := h.orientLeanSection(spineNodes, a.Digest)
+	if err != nil {
+		return nil, err
+	}
+	significantField, err := h.orientScoredSection(sigEntries, a.Digest)
+	if err != nil {
+		return nil, err
+	}
+	recentField, err := h.orientLeanSection(recentRaw, a.Digest)
+	if err != nil {
+		return nil, err
 	}
 
 	resp := struct {
@@ -416,9 +478,9 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		ArchivedNodes: archivedNodes,
 		StaleCount:    staleCount,
 		Rules:         rulesField,
-		DeclaredSpine: digestSection(spineEntries, a.Digest),
-		Significant:   digestScoredSection(sigEntries, a.Digest),
-		Recent:        digestSection(recentEntries, a.Digest),
+		DeclaredSpine: spineField,
+		Significant:   significantField,
+		Recent:        recentField,
 		orientSectionTruncation: orientSectionTruncation{
 			SignificantResultsTruncated:   sigResult.StructuralResultsTruncated,
 			RecentResultsTruncated:        recentTrunc,

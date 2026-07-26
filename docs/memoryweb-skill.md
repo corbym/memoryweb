@@ -239,7 +239,9 @@ Two different operations move memories between domains; don't confuse them:
 
 `orient`, `search`, `recent`, `history`, `significance`, `audit` all return
 **lean** entries: `id`, `label`, and a truncated `why_matters` excerpt —
-never the full `description`. Treat these as an index, not the content.
+never the full `description`. When graph state warrants it, entries also carry
+`lifecycle_state` (`contested`, `resolved`, or `superseded`); digest lines append
+the same token as a `(state)` suffix after any date. Treat these as an index, not the content.
 Before quoting, citing, or acting on what a memory actually says, call
 `recall(id)` for the full node plus its `edges` array.
 

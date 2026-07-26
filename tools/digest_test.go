@@ -351,3 +351,106 @@ func TestAudit_DigestMode_Archived(t *testing.T) {
 		t.Fatalf("expected at least 2 archived digest lines, got %d", len(lines))
 	}
 }
+
+func TestSearch_DigestMode_LifecycleResolvedSuffix(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	issue := addNode(t, h, "digest lifecycle issue", "digest-lc", map[string]any{
+		"node_kind":   "issue",
+		"why_matters": "tracked bug",
+	})
+	fix := addNode(t, h, "digest lifecycle fix", "digest-lc", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": issue, "to_memory": fix,
+		"relationship": "resolved", "narrative": "fixed in release",
+	}))
+
+	tr := call(t, h, "search", map[string]any{
+		"query": "digest lifecycle issue", "domain": "digest-lc", "digest": true,
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Lines []string `json:"lines"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse digest search response: %v", err)
+	}
+	found := false
+	for _, line := range resp.Lines {
+		if !strings.HasPrefix(line, "["+issue+"]") {
+			continue
+		}
+		found = true
+		if !strings.Contains(line, "(resolved)") {
+			t.Errorf("resolved issue digest line must include (resolved); got: %q", line)
+		}
+	}
+	if !found {
+		t.Fatalf("expected digest line for issue %q, got: %v", issue, resp.Lines)
+	}
+}
+
+func TestSearch_DigestMode_LifecycleContestedSuffix(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	a := addNode(t, h, "digest contested alpha", "digest-lc-contested", map[string]any{"why_matters": "claim one"})
+	b := addNode(t, h, "digest contested beta", "digest-lc-contested", map[string]any{"why_matters": "claim two"})
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": a, "to_memory": b,
+		"relationship": "contradicts", "narrative": "conflicting claims",
+	}))
+
+	tr := call(t, h, "search", map[string]any{
+		"query": "digest contested", "domain": "digest-lc-contested", "digest": true,
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Lines []string `json:"lines"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse digest search response: %v", err)
+	}
+	if len(resp.Lines) < 2 {
+		t.Fatalf("expected both contested nodes in digest lines, got %d", len(resp.Lines))
+	}
+	for _, line := range resp.Lines {
+		if !strings.Contains(line, "(contested)") {
+			t.Errorf("contested digest line must include (contested); got: %q", line)
+		}
+	}
+}
+
+func TestSearch_DigestMode_OrdinaryDecisionNoLifecycleSuffix(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "digest plain decision", "digest-lc-plain", map[string]any{
+		"node_kind":   "decision",
+		"why_matters": "routine choice",
+	})
+
+	tr := call(t, h, "search", map[string]any{
+		"query": "digest plain decision", "domain": "digest-lc-plain", "digest": true,
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Lines []string `json:"lines"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse digest search response: %v", err)
+	}
+	for _, line := range resp.Lines {
+		if !strings.HasPrefix(line, "["+id+"]") {
+			continue
+		}
+		for _, marker := range []string{"(contested)", "(resolved)", "(superseded)"} {
+			if strings.Contains(line, marker) {
+				t.Errorf("ordinary decision must not include lifecycle suffix %s; got: %q", marker, line)
+			}
+		}
+		return
+	}
+	t.Fatalf("expected digest line for decision %q, got: %v", id, resp.Lines)
+}

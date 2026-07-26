@@ -41,7 +41,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 			return nil, err
 		}
 		nodes, truncated := trimWithTruncation(nodes, a.Limit)
-		return marshalRecentList(toLeanEntries(nodes), truncated, a.Digest)
+		return h.marshalRecentFromNodes(nodes, truncated, a.Digest)
 	}
 
 	if len(tags) > 0 || len(nodeKinds) > 0 {
@@ -50,7 +50,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 			return nil, err
 		}
 		nodes, truncated := trimWithTruncation(nodes, a.Limit)
-		return marshalRecentList(toLeanEntries(nodes), truncated, a.Digest)
+		return h.marshalRecentFromNodes(nodes, truncated, a.Digest)
 	}
 
 	if a.GroupByDomain && a.Domain == "" {
@@ -75,10 +75,11 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		if a.Digest {
 			groups := make([]digestGroupedRecent, 0, len(domainOrder))
 			for _, d := range domainOrder {
-				groups = append(groups, digestGroupedRecent{
-					Domain: d,
-					Lines:  digestLinesFromEntries(toLeanEntries(grouped[d])),
-				})
+				lines, err := h.digestLinesFromNodes(grouped[d])
+				if err != nil {
+					return nil, err
+				}
+				groups = append(groups, digestGroupedRecent{Domain: d, Lines: lines})
 			}
 			out := struct {
 				Groups           []digestGroupedRecent `json:"groups"`
@@ -93,7 +94,11 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		}
 		groups := make([]groupedResult, 0, len(domainOrder))
 		for _, d := range domainOrder {
-			groups = append(groups, groupedResult{Domain: d, Nodes: toLeanEntries(grouped[d])})
+			entries, err := h.leanEntriesFromNodes(grouped[d])
+			if err != nil {
+				return nil, err
+			}
+			groups = append(groups, groupedResult{Domain: d, Nodes: entries})
 		}
 		out := struct {
 			Groups           []groupedResult `json:"groups"`
@@ -108,7 +113,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	nodes, truncated := trimWithTruncation(nodes, a.Limit)
-	return marshalRecentList(toLeanEntries(nodes), truncated, a.Digest)
+	return h.marshalRecentFromNodes(nodes, truncated, a.Digest)
 }
 
 func marshalRecentList(entries []leanEntry, resultsTruncated bool, digest bool) (*ToolResult, error) {

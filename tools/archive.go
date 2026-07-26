@@ -81,8 +81,12 @@ func (h *Handler) listArchived(a auditArgs) (*ToolResult, error) {
 		nodes = nodes[:a.Limit]
 	}
 	out := auditArchivedResult{
-		Nodes:            digestNodeList(nodes, a.Digest),
 		ResultsTruncated: resultsTruncated,
+	}
+	var err2 error
+	out.Nodes, err2 = h.digestNodeList(nodes, a.Digest)
+	if err2 != nil {
+		return nil, err2
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -239,8 +243,12 @@ func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 		candidates = candidates[:a.Limit]
 	}
 	if a.Digest {
+		lines, err := h.digestLinesFromDrift(candidates)
+		if err != nil {
+			return nil, err
+		}
 		out := auditStaleDigestResult{
-			Lines:            digestLines(candidates, digestLineFromDrift),
+			Lines:            lines,
 			ResultsTruncated: resultsTruncated,
 		}
 		b, _ := json.MarshalIndent(out, "", "  ")
@@ -274,8 +282,12 @@ func (h *Handler) findDisconnected(a auditArgs) (*ToolResult, error) {
 		nodes = nodes[:a.Limit]
 	}
 	if a.Digest {
+		lines, err := h.digestLinesFromNodes(nodes)
+		if err != nil {
+			return nil, err
+		}
 		out := auditStaleDigestResult{
-			Lines:            digestLinesFromEntries(toLeanEntries(nodes)),
+			Lines:            lines,
 			ResultsTruncated: resultsTruncated,
 		}
 		b, _ := json.MarshalIndent(out, "", "  ")
@@ -307,11 +319,15 @@ func (h *Handler) findKindCoverage(a auditArgs) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	migrationCandidates, err := h.leanEntriesFromNodes(result.MigrationCandidates)
+	if err != nil {
+		return nil, err
+	}
 	out := auditKindCoverageResult{
 		TotalNodes:          result.TotalNodes,
 		ByKind:              result.ByKind,
 		LegacyDominantPct:   result.LegacyDominantPct,
-		MigrationCandidates: toLeanEntries(result.MigrationCandidates),
+		MigrationCandidates: migrationCandidates,
 		ResultsTruncated:    result.ResultsTruncated,
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")

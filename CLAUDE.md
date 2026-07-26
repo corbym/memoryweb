@@ -304,7 +304,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.41.1)
+## What's implemented (v1.42.0)
 
 All 21 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
@@ -329,6 +329,7 @@ Key implemented features:
 - purge: domain filter is case/whitespace-insensitive; `--include-live` hard-deletes live nodes in a domain (requires `--domain`); dry-run/confirm both report `LiveRemaining` so an operator can't mistake "0 archived candidates" for "domain is empty"
 - connect: `relationship` enum includes `resolved`, `resolved_by`, `supersedes` for contradiction resolution (previously missing from the schema, which silently blocked the mechanism for any client enforcing enum constraints); `audit`'s stale/conflicts suppression recognises all three; `audit`'s description no longer instructs disconnecting the `contradicts` edge
 - remember: `orphan_warning` no longer instructs agents to pass `connect` a `domain` parameter — `connect` has never accepted one (IDs are global); the instruction dated back to a false premise in the original cross-domain-connect-ux fix and had stood since 2026-05-23
+- lean/digest lifecycle: list-shaped retrieval tools annotate `lifecycle_state` (`contested`, `resolved`, `superseded`) from live graph edges; digest lines append `(state)`; archived edge endpoints are ignored; cross-domain `orient()` recent entries included
 
 ---
 
