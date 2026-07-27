@@ -368,15 +368,15 @@ If you use memoryweb across multiple projects, you don't always know which domai
 
 This gives you a quick cross-project snapshot so you can decide where to go, rather than picking a domain and potentially missing something more active.
 
-### Trace a chain of reasoning
+### Follow a chain of reasoning
 
-When you need to understand how a conclusion was reached — especially one made weeks or months ago — the trace tool can walk the connection path between two concepts:
+When you need to understand how a conclusion was reached — especially one made weeks or months ago — ask the agent to look up the direct connection between two concepts or walk back from a decision:
 
-> "Trace the connection between `<concept A>` and `<concept B>` in memory. How did we get from one to the other?"
+> "How does `<concept A>` relate to `<concept B>` in memory? What's the connection and why?"
 
 > "How did we end up at `<decision>`? Walk back through the reasoning in memory."
 
-This is particularly useful when you're explaining a past decision to someone else, or when you're about to reverse something and want to make sure you understand what led to it.
+This uses `why_connected` for a direct link between two memories, or `recall` to follow connections from a starting point. Particularly useful when you're explaining a past decision to someone else, or when you're about to reverse something and want to make sure you understand what led to it.
 
 ### Use memoryweb as a lightweight ADR system
 
@@ -452,7 +452,7 @@ See the [standing rules guide](standing-rules.md) for templates by role (solo de
 | Search memory | `"Search memory for <topic>."` |
 | Prefer memory over training | `"Check memory first."` |
 | Trace a relationship | `"How does X relate to Y? Look it up in memory."` |
-| Trace a chain of reasoning | `"Trace the connection between X and Y in memory."` |
+| Trace a chain of reasoning | `"How does X relate to Y in memory? Walk through the connection."` |
 | Save a decision | `"Save that decision to memory — capture the reasoning, not just what we decided."` |
 | Save and link immediately | `"Save that and link it to anything related in memory."` |
 | Save an open question | `"Save this as an open question for the <project> project."` |

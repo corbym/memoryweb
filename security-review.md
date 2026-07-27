@@ -200,7 +200,7 @@ _esc="${_esc//$'\f'/\\f}"
 
 **Location:** `tools/tools.go:601, 659, 697, 840, 1079` (handler-side defaults), corresponding store methods in `db/db.go`.
 
-The `search`, `recent`, `history`, `whats_stale`, and `suggest_connections` tools accept a `limit` integer, default it to 10/20/40 if `<= 0`, and pass it straight through to the store layer. The only handler with an upper cap is `visualise_domain` / `GetDomainGraph` (`db/db.go:1707-1709`, `if limit > 100 { limit = 100 }`).
+The `search`, `history`, `audit`, and `suggest_connections` tools accept a `limit` integer, default it to 10/20/40 if `<= 0`, and pass it straight through to the store layer. The only handler with an upper cap is `visualise_domain` / `GetDomainGraph` (`db/db.go:1707-1709`, `if limit > 100 { limit = 100 }`).
 
 **Impact.** A caller can request `limit: 1_000_000`. SQLite's `LIMIT` clause prevents runaway result sets when the matching row count is small, but for `searchNodesSemantic` the `vec_distance_cosine(...) AS dist ORDER BY dist ASC LIMIT ?` query forces a full scan of `node_embeddings` and a sort. On a non-trivial graph this can pin a CPU for seconds. In a single-user local MCP context the blast radius is the user's own machine, but it is a free DoS handle for any malicious content that ever reaches the LLM and influences tool args.
 
@@ -215,7 +215,7 @@ if a.Limit > 500 {
 }
 ```
 
-Applies to: `searchHandler`, `recentHandler` (and `recentByDomainHandler`), `historyHandler` (Timeline), `whatsStaleHandler` (FindDrift), `suggestConnectionsHandler`.
+Applies to: `searchHandler`, `historyHandler` (Timeline and `order=modified`), `auditHandler` (FindDrift), `suggestConnectionsHandler`.
 
 ---
 

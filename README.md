@@ -93,6 +93,8 @@ Override with `MEMORYWEB_DB=/path/to/your.db`
 
 ## Tools
 
+16 MCP tools (v1.43.0). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
+
 ### Filing memories
 
 | Tool | What it does |
@@ -114,7 +116,7 @@ Override with `MEMORYWEB_DB=/path/to/your.db`
 |------|-------------|
 | `recall` | Retrieve a node and all its connections by ID. |
 | `search` | Text search across `label`, `description`, `why_matters`, and `tags`. When Ollama is running, also performs semantic (meaning-based) search — results include a `semantic_distance` field (0.0–1.0, lower = closer). Returns `truncated: true` when results are capped by the limit. |
-| `history` | Chronological listing. `order=effective` (default) by occurred/created date with `important_only`, `from`/`to`. `order=modified` by last updated — set `group_by_domain=true` for per-domain activity. |
+| `history` | Chronological listing. `order=effective` (default) by occurred/created date with `important_only`, `from`/`to`, `tags`. `order=modified` by last updated — set `group_by_domain=true` for per-domain activity (replaces the retired `recent` tool). Both modes support `memory_id` + `depth` for neighbourhood scoping. |
 | `why_connected` | Direct edges between two memories (prefer `from_id`/`to_id` for pair verification). |
 | `orient` | Return all nodes for a domain structured for synthesis — current state, recent activity, and a `declared_spine` of key decisions in chronological order. Includes `total_nodes` and `server_version`. |
 | `visualise` | Mermaid flowchart for a domain or a single node's neighbourhood (pass `memory_id`). Output inside a mermaid code block. |
@@ -128,7 +130,7 @@ Nodes are never hard-deleted via the tools. Archive = soft delete; the node disa
 |------|-------------|
 | `forget` | Archive a node with a reason, or un-archive with `restore=true`. Strict protocol: only after `audit(mode=stale)` surfaces a candidate or the user explicitly confirms. |
 | `forget_all` | Archive multiple nodes atomically in a single call. Same strict protocol applies. |
-| `audit` | Surface nodes that need attention. `mode=stale` — stale, contradicted, duplicated, or overdue transient nodes. `mode=orphans` — live nodes with zero connections. `mode=archived` — review what has been archived. |
+| `audit` | Surface nodes that need attention. `mode=stale` — stale, contradicted, duplicated, or overdue transient nodes. `mode=orphans` — live nodes with zero connections. `mode=archived` — review what has been archived (default limit 25). `mode=conflicts` — semantic contradiction candidates. `mode=kind_coverage` — taxonomy health and migration candidates. |
 
 ### Domain management
 
@@ -137,7 +139,7 @@ Nodes are never hard-deleted via the tools. Archive = soft delete; the node disa
 | `domains` | Domain admin and discovery. Default lists domains and aliases. Actions: `add_alias`, `remove_alias`, `resolve`, `rename`. |
 
 ### Relationship types
-`caused_by` `led_to` `blocked_by` `unblocks` `connects_to` `contradicts` `depends_on` `is_example_of`
+`caused_by` `led_to` `blocked_by` `unblocks` `connects_to` `contradicts` `depends_on` `is_example_of` `governed_by` `resolved` `resolved_by` `supersedes`
 
 ## Conventions
 

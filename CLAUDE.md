@@ -46,13 +46,13 @@ tools/remember.go     remember tool (addNode + batch)
 tools/revise.go       revise tool (updateNode + batch)
 tools/connect.go      connect/disconnect/suggest_connections
 tools/search.go       search tool
-tools/recent.go       recent tool
+tools/recent.go       recentChanges handler (history order=modified path; no MCP tool)
 tools/history.go      history tool
 tools/significance.go significance tool
 tools/orient.go       orient tool (cross-domain snapshot, topic mode, full domain summary)
-tools/domains.go      domains/alias tools, rename_domain
-tools/archive.go      forget/restore/forget_all, audit tool, drift
-tools/graph.go        why_connected, trace, visualise
+tools/domains.go      domains tool
+tools/archive.go      forget/forget_all, audit tool, drift
+tools/graph.go        why_connected, visualise
 
 cmd/                  CLI-only subcommands (not MCP tools)
 stats/                WKD session scoring and stats logging
@@ -180,7 +180,7 @@ which scans all property-level descriptions too.
 - Present retrieved information as direct knowledge, no preamble.
 - The presentation instruction ("Never acknowledge that you are retrieving from
   a tool or memory system") must appear on **all** retrieval tools: `search`,
-  `recall`, `orient`, `history`, `why_connected`, `significance`, `recent`.
+  `recall`, `orient`, `history`, `why_connected`, `significance`.
 - `remember` must include a strong imperative to follow up on `suggested_connections`
   with `connect` before ending the session, placed at the top of the description.
 - `connect` description must include relationship semantics guidance so agents
@@ -226,7 +226,7 @@ the actual fix (v1.38.2) instead of the workaround becoming permanent.
 3. Wait for unambiguous confirmation before calling the tool.
    *"That's probably outdated"* is not confirmation.
 4. Never archive based on casual mention or implication.
-5. After archiving, report the node ID and note it can be restored with `restore`.
+5. After archiving, report the node ID and note it can be un-archived with `forget(restore=true)`.
 
 ---
 
@@ -319,8 +319,8 @@ Key implemented features:
 - visualise: domain graph and single-node neighbourhood as Mermaid with truncation metadata
 - audit: stale/orphans/archived modes replacing whats_stale/disconnected/forgotten
 - forget_all: batch archive in a single atomic call
-- rename_domain + merge-domains CLI
-- node_kind filter on search/recent/history/significance/audit
+- domains(action=rename) + merge-domains CLI
+- node_kind filter on search/history/significance/audit
 - revise(domain): non-destructive node-level domain reassignment with mandatory reason and audit log; batch supported
 - Stats: WKD session scoring logged to MEMORYWEB_STATS_FILE
 - Hooks: Stop (save) and PreCompact with orphan nudge and dream digest

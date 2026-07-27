@@ -128,6 +128,7 @@ it was archived, or `audit(mode=stale)` to surface drift candidates.
   - `mode=archived` — `{nodes, results_truncated}` (**default limit 25** —
     raise limit to enumerate all archived nodes)
   - `mode=conflicts` — `{candidates, results_truncated}` (default limit 10)
+  - `mode=kind_coverage` — `{total_nodes, by_kind, legacy_dominant_pct, migration_candidates, results_truncated}` (default limit 50 on migration_candidates)
 
 Run `audit(mode=orphans)`, `audit(mode=stale)`, and `audit(mode=conflicts)` as
 **three separate steps** — never one combined pass or report. Orphans: resolve
@@ -164,6 +165,7 @@ contradiction awaiting the user's decision.
 | `depends_on` | A requires B |
 | `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair (additive — does not remove the original edge) |
 | `is_example_of` | A illustrates B |
+| `governed_by` | A must satisfy standing rule or constraint B |
 
 ---
 
@@ -268,7 +270,7 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 
 ---
 
-## What is available now (v1.43.0)
+## What is available now (v1.43.0 — 16 MCP tools)
 
 | Tool | Status |
 |------|--------|
@@ -286,7 +288,7 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 | `significance` | Live |
 | `forget` | Live (archive + `restore=true` un-archive) |
 | `forget_all` | Live |
-| `audit` | Live (mode=stale/orphans/archived/conflicts) |
+| `audit` | Live (mode=stale/orphans/archived/conflicts/kind_coverage) |
 | `domains` | Live (action=list/add_alias/remove_alias/resolve/rename) |
 
 Purge (hard delete of archived nodes) is **CLI-only** — `memoryweb purge`. It

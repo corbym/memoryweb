@@ -99,13 +99,13 @@ Filed        5 nodes, 4 edges, 1 transient
 Orphans      1 node(s) filed but never connected
 ```
 
-- **Nodes**: total nodes created this session via `remember` or `remember_all`.
-- **Edges**: total connections created via `connect`, `connect_all`, or `merge`.
+- **Nodes**: total nodes created this session via `remember` (including batch `items`).
+- **Edges**: total connections created via `connect` (including batch `items`) or `merge`.
 - **Transient**: nodes filed with `transient: true` (sprint notes, ticket state).
   These contribute a small score penalty since they're expected to be archived soon.
 - **Orphans**: nodes filed but never connected to anything this session.
   Orphans are the primary source of graph entropy — they reduce the WKD score.
-  When you see this message, run `disconnected` to find the loose ends and either
+  When you see this message, run `audit(mode=orphans)` to find the loose ends and either
   link them or archive them.
 
 ---
@@ -238,7 +238,7 @@ jq -s '[.[] | select(.burst == false and .type == "filing")] | map(.wkd) | sort 
    notes and ticket state that you expect to archive within days. If a node will
    still matter next week, don't mark it transient.
 
-4. **Use `disconnected` regularly.** It surfaces nodes that were filed but
+4. **Use `audit(mode=orphans)` regularly.** It surfaces nodes that were filed but
    never linked. Either connect them or archive them.
 
 5. **Don't chase the grade during burst sessions.** Importing a large backlog

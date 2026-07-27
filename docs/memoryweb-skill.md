@@ -278,9 +278,28 @@ list-level `results_truncated`.
 
 ### Version awareness
 
-`orient` returns `server_version`. If it doesn't match what this document
-was last verified against, re-check tool behaviour via `tools/list` rather
-than assuming this document is still accurate.
+Last verified against **v1.43.0** (16 MCP tools). `orient` returns
+`server_version`. If it doesn't match, re-check tool behaviour via
+`tools/list` rather than assuming this document is still accurate.
+
+### Retired tools (v1.43.0 hard-cut)
+
+Calling a retired tool name returns an error with the replacement. Common
+migrations from the 21-tool surface:
+
+| Retired | Use instead | Hard-cut error (abbrev.) |
+|---|---|---|
+| `recent` | `history(order=modified)` | `unknown tool: recent — use history with order=modified` |
+| `restore` | `forget(restore=true)` | `unknown tool: restore — use forget with restore=true` |
+| `trace` | `why_connected(from_id, to_id)` or `recall(id)` | `unknown tool: trace — use why_connected … or recall …` |
+| `alias` | `domains(action=add_alias\|remove_alias\|resolve)` | `unknown tool: alias — use domains with action=…` |
+| `rename_domain` | `domains(action=rename)` | `unknown tool: rename_domain — use domains with action=rename` |
+| `list_domains` / `list_aliases` | `domains` | `unknown tool: list_domains — use domains` |
+| `forgotten` | `audit(mode=archived)` | `unknown tool: forgotten — use audit with mode=archived` |
+| `whats_stale` | `audit(mode=stale)` | `unknown tool: whats_stale — use audit with mode=stale` |
+| `disconnected` | `audit(mode=orphans)` | `unknown tool: disconnected — use audit with mode=orphans` |
+| `remember_all` / `connect_all` / `revise_all` | `remember` / `connect` / `revise` with `items` | `unknown tool: … — use … with an items array …` |
+| `check_for_updates` | CLI: `memoryweb check-for-updates` | `unknown tool: check_for_updates — use the CLI: …` |
 
 ### Tool quick reference
 
@@ -294,7 +313,7 @@ than assuming this document is still accurate.
 | `domains(action=add_alias\|remove_alias\|resolve\|rename)` | Domain alias admin and in-place domain rename |
 | `search(query=...)` | Find by vocabulary in stored labels/descriptions/tags |
 | `recall(id)` | Full memory + connections |
-| `history(order=modified)` | Where work was last happening (by updated_at) |
+| `history(order=modified)` | Where work was last happening (by updated_at); `group_by_domain=true` for per-domain activity |
 | `history(order=effective)` / `history(important_only=true)` | Chronological decision spine |
 | `significance()` | Dual-signal importance (declared + structural) |
 | `significance(mode=trust)` | Epistemic trust ranking |

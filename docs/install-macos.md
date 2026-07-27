@@ -267,7 +267,7 @@ Also add memoryweb to your MCP config. Claude Code reads from `~/.claude.json` o
 
 Start a new conversation in Claude Desktop or Claude Code and ask the agent:
 
-> "Call `list_domains` and tell me what domains exist."
+> "Call `domains` and tell me what domains exist."
 
 If memoryweb is connected, the agent will call the tool and return a result (an empty list is fine — you haven't filed anything yet).
 
@@ -281,7 +281,7 @@ To check whether a newer version is available:
 memoryweb doctor
 ```
 
-The `[i] Update:` line will tell you if a newer release is available. You can also ask the agent — the `check_for_updates` tool checks GitHub and returns the current and latest versions.
+The `[i] Update:` line will tell you if a newer release is available. You can also run `memoryweb check-for-updates` from the terminal.
 
 ### Homebrew update
 
