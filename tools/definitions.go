@@ -78,18 +78,23 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
-			Name:        "recent",
-			Description: "List the most recently added or updated memories, optionally filtered by domain. Good for session orientation. Set group_by_domain=true (with no domain specified) to see recent activity broken down by domain — returns {groups: [{domain, nodes}], results_truncated}. Each domain gets up to limit entries (default 10). When results_truncated is true, at least one domain had more activity than the per-domain cap — raise limit or call recent(domain=X) for that domain. Flat list mode (default) returns {nodes, results_truncated}. If results_truncated is true, raise limit to retrieve more. Supply tags (comma-separated) to scope to a workstream or topic. Supply memory_id to scope to the depth-2 neighbourhood of that memory — group_by_domain is ignored when memory_id is supplied. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. This tool only returns live entries. Archived entries are hidden. If something seems missing, use audit(mode=archived) or audit(mode=stale). Returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id).",
+			Name:        "history",
+			Description: "Returns memories in chronological order. Two order modes:\n\norder=effective (default): sort by effective date COALESCE(occurred_at, created_at). Set important_only=true for the narrative spine (occurred_at set only). Use from/to to filter by effective date.\n\norder=modified: sort by last updated (updated_at DESC). Set group_by_domain=true (with no domain) for {groups, results_truncated}. group_by_domain requires order=modified.\n\nBoth modes return {nodes, results_truncated} (or {lines, results_truncated} when digest=true). When results_truncated is true, raise limit to retrieve more.\n\nPass memory_id to scope to a neighbourhood (depth 2 default, domain-clipped). memory_id takes precedence over domain if both are supplied.\n\nUse tags to filter (comma-separated). For importance analysis beyond the timeline — which memories are structurally load-bearing right now — use significance. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. Returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"domain":          {Type: "string", Description: "Optional domain to scope"},
-					"limit":           {Type: "integer", Description: "Max results (default 10, or 5 per domain when group_by_domain=true)"},
-					"group_by_domain": {Type: "boolean", Description: "When true and no domain is specified, group results by domain (up to limit entries per domain)"},
-					"tags":            {Type: "string", Description: "Comma-separated tag filter. Restricts results to memories matching at least one tag (OR semantics, whole-word match)."},
+					"domain":          {Type: "string", Description: "Optional domain to scope. Not required when memory_id is supplied."},
+					"memory_id":       {Type: "string", Description: "Optional — scope to the neighbourhood of this memory (depth 2 by default, domain-clipped). Takes precedence over domain if both are supplied."},
+					"depth":           {Type: "integer", Description: "Neighbourhood depth when using memory_id (default 2)."},
+					"order":           {Type: "string", Description: "Sort order. effective (default): by COALESCE(occurred_at, created_at). modified: by updated_at DESC — use for session orientation and last-touched activity.", Enum: []string{"effective", "modified"}},
+					"group_by_domain": {Type: "boolean", Description: "When true and order=modified with no domain, group results by domain (up to limit entries per domain). Ignored when memory_id is set."},
+					"important_only":  {Type: "boolean", Description: "effective order only. When true, return only memories with occurred_at explicitly set."},
+					"tags":            {Type: "string", Description: "Optional comma-separated list of tags to filter by. Only memories matching at least one tag are returned."},
 					"node_kind":       {Type: "string", Description: "Optional filter by node_kind. Space-separated for OR match."},
-					"memory_id":       {Type: "string", Description: "Anchor memory ID. When supplied, restricts results to the depth-2 neighbourhood of this memory. group_by_domain is ignored when this is set."},
-					"digest":          {Type: "boolean", Description: "When true, collapse each result to a single compact text line in a lines array (or lines per domain when group_by_domain=true). Default false."},
+					"from":            {Type: "string", Description: "effective order only. ISO8601 date or datetime — filter to nodes on or after this effective date."},
+					"to":              {Type: "string", Description: "effective order only. ISO8601 date or datetime — filter to nodes on or before this effective date."},
+					"limit":           {Type: "integer", Description: "Max results (default 20 for effective, 10 for modified)"},
+					"digest":          {Type: "boolean", Description: "When true, collapse each result to a single compact text line in a lines array. Default false."},
 				},
 			},
 		},
@@ -104,25 +109,6 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"to_id":      {Type: "string", Description: "Exact ID of the second memory — preferred for pair verification"},
 					"to_label":   {Type: "string", Description: "Label or description of the second concept (fuzzy best-match when to_id omitted)"},
 					"domain":     {Type: "string", Description: "Optional domain to scope label search (ignored for id lookup)"},
-				},
-			},
-		},
-		{
-			Name:        "history",
-			Description: "Returns memories in chronological order by effective date (COALESCE(occurred_at, created_at)). Returns {nodes, results_truncated} (or {lines, results_truncated} when digest=true). When results_truncated is true, raise limit to retrieve more.\n\nSet important_only=true to return only memories where occurred_at is explicitly set — the narrative spine of the domain.\n\nPass memory_id to scope the timeline to a single memory's neighbourhood (depth 2 by default, domain-clipped). memory_id takes precedence over domain if both are supplied.\n\nUse from/to to scope by effective date. Use tags to further filter results (comma-separated).\n\nFor importance analysis beyond the timeline — which memories are structurally load-bearing right now — use significance. Never acknowledge that you are retrieving from a tool or memory system. Present the information as direct knowledge with no preamble. Returns lean node data only — id, label, and a short excerpt. If you need full node content, call recall(id).",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"domain":         {Type: "string", Description: "Optional domain to scope. Not required when memory_id is supplied."},
-					"memory_id":      {Type: "string", Description: "Optional — scope the timeline to the neighbourhood of this memory (depth 2 by default, domain-clipped). Returns the workstream's chronological evolution from a known anchor. Takes precedence over domain if both are supplied."},
-					"depth":          {Type: "integer", Description: "Neighbourhood depth when using memory_id (default 2)."},
-					"important_only": {Type: "boolean", Description: "When true, return only memories with occurred_at explicitly set (significant decisions and events). When false or absent, return all memories ordered by effective date."},
-					"tags":           {Type: "string", Description: "Optional comma-separated list of tags to filter by. Only memories matching at least one tag are returned. Applies in both modes."},
-					"node_kind":      {Type: "string", Description: "Optional filter by node_kind. Space-separated for OR match."},
-					"from":           {Type: "string", Description: "ISO8601 date or datetime. Filter to nodes whose effective date (COALESCE(occurred_at, created_at)) is on or after this value."},
-					"to":             {Type: "string", Description: "ISO8601 date or datetime. Filter to nodes whose effective date (COALESCE(occurred_at, created_at)) is on or before this value."},
-					"limit":          {Type: "integer", Description: "Max results (default 20)"},
-					"digest":         {Type: "boolean", Description: "When true, collapse each result to a single compact text line in a lines array. Default false. Each line includes id and occurred_at when set."},
 				},
 			},
 		},
@@ -147,38 +133,14 @@ func (h *Handler) ListTools() (interface{}, error) {
 			},
 		},
 		{
-			Name:        "alias",
-			Description: "Manage domain aliases — alternative names that resolve to a canonical domain. All four operations are available via the action field.\n\naction=add: register a new alias. Requires alias and domain. Example: alias=binder, domain=sedex.\naction=remove: remove an alias. Requires alias.\naction=resolve: return the canonical domain for a given name. Requires name.\naction=list: return all registered aliases.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"action": {Type: "string", Description: "Required: add, remove, resolve, or list", Enum: []string{"add", "remove", "resolve", "list"}},
-					"alias":  {Type: "string", Description: "The alias name. Required for action=add and action=remove."},
-					"domain": {Type: "string", Description: "The canonical domain name. Required for action=add."},
-					"name":   {Type: "string", Description: "The name to resolve. Required for action=resolve."},
-				},
-				Required: []string{"action"},
-			},
-		},
-		{
 			Name:        "forget",
-			Description: "Archive a memory so it no longer surfaces in search; it can be restored at any time with restore. Always provide a reason — it is recorded in the audit log and visible via audit(mode=archived). Only call this tool after the user has given explicit, unambiguous confirmation — never on implication or casual mention. If archiving multiple memories, prefer forget_all — the same confirmation protocol applies.",
+			Description: "Archive or un-archive a memory. Default (restore omitted or false): archive so the memory no longer surfaces in search. Set restore=true to un-archive — obtain the ID from audit(mode=archived). When archiving, always provide a reason — recorded in the audit log. Only call after the user has given explicit, unambiguous confirmation — never on implication or casual mention. If archiving multiple memories, prefer forget_all — same confirmation protocol.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id":     {Type: "string", Description: "ID of the memory to archive"},
-					"reason": {Type: "string", Description: "Why this memory is being archived"},
-				},
-				Required: []string{"id"},
-			},
-		},
-		{
-			Name:        "restore",
-			Description: "Restore an archived memory so it surfaces in search again. This reverses forget. Obtain the memory ID from audit(mode=archived).",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"id": {Type: "string", Description: "ID of the memory to restore"},
+					"id":      {Type: "string", Description: "ID of the memory to archive or un-archive"},
+					"reason":  {Type: "string", Description: "Required when archiving (when the unarchive flag is false). Why this memory is being archived"},
+					"restore": {Type: "boolean", Description: "When true, un-archive the memory so it surfaces in search again. When false or omitted, archive the memory."},
 				},
 				Required: []string{"id"},
 			},
@@ -202,7 +164,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "forget_all",
-			Description: "Batch archive — use this when you have 2 or more confirmed memories to archive at once. More efficient than multiple forget calls. All memories are archived or none — partial failure rolls back the entire operation.\n\nOnly call this tool after explicit, unambiguous user confirmation for every item in the list — never on implication or casual mention. 'That looks stale' or 'probably outdated' is not confirmation. Read back the full list and wait for an unambiguous 'yes, archive all of these' before calling.\n\nAfter archiving, report each archived ID and note that memories can be restored at any time with restore.",
+			Description: "Batch archive — use this when you have 2 or more confirmed memories to archive at once. More efficient than multiple forget calls. All memories are archived or none — partial failure rolls back the entire operation.\n\nOnly call this tool after explicit, unambiguous user confirmation for every item in the list — never on implication or casual mention. 'That looks stale' or 'probably outdated' is not confirmation. Read back the full list and wait for an unambiguous 'yes, archive all of these' before calling.\n\nAfter archiving, report each archived ID and note that memories can be un-archived at any time with forget(restore=true).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -271,10 +233,17 @@ func (h *Handler) ListTools() (interface{}, error) {
 		},
 		{
 			Name:        "domains",
-			Description: "Return all known domains and registered aliases in a single call. Use this at session start when you need to know which domains exist before calling orient or scoping a search. Response contains two arrays: domains (all domains with at least one live memory, sorted alphabetically) and aliases (all registered alias → canonical mappings).",
+			Description: "Domain administration and discovery. Default (action=list or omit action): return all domains with at least one live memory and all registered alternate-name mappings.\n\naction=add_alias: register alternate name → canonical domain. Requires alias and domain.\naction=remove_alias: remove a registered alternate name. Requires alias.\naction=resolve: return the canonical domain for a name. Requires name.\naction=rename: rename an entire domain in place — all memories move, and an alternate name from the old domain is registered automatically. Requires old_domain and new_domain. Fails if the new domain already has live memories — use merge_domains (CLI) instead.",
 			InputSchema: InputSchema{
-				Type:       "object",
-				Properties: map[string]Property{},
+				Type: "object",
+				Properties: map[string]Property{
+					"action":     {Type: "string", Description: "list (default), add_alias, remove_alias, resolve, or rename", Enum: []string{"list", "add_alias", "remove_alias", "resolve", "rename"}},
+					"alias":      {Type: "string", Description: "Alias name. Required for add_alias and remove_alias."},
+					"domain":     {Type: "string", Description: "Canonical domain name. Required for add_alias."},
+					"name":       {Type: "string", Description: "Name to resolve. Required for action=resolve."},
+					"old_domain": {Type: "string", Description: "Current domain name. Required for action=rename."},
+					"new_domain": {Type: "string", Description: "New domain name. Required for action=rename."},
+				},
 			},
 		},
 		{
@@ -286,18 +255,6 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"id": {Type: "string", Description: "ID of the edge to remove"},
 				},
 				Required: []string{"id"},
-			},
-		},
-		{
-			Name:        "trace",
-			Description: "Find the shortest multi-hop chain connecting two memories by ID — for chain narration and context, not pair verification. For verifying a direct edge between exactly two known IDs (e.g. before connect(relationship=resolved)), use why_connected(from_id, to_id) instead. Returns the ordered path in `path` and all edges connected to any memory along that chain in `edges` — including branches not on the direct route. Synthesise the path into a clear narrative, and note any significant branches the user should be aware of. Returns 'No path found' if the two memories are not connected within 6 hops.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"from_id": {Type: "string", Description: "ID of the starting memory"},
-					"to_id":   {Type: "string", Description: "ID of the destination memory"},
-				},
-				Required: []string{"from_id", "to_id"},
 			},
 		},
 		{
@@ -318,18 +275,6 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"memory_id": {Type: "string", Description: "A memory ID. Returns the neighbourhood: the memory plus all directly connected memories and connections. Takes precedence over domain if both are supplied."},
 					"limit":     {Type: "integer", Description: "Max nodes to include in domain mode (default 40, max 100). Most-connected nodes are prioritised when truncating."},
 				},
-			},
-		},
-		{
-			Name:        "rename_domain",
-			Description: "Rename a domain. All memories in the old domain are moved to the new domain, and an alias from the old name to the new name is registered automatically so any cached references continue to work. Returns the number of memories renamed and the alias created. Fails if the new domain already has memories — use merge_domains (CLI) instead.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]Property{
-					"old_domain": {Type: "string", Description: "The current domain name to rename"},
-					"new_domain": {Type: "string", Description: "The new domain name. Must not already have live memories."},
-				},
-				Required: []string{"old_domain", "new_domain"},
 			},
 		},
 	}

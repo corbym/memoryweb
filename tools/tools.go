@@ -83,23 +83,23 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	case "search":
 		result, err = h.searchNodes(req.Arguments)
 	case "recent":
-		result, err = h.recentChanges(req.Arguments)
+		return errorResult("unknown tool: recent — use history with order=modified"), nil
 	case "why_connected":
 		result, err = h.findConnections(req.Arguments)
 	case "history":
 		result, err = h.timeline(req.Arguments)
 	case "alias_domain":
-		return errorResult("unknown tool: alias_domain — use alias with action=add"), nil
+		return errorResult("unknown tool: alias_domain — use domains with action=add_alias"), nil
 	case "list_aliases":
 		return errorResult("unknown tool: list_aliases — use domains"), nil
 	case "remove_alias":
-		return errorResult("unknown tool: remove_alias — use alias with action=remove"), nil
+		return errorResult("unknown tool: remove_alias — use domains with action=remove_alias"), nil
 	case "resolve_domain":
-		return errorResult("unknown tool: resolve_domain — use alias with action=resolve"), nil
+		return errorResult("unknown tool: resolve_domain — use domains with action=resolve"), nil
 	case "forget":
 		result, err = h.forgetNode(req.Arguments)
 	case "restore":
-		result, err = h.restoreNode(req.Arguments)
+		return errorResult("unknown tool: restore — use forget with restore=true"), nil
 	case "forgotten":
 		return errorResult("unknown tool: forgotten — use audit with mode=archived"), nil
 	case "audit":
@@ -123,7 +123,7 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	case "list_domains":
 		return errorResult("unknown tool: list_domains — use domains"), nil
 	case "alias":
-		result, err = h.aliasTool(req.Arguments)
+		return errorResult("unknown tool: alias — use domains with action=add_alias, remove_alias, or resolve"), nil
 	case "disconnect":
 		result, err = h.disconnect(req.Arguments)
 	case "disconnected":
@@ -131,11 +131,11 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	case "forget_all":
 		result, err = h.forgetAll(req.Arguments)
 	case "trace":
-		result, err = h.tracePath(req.Arguments)
+		return errorResult("unknown tool: trace — use why_connected for direct edges between two IDs, or recall for neighbourhood context"), nil
 	case "visualise":
 		result, err = h.visualise(req.Arguments)
 	case "rename_domain":
-		result, err = h.renameDomain(req.Arguments)
+		return errorResult("unknown tool: rename_domain — use domains with action=rename"), nil
 	case "significance":
 		result, err = h.handleSignificance(req.Arguments)
 	case "check_for_updates":

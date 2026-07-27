@@ -1698,7 +1698,7 @@ func TestOrient_DomainsArray_SchemaHasDomainsProperty(t *testing.T) {
 // must store the canonical domain so orient(domain=alias) finds the memory.
 func TestOrient_RememberViaAliasVisibleOnOrient(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "engine", "domain": "deep-engine"})
 
 	addNode(t, h, "Filed via alias", "engine", map[string]any{
 		"why_matters": "tests alias resolve-on-write for orient visibility",

@@ -15,13 +15,10 @@ var minimalArgs = map[string]map[string]any{
 	"connect":             {"from_memory": "a", "to_memory": "b"},
 	"recall":              {"id": "test-id"},
 	"search":              {"query": "x"},
-	"recent":              {},
 	"why_connected":       {"from_id": "a-id", "to_id": "b-id"},
 	"history":             {"domain": "d"},
 	"significance":        {"domain": "d"},
-	"alias":               {"action": "list"},
 	"forget":              {"id": "x", "reason": "test"},
-	"restore":             {"id": "x"},
 	"audit":               {"mode": "orphans"},
 	"forget_all":          {"items": []map[string]string{{"id": "x", "reason": "test"}}},
 	"orient":              {},
@@ -29,9 +26,7 @@ var minimalArgs = map[string]map[string]any{
 	"suggest_connections": {"id": "x"},
 	"domains":             {},
 	"disconnect":          {"id": "x"},
-	"trace":               {"from_id": "a", "to_id": "b"},
 	"visualise":           {"domain": "d"},
-	"rename_domain":       {"old_domain": "a", "new_domain": "b"},
 }
 
 func toolNames(t *testing.T, h *tools.Handler) []string {
@@ -183,7 +178,7 @@ func TestStrictDecode_MissingArgsRejectsWriteTools(t *testing.T) {
 
 func TestStrictDecode_MissingArgsAcceptsOptionalTools(t *testing.T) {
 	_, h := newEnv(t)
-	for _, tool := range []string{"orient", "domains", "recent"} {
+	for _, tool := range []string{"orient", "domains", "history"} {
 		t.Run(tool, func(t *testing.T) {
 			tr := callNoArgs(t, h, tool)
 			mustNotError(t, tr)

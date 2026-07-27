@@ -15,6 +15,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		Tags          string `json:"tags"`
 		NodeKind      string `json:"node_kind"`
 		MemoryID      string `json:"memory_id"`
+		Depth         int    `json:"depth"`
 		Digest        bool   `json:"digest"`
 	}
 	if err := decodeParams(args, &a, "recent"); err != nil {
@@ -27,6 +28,9 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	if a.Limit > 500 {
 		a.Limit = 500
 	}
+	if a.Depth <= 0 {
+		a.Depth = 2
+	}
 
 	tags := splitTags(a.Tags)
 	nodeKinds := splitNodeKinds(a.NodeKind)
@@ -36,7 +40,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	if a.MemoryID != "" {
-		nodes, err := h.store.RecentChangesScoped(a.MemoryID, 2, "", tags, nodeKinds, a.Limit+1)
+		nodes, err := h.store.RecentChangesScoped(a.MemoryID, a.Depth, "", tags, nodeKinds, a.Limit+1)
 		if err != nil {
 			return nil, err
 		}
@@ -45,7 +49,7 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	if len(tags) > 0 || len(nodeKinds) > 0 {
-		nodes, err := h.store.RecentChangesScoped("", 2, a.Domain, tags, nodeKinds, a.Limit+1)
+		nodes, err := h.store.RecentChangesScoped("", a.Depth, a.Domain, tags, nodeKinds, a.Limit+1)
 		if err != nil {
 			return nil, err
 		}

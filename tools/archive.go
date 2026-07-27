@@ -21,34 +21,34 @@ type auditArgs struct {
 
 func (h *Handler) forgetNode(args json.RawMessage) (*ToolResult, error) {
 	var a struct {
-		ID     string `json:"id"`
-		Reason string `json:"reason"`
+		ID      string `json:"id"`
+		Reason  string `json:"reason"`
+		Restore bool   `json:"restore"`
 	}
 	if err := decodeParams(args, &a, "forget"); err != nil {
 		return nil, err
+	}
+	if a.ID == "" {
+		return errorResult("id is required"), nil
+	}
+	if a.Restore {
+		if err := h.store.RestoreNode(a.ID); err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{
+			Type: "text",
+			Text: fmt.Sprintf("Node %q restored and is now visible in search and retrieval.", a.ID),
+		}}}, nil
+	}
+	if strings.TrimSpace(a.Reason) == "" {
+		return errorResult("reason is required when archiving"), nil
 	}
 	if err := h.store.ArchiveNode(a.ID, a.Reason); err != nil {
 		return nil, err
 	}
 	return &ToolResult{Content: []ContentBlock{{
 		Type: "text",
-		Text: fmt.Sprintf("Node %q archived. It can be restored at any time with restore_node.", a.ID),
-	}}}, nil
-}
-
-func (h *Handler) restoreNode(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
-		ID string `json:"id"`
-	}
-	if err := decodeParams(args, &a, "restore"); err != nil {
-		return nil, err
-	}
-	if err := h.store.RestoreNode(a.ID); err != nil {
-		return nil, err
-	}
-	return &ToolResult{Content: []ContentBlock{{
-		Type: "text",
-		Text: fmt.Sprintf("Node %q restored and is now visible in search and retrieval.", a.ID),
+		Text: fmt.Sprintf("Node %q archived. It can be restored at any time with forget(restore=true).", a.ID),
 	}}}, nil
 }
 
@@ -121,7 +121,7 @@ func (h *Handler) forgetAll(args json.RawMessage) (*ToolResult, error) {
 	for i, item := range a.Items {
 		ids[i] = item.ID
 	}
-	msg := fmt.Sprintf("archived %d memories: %s\nAll nodes can be restored at any time with restore.", len(ids), strings.Join(ids, ", "))
+	msg := fmt.Sprintf("archived %d memories: %s\nAll nodes can be restored at any time with forget(restore=true).", len(ids), strings.Join(ids, ", "))
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
 }
 

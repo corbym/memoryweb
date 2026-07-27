@@ -29,6 +29,23 @@ func TestForgetNode_HidesFromSearch(t *testing.T) {
 	}
 }
 
+func TestForget_ArchiveWithoutReason_ReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "forget needs reason", "test", nil)
+
+	tr := call(t, h, "forget", map[string]any{"id": id})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "reason is required") {
+		t.Errorf("expected reason required error, got: %s", text(t, tr))
+	}
+
+	tr = call(t, h, "forget", map[string]any{"id": id, "reason": "   "})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "reason is required") {
+		t.Errorf("expected reason required error for whitespace reason, got: %s", text(t, tr))
+	}
+}
+
 // TestForgetNode_DoesNotDelete: forgotten node must appear in list_archived
 // with archived_at present and non-empty.
 
@@ -38,7 +55,7 @@ func TestForgetNode_DoesNotDelete(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "forget does not delete", "test", nil)
 
-	mustNotError(t, call(t, h, "forget", map[string]any{"id": id}))
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": id, "reason": "test archive"}))
 
 	archivedTr := call(t, h, "audit", map[string]any{"mode": "archived", "domain": "test"})
 	mustNotError(t, archivedTr)
@@ -86,7 +103,7 @@ func TestRestoreNode_ReappearsInSearch(t *testing.T) {
 		t.Fatal("node should be hidden after forget_node")
 	}
 
-	mustNotError(t, call(t, h, "restore", map[string]any{"id": id}))
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": id, "restore": true}))
 
 	if !contains(searchIDs(t, call(t, h, "search", map[string]any{
 		"query": "restore reappears", "domain": "test",
@@ -107,7 +124,7 @@ func TestAuditLog_RecordsForgetAndRestore(t *testing.T) {
 	mustNotError(t, call(t, h, "forget", map[string]any{
 		"id": id, "reason": "test reason",
 	}))
-	mustNotError(t, call(t, h, "restore", map[string]any{"id": id}))
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": id, "restore": true}))
 
 	// Open a second connection to read audit_log directly.
 	// WAL mode allows concurrent readers — no need to close the primary store.
@@ -227,7 +244,7 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 		t.Error("should be hidden from get_node after forget_node")
 	}
 	recentIDs := func() []string {
-		tr := call(t, h, "recent", map[string]any{"domain": "project-alpha"})
+		tr := call(t, h, "history", map[string]any{"domain": "project-alpha", "order": "modified"})
 		var resp struct {
 			Nodes []struct {
 				ID string `json:"id"`
@@ -266,7 +283,7 @@ func TestArchiveWorkflow_FullLifecycle(t *testing.T) {
 	}
 
 	// Restore it via the tool
-	mustNotError(t, call(t, h, "restore", map[string]any{"id": id}))
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": id, "restore": true}))
 
 	// Verify it's visible again
 	if !contains(searchIDs(t, call(t, h, "search", map[string]any{"query": "Stale"})), id) {
@@ -676,6 +693,15 @@ func TestDisconnected_IsUnknownTool(t *testing.T) {
 func TestForgotten_IsUnknownTool(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "forgotten", map[string]any{})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool' in error; got: %s", text(t, tr))
+	}
+}
+
+func TestRestore_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "restore", map[string]any{"id": "x"})
 	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "unknown tool") {
 		t.Errorf("expected 'unknown tool' in error; got: %s", text(t, tr))

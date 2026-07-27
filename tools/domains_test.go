@@ -72,7 +72,7 @@ func TestAddAlias_SearchResolvesAlias(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Engine node", "deep-engine", nil)
 
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "engine", "domain": "deep-engine"})
 
 	tr := call(t, h, "search", map[string]any{"query": "Engine", "domain": "engine"})
 	mustNotError(t, tr)
@@ -85,7 +85,7 @@ func TestAlias_AddRejectedWhenLiveRowsExistUnderAliasName(t *testing.T) {
 	_, h := newEnv(t)
 	addNode(t, h, "Existing row", "engine", nil)
 
-	tr := call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
+	tr := call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "engine", "domain": "deep-engine"})
 	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "live node") {
 		t.Errorf("expected live node guard error, got: %s", text(t, tr))
@@ -94,9 +94,9 @@ func TestAlias_AddRejectedWhenLiveRowsExistUnderAliasName(t *testing.T) {
 
 func TestResolveDomain_ReturnsCanonical(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "dg", "domain": "deep-game"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "dg", "domain": "deep-game"})
 
-	tr := call(t, h, "alias", map[string]any{"action": "resolve", "name": "dg"})
+	tr := call(t, h, "domains", map[string]any{"action": "resolve", "name": "dg"})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "deep-game") {
 		t.Errorf("resolve_domain should return canonical; got: %s", text(t, tr))
@@ -105,7 +105,7 @@ func TestResolveDomain_ReturnsCanonical(t *testing.T) {
 
 func TestResolveDomain_UnknownAliasReturnsItself(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "alias", map[string]any{"action": "resolve", "name": "unknown-domain"})
+	tr := call(t, h, "domains", map[string]any{"action": "resolve", "name": "unknown-domain"})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "unknown-domain") {
 		t.Errorf("unregistered name should resolve to itself; got: %s", text(t, tr))
@@ -114,10 +114,10 @@ func TestResolveDomain_UnknownAliasReturnsItself(t *testing.T) {
 
 func TestListAliases_ReturnsRegisteredAliases(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "dg", "domain": "deep-game"})
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "sx", "domain": "sedex"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "dg", "domain": "deep-game"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "sx", "domain": "sedex"})
 
-	tr := call(t, h, "alias", map[string]any{"action": "list"})
+	tr := call(t, h, "domains", map[string]any{})
 	mustNotError(t, tr)
 	body := text(t, tr)
 	if !strings.Contains(body, "dg") || !strings.Contains(body, "sx") {
@@ -129,16 +129,16 @@ func TestListAliases_ReturnsRegisteredAliases(t *testing.T) {
 
 func TestRemoveAlias_RemovesExistingAlias(t *testing.T) {
 	_, h := newEnv(t)
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "dg", "domain": "deep-game"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "dg", "domain": "deep-game"})
 
-	tr := call(t, h, "alias", map[string]any{"action": "remove", "alias": "dg"})
+	tr := call(t, h, "domains", map[string]any{"action": "remove_alias", "alias": "dg"})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "dg") {
 		t.Errorf("expected confirmation mentioning alias; got: %s", text(t, tr))
 	}
 
 	// list_aliases should no longer contain it
-	listTr := call(t, h, "alias", map[string]any{"action": "list"})
+	listTr := call(t, h, "domains", map[string]any{})
 	mustNotError(t, listTr)
 	if strings.Contains(text(t, listTr), `"dg"`) {
 		t.Error("alias 'dg' should not appear in list_aliases after removal")
@@ -147,7 +147,7 @@ func TestRemoveAlias_RemovesExistingAlias(t *testing.T) {
 
 func TestRemoveAlias_NonExistentReturnsError(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "alias", map[string]any{"action": "remove", "alias": "ghost-alias"})
+	tr := call(t, h, "domains", map[string]any{"action": "remove_alias", "alias": "ghost-alias"})
 	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "not found") {
 		t.Errorf("expected 'not found' error; got: %s", text(t, tr))
@@ -158,7 +158,7 @@ func TestRemoveAlias_SearchNoLongerResolvesRemovedAlias(t *testing.T) {
 	_, h := newEnv(t)
 	id := addNode(t, h, "Engine node", "deep-engine", nil)
 
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "engine", "domain": "deep-engine"})
 
 	// confirm alias resolves while it exists
 	if !contains(searchIDs(t, call(t, h, "search", map[string]any{
@@ -167,7 +167,7 @@ func TestRemoveAlias_SearchNoLongerResolvesRemovedAlias(t *testing.T) {
 		t.Fatal("alias should resolve before removal")
 	}
 
-	mustNotError(t, call(t, h, "alias", map[string]any{"action": "remove", "alias": "engine"}))
+	mustNotError(t, call(t, h, "domains", map[string]any{"action": "remove_alias", "alias": "engine"}))
 
 	// after removal, searching under the alias should return nothing
 	tr := call(t, h, "search", map[string]any{
@@ -186,7 +186,7 @@ func TestRenameDomain_RenamesNodesAndCreatesAlias(t *testing.T) {
 	addNode(t, h, "Alpha", "old-dom", nil)
 	addNode(t, h, "Beta", "old-dom", nil)
 
-	tr := call(t, h, "rename_domain", map[string]any{
+	tr := call(t, h, "domains", map[string]any{"action": "rename",
 		"old_domain": "old-dom",
 		"new_domain": "new-dom",
 	})
@@ -199,7 +199,7 @@ func TestRenameDomain_RenamesNodesAndCreatesAlias(t *testing.T) {
 	}
 
 	// Old domain should resolve to new domain via alias.
-	resolve := call(t, h, "alias", map[string]any{"action": "resolve", "name": "old-dom"})
+	resolve := call(t, h, "domains", map[string]any{"action": "resolve", "name": "old-dom"})
 	mustNotError(t, resolve)
 	if !strings.Contains(resolve.Content[0].Text, "new-dom") {
 		t.Errorf("alias did not resolve: %s", resolve.Content[0].Text)
@@ -215,7 +215,7 @@ func TestRenameDomain_RenamesNodesAndCreatesAlias(t *testing.T) {
 
 func TestRenameDomain_OldDomainNotFound_ReturnsError(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "rename_domain", map[string]any{
+	tr := call(t, h, "domains", map[string]any{"action": "rename",
 		"old_domain": "nonexistent",
 		"new_domain": "anything",
 	})
@@ -230,7 +230,7 @@ func TestRenameDomain_NewDomainAlreadyExists_DirectsToMerge(t *testing.T) {
 	addNode(t, h, "Alpha", "domain-a", nil)
 	addNode(t, h, "Beta", "domain-b", nil)
 
-	tr := call(t, h, "rename_domain", map[string]any{
+	tr := call(t, h, "domains", map[string]any{"action": "rename",
 		"old_domain": "domain-a",
 		"new_domain": "domain-b",
 	})
@@ -246,7 +246,7 @@ func TestDomains_ReturnsDomainsAndAliases(t *testing.T) {
 	_, h := newEnv(t)
 	addNode(t, h, "A", "alpha", nil)
 	addNode(t, h, "B", "beta", nil)
-	mustNotError(t, call(t, h, "alias", map[string]any{"action": "add", "alias": "al", "domain": "alpha"}))
+	mustNotError(t, call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "al", "domain": "alpha"}))
 	tr := call(t, h, "domains", map[string]any{})
 	mustNotError(t, tr)
 	out := text(t, tr)
@@ -289,7 +289,7 @@ func TestListAliases_IsUnknownTool(t *testing.T) {
 // TestAlias_Add_RegistersAlias: action=add must register the alias.
 func TestAlias_Add_RegistersAlias(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "alias", map[string]any{"action": "add", "alias": "mw", "domain": "memoryweb"})
+	tr := call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "mw", "domain": "memoryweb"})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "mw") {
 		t.Errorf("expected alias name in response; got: %s", text(t, tr))
@@ -301,8 +301,8 @@ func TestAlias_Add_RegistersAlias(t *testing.T) {
 // TestAlias_Remove_RemovesAlias: action=remove must remove a registered alias.
 func TestAlias_Remove_RemovesAlias(t *testing.T) {
 	_, h := newEnv(t)
-	mustNotError(t, call(t, h, "alias", map[string]any{"action": "add", "alias": "mw", "domain": "memoryweb"}))
-	tr := call(t, h, "alias", map[string]any{"action": "remove", "alias": "mw"})
+	mustNotError(t, call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "mw", "domain": "memoryweb"}))
+	tr := call(t, h, "domains", map[string]any{"action": "remove_alias", "alias": "mw"})
 	mustNotError(t, tr)
 }
 
@@ -311,8 +311,8 @@ func TestAlias_Remove_RemovesAlias(t *testing.T) {
 // TestAlias_Resolve_ReturnsCanonical: action=resolve must return the canonical domain.
 func TestAlias_Resolve_ReturnsCanonical(t *testing.T) {
 	_, h := newEnv(t)
-	mustNotError(t, call(t, h, "alias", map[string]any{"action": "add", "alias": "mw", "domain": "memoryweb"}))
-	tr := call(t, h, "alias", map[string]any{"action": "resolve", "name": "mw"})
+	mustNotError(t, call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "mw", "domain": "memoryweb"}))
+	tr := call(t, h, "domains", map[string]any{"action": "resolve", "name": "mw"})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "memoryweb") {
 		t.Errorf("expected 'memoryweb' in resolve response; got: %s", text(t, tr))
@@ -324,8 +324,8 @@ func TestAlias_Resolve_ReturnsCanonical(t *testing.T) {
 // TestAlias_List_ReturnsAllAliases: action=list must return all registered aliases.
 func TestAlias_List_ReturnsAllAliases(t *testing.T) {
 	_, h := newEnv(t)
-	mustNotError(t, call(t, h, "alias", map[string]any{"action": "add", "alias": "mw", "domain": "memoryweb"}))
-	tr := call(t, h, "alias", map[string]any{"action": "list"})
+	mustNotError(t, call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "mw", "domain": "memoryweb"}))
+	tr := call(t, h, "domains", map[string]any{})
 	mustNotError(t, tr)
 	if !strings.Contains(text(t, tr), "mw") {
 		t.Errorf("expected alias 'mw' in list response; got: %s", text(t, tr))
@@ -337,7 +337,7 @@ func TestAlias_List_ReturnsAllAliases(t *testing.T) {
 // TestAlias_InvalidAction_ReturnsError: an unknown action must return an error.
 func TestAlias_InvalidAction_ReturnsError(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "alias", map[string]any{"action": "badaction"})
+	tr := call(t, h, "domains", map[string]any{"action": "badaction"})
 	mustError(t, tr)
 }
 
@@ -348,8 +348,12 @@ func TestAliasDomain_IsUnknownTool(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "alias_domain", map[string]any{"alias": "x", "domain": "y"})
 	mustError(t, tr)
-	if !strings.Contains(text(t, tr), "unknown tool") {
-		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	msg := text(t, tr)
+	if !strings.Contains(msg, "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", msg)
+	}
+	if !strings.Contains(msg, "domains") || strings.Contains(msg, "use alias") {
+		t.Errorf("expected domains migration pointer, got: %s", msg)
 	}
 }
 
@@ -360,8 +364,12 @@ func TestRemoveAlias_IsUnknownTool(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "remove_alias", map[string]any{"alias": "x"})
 	mustError(t, tr)
-	if !strings.Contains(text(t, tr), "unknown tool") {
-		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	msg := text(t, tr)
+	if !strings.Contains(msg, "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", msg)
+	}
+	if !strings.Contains(msg, "domains") || strings.Contains(msg, "use alias") {
+		t.Errorf("expected domains migration pointer, got: %s", msg)
 	}
 }
 
@@ -371,6 +379,28 @@ func TestRemoveAlias_IsUnknownTool(t *testing.T) {
 func TestResolveDomain_IsUnknownTool(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "resolve_domain", map[string]any{"name": "x"})
+	mustError(t, tr)
+	msg := text(t, tr)
+	if !strings.Contains(msg, "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", msg)
+	}
+	if !strings.Contains(msg, "domains") || strings.Contains(msg, "use alias") {
+		t.Errorf("expected domains migration pointer, got: %s", msg)
+	}
+}
+
+func TestAlias_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "alias", map[string]any{"action": "list"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
+
+func TestRenameDomain_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "rename_domain", map[string]any{"old_domain": "a", "new_domain": "b"})
 	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "unknown tool") {
 		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))

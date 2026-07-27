@@ -58,12 +58,10 @@ because agents never reach them.
    closed if the adjudication edge is missing.    Once decided, verify the exact pair via
    `why_connected(from_id=..., to_id=...)` — preferred for exact-ID pair
    verification — or `recall(id)`'s `edges` array. Do **not** rely on
-   `trace(from_id, to_id)` alone (a 6-hop BFS that can report a path through an
-   unrelated third memory, not a direct edge) or label-only
-   `why_connected(from_label, to_label)` (resolves each side by best-match label
-   search, not exact ID, and can silently pick the wrong node) — both remain
-   useful for their own purpose (chain narration, fuzzy concept lookup), just
-   not as contradiction-pair proof when IDs are known.
+   label-only `why_connected(from_label, to_label)` (resolves each side by
+   best-match label search, not exact ID, and can silently pick the wrong
+   node) — useful for fuzzy concept lookup, not as contradiction-pair proof
+   when IDs are known.
    Once verified, call `connect(relationship=resolved, verdict=...)` (or
    `resolved_by` / `supersedes` as the relationship type). On `resolved`,
    optional `verdict` (`false_positive`, `reconciled`, `superseded`)
@@ -148,7 +146,7 @@ then the decision with a `depends_on`/`caused_by` connection pointing at it.
 | `contradicts` | A and B directly conflict |
 | `governed_by` | A must satisfy a standing rule or constraint B |
 | `is_example_of` | A illustrates B |
-| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair. **Verify the exact pair first** via `why_connected(from_id=..., to_id=...)` — preferred — or `recall(id)`'s `edges` array (Layer 1 step 7). Do not rely on `trace` or label-only `why_connected`. Additive. On `relationship=resolved`, optional `verdict` (`false_positive`, `reconciled`, `superseded`) classifies *how* the contradiction was adjudicated — stored on the edge and returned by `recall`/`why_connected`. |
+| `resolved` / `resolved_by` / `supersedes` | Adjudicates a `contradicts` pair. **Verify the exact pair first** via `why_connected(from_id=..., to_id=...)` — preferred — or `recall(id)`'s `edges` array (Layer 1 step 7). Do not rely on label-only `why_connected`. Additive. On `relationship=resolved`, optional `verdict` (`false_positive`, `reconciled`, `superseded`) classifies *how* the contradiction was adjudicated — stored on the edge and returned by `recall`/`why_connected`. |
 
 Custom relationship strings are accepted as a fallback; prefer a typed one
 from the table above.
@@ -173,10 +171,10 @@ Two different operations move memories between domains; don't confuse them:
   inference. State current domain and proposed target and wait for
   confirmation first; `reason` is required and recorded in the audit log
   verbatim. Confirm with `orient(domain=new_domain)` afterward.
-- **`rename_domain(old, new)`** renames an entire domain in place — every
-  memory moves, and an alias from the old name is registered automatically.
-  Fails if the new name already has memories (use the CLI `merge_domains`
-  for that, not an MCP tool).
+- **`domains(action=rename, old_domain=..., new_domain=...)`** renames an
+  entire domain in place — every memory moves, and an alias from the old name
+  is registered automatically. Fails if the new name already has memories (use
+  the CLI `merge_domains` for that, not an MCP tool).
 
 ### `occurred_at`
 
@@ -206,10 +204,11 @@ Two different operations move memories between domains; don't confuse them:
   stale; always ask "Should I archive this?", never assume yes; wait for
   unambiguous confirmation ("that's probably outdated" doesn't count);
   never archive on casual mention; after archiving, report the ID(s) and
-  note they're restorable with `restore`. Use `forget_all` (one atomic
-  transaction) once you have 2+ confirmed IDs rather than repeated `forget`
-  calls.
-- `restore(id)` reverses `forget` — get the ID from `audit(mode=archived)`.
+  note they're un-archivable with `forget(restore=true)`. Use `forget_all`
+  (one atomic transaction) once you have 2+ confirmed IDs rather than repeated
+  `forget` calls.
+- `forget(id, restore=true)` un-archives — get the ID from
+  `audit(mode=archived)`.
 - `disconnect(id)` hard-deletes an edge (by edge ID, from `recall`'s `edges`
   array) — no built-in confirmation protocol, but treat it like `forget`:
   irreversible.
@@ -237,7 +236,7 @@ Two different operations move memories between domains; don't confuse them:
 
 ### Lean output — `recall(id)` before acting on content
 
-`orient`, `search`, `recent`, `history`, `significance`, `audit` all return
+`orient`, `search`, `history`, `significance`, `audit` all return
 **lean** entries: `id`, `label`, and a truncated `why_matters` excerpt —
 never the full `description`. When graph state warrants it, entries also carry
 `lifecycle_state` (`contested`, `resolved`, or `superseded`); digest lines append
@@ -255,8 +254,8 @@ complete.
 
 | Tool | Response shape |
 |---|---|
-| `recent` | `{nodes, results_truncated}` or `{groups, results_truncated}` when `group_by_domain=true` |
-| `history` | `{nodes, results_truncated}` |
+| `history(order=effective)` | `{nodes, results_truncated}` — default; chronological by effective date |
+| `history(order=modified)` | `{nodes, results_truncated}` or `{groups, results_truncated}` when `group_by_domain=true` |
 | `audit(mode=stale)` | `{candidates, results_truncated}` — empty is `{candidates: [], results_truncated: false}` |
 | `audit(mode=orphans)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}` |
 | `audit(mode=archived)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}`; **default cap 25**; raise `limit` to enumerate |
@@ -292,11 +291,11 @@ than assuming this document is still accurate.
 | `orient(domains=[...])` | Same, for 1–5 domains in one call |
 | `orient(domain=X, topic=Y)` | `relevant` semantically matched to a known session purpose |
 | `domains()` | List active domains and aliases |
-| `alias(action=...)` | Manage domain aliases: add/remove/resolve/list |
+| `domains(action=add_alias\|remove_alias\|resolve\|rename)` | Domain alias admin and in-place domain rename |
 | `search(query=...)` | Find by vocabulary in stored labels/descriptions/tags |
 | `recall(id)` | Full memory + connections |
-| `recent()` | Where work was last happening |
-| `history()` | Chronological decision spine |
+| `history(order=modified)` | Where work was last happening (by updated_at) |
+| `history(order=effective)` / `history(important_only=true)` | Chronological decision spine |
 | `significance()` | Dual-signal importance (declared + structural) |
 | `significance(mode=trust)` | Epistemic trust ranking |
 | `suggest_connections(id)` | Candidates to wire up after filing |
@@ -304,12 +303,10 @@ than assuming this document is still accurate.
 | `disconnect(id)` | Hard-delete an edge by edge ID — irreversible |
 | `remember(...)` | File a new memory; may return `trust_nudge`, `possible_misdomain`/`suggested_domain`/`suggested_memory_id` on new-domain creation (KNN requires embeddings) |
 | `revise(id, ...)` | Update an existing memory; optional `trust_nudge` on content-changing updates when outbound `connects_to`/`depends_on`/`caused_by`/`blocked_by` reach low-trust targets; also handles single-node domain moves |
-| `rename_domain(old, new)` | Rename an entire domain in place |
 | `forget(id, reason)` / `forget_all(items=[...])` | Archive — confirmation required |
-| `restore(id)` | Un-archive |
+| `forget(id, restore=true)` | Un-archive |
 | `audit(mode=...)` | `stale` / `orphans` / `archived` / `conflicts` / `kind_coverage` |
 | `visualise(domain=X)` / `visualise(memory_id=X)` | Mermaid graph, human inspection only |
-| `trace(from_id, to_id)` | Shortest multi-hop chain — narration, not pair verification |
 | `why_connected(from_id, to_id)` | Direct edges between exact IDs — preferred pair verification |
 | `why_connected(from_label, to_label)` | Fuzzy label best-match — not exact-ID verification |
 

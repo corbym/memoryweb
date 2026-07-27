@@ -76,13 +76,11 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 	}
 	want := []string{
 		"remember", "connect", "revise", "recall", "search",
-		"recent", "why_connected", "history", "significance",
-		"alias",
-		"forget", "restore", "forget_all",
+		"why_connected", "history", "significance",
+		"forget", "forget_all",
 		"audit", "orient",
 		"suggest_connections",
-		"domains", "disconnect", "trace", "visualise",
-		"rename_domain",
+		"domains", "disconnect", "visualise",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {
@@ -118,23 +116,18 @@ func TestListTools_DescriptionsPresent(t *testing.T) {
 		"connect":             "Connect memories with typed",
 		"recall":              "Retrieve a memory and all its connections by ID",
 		"search":              "Search memories by text",
-		"recent":              "List the most recently added or updated memories",
 		"why_connected":       "Find direct connections between two memories",
-		"history":             "Returns memories in chronological order by effective date",
+		"history":             "Returns memories in chronological order",
 		"significance":        "Dual-signal importance analysis",
-		"alias":               "Manage domain aliases",
-		"forget":              "Always provide a reason",
-		"restore":             "Restore an archived memory so it surfaces in search again. This reverses forget.",
+		"forget":              "Archive or un-archive a memory",
 		"audit":               "Inspect the health of knowledge",
 		"forget_all":          "Batch archive",
 		"orient":              "Call this at the start of every session",
 		"revise":              "Update one or more existing live memories",
 		"suggest_connections": "Given a memory ID, return up to 5 candidate connections",
-		"domains":             "Return all known domains and registered aliases",
+		"domains":             "Domain administration and discovery",
 		"disconnect":          "Remove a connection between two memories by edge ID",
-		"trace":               "Find the shortest multi-hop chain",
 		"visualise":           "Generate a Mermaid.js flowchart",
-		"rename_domain":       "Rename a domain",
 	}
 
 	byName := map[string]string{}
@@ -156,6 +149,24 @@ func TestListTools_DescriptionsPresent(t *testing.T) {
 			t.Errorf("tool %q: description does not contain %q\n  got: %s", name, wantSubstr, desc[:min(len(desc), 120)])
 		}
 	}
+}
+
+// referencesRetiredToolName reports whether desc cites a retired MCP tool by
+// bare name. Parameter references (restore=true) and action enum tokens
+// (add_alias) are allowed — they name fields, not retired tools.
+func referencesRetiredToolName(desc, name string) bool {
+	switch name {
+	case "restore":
+		if strings.Contains(desc, "restore=") || strings.Contains(desc, "restore:true") {
+			return false
+		}
+	case "alias":
+		if strings.Contains(desc, "_alias") || strings.Contains(desc, "aliases") {
+			return false
+		}
+	}
+	pat := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)
+	return pat.MatchString(desc)
 }
 
 // TestListTools_NoStaleToolReferences asserts that no tool description
@@ -196,7 +207,11 @@ func TestListTools_NoStaleToolReferences(t *testing.T) {
 		{"revise_all", "revise with items array"},
 		{"connect_all", "connect with items array"},
 		{"list_domains", "domains"},
-		{"list_aliases", "alias(action=list)"},
+		{"list_aliases", "domains(action=list)"},
+		{"alias", "domains(action=add_alias|remove_alias|resolve)"},
+		{"rename_domain", "domains(action=rename)"},
+		{"restore", "forget(restore=true)"},
+		{"trace", "why_connected or recall"},
 		{"disconnected", "audit(mode=orphans)"},
 		{"check_for_updates", "CLI only"},
 	}
@@ -205,8 +220,7 @@ func TestListTools_NoStaleToolReferences(t *testing.T) {
 		for _, removed := range removedTools {
 			// Whole-word match: \b ensures "disconnected" does not fire on
 			// "disconnected staleness" but would fire on a bare tool name reference.
-			pat := regexp.MustCompile(`\b` + regexp.QuoteMeta(removed.name) + `\b`)
-			if pat.MatchString(td.Description) {
+			if referencesRetiredToolName(td.Description, removed.name) {
 				t.Errorf("tool %q: description references removed tool %q (use %s instead)",
 					td.Name, removed.name, removed.replacedBy)
 			}
@@ -351,7 +365,11 @@ func TestListTools_PropertyDescriptionsNoForbiddenWords(t *testing.T) {
 		{"revise_all", "revise with items array"},
 		{"connect_all", "connect with items array"},
 		{"list_domains", "domains"},
-		{"list_aliases", "alias(action=list)"},
+		{"list_aliases", "domains(action=list)"},
+		{"alias", "domains(action=add_alias|remove_alias|resolve)"},
+		{"rename_domain", "domains(action=rename)"},
+		{"restore", "forget(restore=true)"},
+		{"trace", "why_connected or recall"},
 		{"disconnected", "audit(mode=orphans)"},
 		{"check_for_updates", "CLI only"},
 	}
@@ -368,8 +386,7 @@ func TestListTools_PropertyDescriptionsNoForbiddenWords(t *testing.T) {
 
 			// Check retired tool names.
 			for _, removed := range removedTools {
-				pat := regexp.MustCompile(`\b` + regexp.QuoteMeta(removed.name) + `\b`)
-				if pat.MatchString(desc) {
+				if referencesRetiredToolName(desc, removed.name) {
 					t.Errorf("%s: description references removed tool %q (use %s instead)\n  got: %s",
 						loc, removed.name, removed.replacedBy, desc)
 				}
@@ -987,15 +1004,18 @@ func TestHistory_MemoryIDMode_InSchema(t *testing.T) {
 	t.Fatal("history tool not found in ListTools")
 }
 
-func TestRenameDomain_InListTools(t *testing.T) {
+func TestDomains_RenameAction_InListTools(t *testing.T) {
 	_, h := newEnv(t)
 	raw, err := h.ListTools()
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
 	b, _ := json.Marshal(raw)
-	if !strings.Contains(string(b), `"rename_domain"`) {
-		t.Error("rename_domain not present in ListTools output")
+	if !strings.Contains(string(b), `"domains"`) {
+		t.Error("domains not present in ListTools output")
+	}
+	if !strings.Contains(string(b), `action=rename`) {
+		t.Error("domains description should document action=rename")
 	}
 }
 
@@ -1027,7 +1047,7 @@ func TestListTools_PresentationInstructionOnAllRetrievalTools(t *testing.T) {
 	for _, td := range resp.Tools {
 		index[td.Name] = td.Description
 	}
-	retrieval := []string{"search", "recall", "recent", "orient", "history", "why_connected", "significance"}
+	retrieval := []string{"search", "recall", "orient", "history", "why_connected", "significance"}
 	const want = "Never acknowledge that you are retrieving"
 	for _, name := range retrieval {
 		desc, ok := index[name]
@@ -1149,14 +1169,26 @@ func TestListTools_Slice2And3Removed(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 	b, _ := json.Marshal(raw)
-	s := string(b)
+	var resp struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("parse ListTools: %v", err)
+	}
+	names := map[string]bool{}
+	for _, td := range resp.Tools {
+		names[td.Name] = true
+	}
 	for _, removed := range []string{
 		"whats_stale", "disconnected", "forgotten",
 		"list_domains", "list_aliases",
 		"alias_domain", "remove_alias", "resolve_domain",
 		"check_for_updates",
+		"alias", "rename_domain", "restore", "trace", "recent",
 	} {
-		if strings.Contains(s, `"`+removed+`"`) {
+		if names[removed] {
 			t.Errorf("tool %q must not appear in ListTools after consolidation", removed)
 		}
 	}
@@ -1598,9 +1630,9 @@ func TestSearch_MemoryID_SchemaHasProperty(t *testing.T) {
 
 // ── recent tags + memory_id scoping ──────────────────────────────────────────
 
-// TestRecent_SchemaHasTagsAndMemoryID: the recent tool must expose both new
-// properties in its input schema.
-func TestRecent_SchemaHasTagsAndMemoryID(t *testing.T) {
+// TestHistory_ModifiedOrderSchemaHasTagsAndMemoryID: history must expose
+// order=modified scoping properties in its input schema.
+func TestHistory_ModifiedOrderSchemaHasTagsAndMemoryID(t *testing.T) {
 	_, h := newEnv(t)
 	raw, err := h.ListTools()
 	if err != nil {
@@ -1621,22 +1653,22 @@ func TestRecent_SchemaHasTagsAndMemoryID(t *testing.T) {
 		t.Fatalf("parse ListTools: %v", err)
 	}
 	for _, td := range resp.Tools {
-		if td.Name != "recent" {
+		if td.Name != "history" {
 			continue
 		}
-		for _, prop := range []string{"tags", "memory_id"} {
+		for _, prop := range []string{"tags", "memory_id", "order", "group_by_domain"} {
 			p, ok := td.InputSchema.Properties[prop]
 			if !ok {
-				t.Errorf("recent tool missing %q property in schema", prop)
+				t.Errorf("history tool missing %q property in schema", prop)
 				continue
 			}
 			if p.Description == "" {
-				t.Errorf("recent tool %q property must have a description", prop)
+				t.Errorf("history tool %q property must have a description", prop)
 			}
 		}
 		return
 	}
-	t.Fatal("recent tool not found in ListTools")
+	t.Fatal("history tool not found in ListTools")
 }
 
 // ── audit tags + memory_id scoping ───────────────────────────────────────────

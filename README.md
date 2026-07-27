@@ -114,32 +114,27 @@ Override with `MEMORYWEB_DB=/path/to/your.db`
 |------|-------------|
 | `recall` | Retrieve a node and all its connections by ID. |
 | `search` | Text search across `label`, `description`, `why_matters`, and `tags`. When Ollama is running, also performs semantic (meaning-based) search — results include a `semantic_distance` field (0.0–1.0, lower = closer). Returns `truncated: true` when results are capped by the limit. |
-| `recent` | What was filed recently. Set `group_by_domain=true` (with no domain) to see activity broken down per domain. |
-| `history` | Nodes ordered by when they actually occurred. Supports `from`/`to` date range filtering, `tags` filtering, and `important_only` for the curated decision spine only. |
-| `why_connected` | Look up the reasoning linking two named concepts (by label). |
-| `trace` | Find the shortest chain of relationships between two nodes (by ID). Returns intermediate nodes and edges up to 6 hops. Synthesise the result into a narrative explaining how one concept leads to the other. |
+| `history` | Chronological listing. `order=effective` (default) by occurred/created date with `important_only`, `from`/`to`. `order=modified` by last updated — set `group_by_domain=true` for per-domain activity. |
+| `why_connected` | Direct edges between two memories (prefer `from_id`/`to_id` for pair verification). |
 | `orient` | Return all nodes for a domain structured for synthesis — current state, recent activity, and a `declared_spine` of key decisions in chronological order. Includes `total_nodes` and `server_version`. |
 | `visualise` | Mermaid flowchart for a domain or a single node's neighbourhood (pass `memory_id`). Output inside a mermaid code block. |
 | `significance` | Dual-signal importance analysis for a domain. Returns four sections: `declared` (nodes with `occurred_at` set), `structural` (ranked by recency-weighted inbound degree), `uncurated` (structural top-N without `occurred_at` — curation candidates), and `potentially_stale` (declared but low structural score). |
 
 ### Archive / forget
 
-Nodes are never hard-deleted via the tools. Archive = soft delete; the node disappears from search but can be restored.
+Nodes are never hard-deleted via the tools. Archive = soft delete; the node disappears from search but can be un-archived.
 
 | Tool | What it does |
 |------|-------------|
-| `forget` | Archive a node with a reason. Strict protocol: only after `audit(mode=stale)` surfaces a candidate or the user explicitly confirms. |
+| `forget` | Archive a node with a reason, or un-archive with `restore=true`. Strict protocol: only after `audit(mode=stale)` surfaces a candidate or the user explicitly confirms. |
 | `forget_all` | Archive multiple nodes atomically in a single call. Same strict protocol applies. |
-| `restore` | Restore an archived node so it surfaces in search again. |
 | `audit` | Surface nodes that need attention. `mode=stale` — stale, contradicted, duplicated, or overdue transient nodes. `mode=orphans` — live nodes with zero connections. `mode=archived` — review what has been archived. |
 
 ### Domain management
 
 | Tool | What it does |
 |------|-------------|
-| `domains` | List all domains with at least one live node, and all registered aliases. |
-| `alias` | Manage domain aliases. Actions: `add`, `remove`, `resolve`, `list`. Register short aliases so both `dg` and `deep-game` return the same results. |
-| `rename_domain` | Rename a domain in place. Automatically registers an alias from the old name so existing references keep working. Fails with a clear error if the new domain already has live nodes — use `merge-domains` (CLI) instead. |
+| `domains` | Domain admin and discovery. Default lists domains and aliases. Actions: `add_alias`, `remove_alias`, `resolve`, `rename`. |
 
 ### Relationship types
 `caused_by` `led_to` `blocked_by` `unblocks` `connects_to` `contradicts` `depends_on` `is_example_of`

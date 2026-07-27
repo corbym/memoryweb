@@ -45,7 +45,7 @@ func TestRecent_NodeKindFilter(t *testing.T) {
 	addNode(t, h, "recent standing", "nk3", map[string]any{"node_kind": "standing"})
 	addNode(t, h, "recent decision", "nk3", nil)
 
-	tr := call(t, h, "recent", map[string]any{"domain": "nk3", "node_kind": "decision", "limit": 10})
+	tr := call(t, h, "history", map[string]any{"domain": "nk3", "order": "modified", "node_kind": "decision", "limit": 10})
 	mustNotError(t, tr)
 	if strings.Contains(text(t, tr), "recent standing") {
 		t.Error("standing node should be excluded")
@@ -131,7 +131,8 @@ func TestSignificance_NodeKindFilter(t *testing.T) {
 
 func TestRecent_GroupByDomainAndNodeKind_Error(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "recent", map[string]any{
+	tr := call(t, h, "history", map[string]any{
+		"order":           "modified",
 		"group_by_domain": true,
 		"node_kind":       "decision",
 	})

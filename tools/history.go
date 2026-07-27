@@ -22,9 +22,36 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 		To            string `json:"to"`
 		Limit         int    `json:"limit"`
 		Digest        bool   `json:"digest"`
+		Order         string `json:"order"`
+		GroupByDomain bool   `json:"group_by_domain"`
 	}
 	if err := decodeParams(args, &a, "history"); err != nil {
 		return nil, err
+	}
+	if a.Order == "modified" {
+		if a.ImportantOnly || a.From != "" || a.To != "" {
+			return errorResult("order=modified cannot be combined with important_only, from, or to"), nil
+		}
+		recentArgs, err := json.Marshal(map[string]any{
+			"domain":          a.Domain,
+			"limit":           a.Limit,
+			"group_by_domain": a.GroupByDomain,
+			"tags":            a.Tags,
+			"node_kind":       a.NodeKind,
+			"memory_id":       a.MemoryID,
+			"depth":           a.Depth,
+			"digest":          a.Digest,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return h.recentChanges(recentArgs)
+	}
+	if a.Order != "" && a.Order != "effective" {
+		return errorResult(fmt.Sprintf("unknown order %q — use effective (default) or modified", a.Order)), nil
+	}
+	if a.GroupByDomain {
+		return errorResult("group_by_domain requires order=modified"), nil
 	}
 	if a.Limit <= 0 {
 		a.Limit = 20

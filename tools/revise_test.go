@@ -772,7 +772,7 @@ func TestRevise_Batch_Domain_MovesAll(t *testing.T) {
 func TestRevise_Domain_ViaAliasResolvesOnWrite(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "target", "domain": "canonical-target"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "target", "domain": "canonical-target"})
 	id := addNode(t, h, "Move via alias", "source-domain", nil)
 
 	tr := call(t, h, "revise", map[string]any{
@@ -796,7 +796,7 @@ func TestRevise_Domain_ViaAliasResolvesOnWrite(t *testing.T) {
 func TestRevise_Domain_AliasMatchingCurrent_NoReasonRequired(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
-	call(t, h, "alias", map[string]any{"action": "add", "alias": "engine", "domain": "deep-engine"})
+	call(t, h, "domains", map[string]any{"action": "add_alias", "alias": "engine", "domain": "deep-engine"})
 	id := addNode(t, h, "Already canonical", "deep-engine", nil)
 
 	tr := call(t, h, "revise", map[string]any{

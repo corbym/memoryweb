@@ -110,7 +110,7 @@ func TestRecent_LeanFormat_NoDescription(t *testing.T) {
 		"description": "this description must not appear in lean recent output",
 	})
 
-	tr := call(t, h, "recent", map[string]any{"domain": "recent-lean"})
+	tr := call(t, h, "history", map[string]any{"domain": "recent-lean", "order": "modified"})
 	mustNotError(t, tr)
 
 	var resp struct {
@@ -243,7 +243,7 @@ func TestListTools_SearchDescriptionTruncationDisclosure(t *testing.T) {
 
 func TestListTools_RecentDescriptionTruncationDisclosure(t *testing.T) {
 	_, h := newEnv(t)
-	if !strings.Contains(descriptionFor(t, h, "recent"), "recall(id)") {
+	if !strings.Contains(descriptionFor(t, h, "history"), "recall(id)") {
 		t.Error(`recent description must contain "recall(id)" — truncation disclosure is missing`)
 	}
 }

@@ -304,9 +304,9 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.42.1)
+## What's implemented (v1.43.0)
 
-All 21 MCP tools are live. See the tools table in AGENTS.md for the full list.
+All 16 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
 Key implemented features:
 - Core graph: nodes, edges, search (LIKE + semantic), timeline, connections, aliases

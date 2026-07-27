@@ -457,85 +457,12 @@ func TestOrient_RulesResultsTruncatedFalseIsPresent(t *testing.T) {
 
 // ── disconnect ────────────────────────────────────────────────────────────────
 
-func TestTraceReturnsChain(t *testing.T) {
+func TestTrace_IsUnknownTool(t *testing.T) {
 	_, h := newEnv(t)
-	domain := "test-trace-1"
-	idA := addNode(t, h, "Node A", domain, nil)
-	idB := addNode(t, h, "Node B", domain, nil)
-	idC := addNode(t, h, "Node C", domain, nil)
-	idD := addNode(t, h, "Node D", domain, nil)
-
-	// A -> B -> C -> D
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idA, "to_memory": idB, "relationship": "led_to"}))
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idB, "to_memory": idC, "relationship": "led_to"}))
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idC, "to_memory": idD, "relationship": "led_to"}))
-
-	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idD})
-	mustNotError(t, tr)
-	body := text(t, tr)
-
-	for _, id := range []string{idA, idB, idC, idD} {
-		if !strings.Contains(body, id) {
-			t.Errorf("trace result should contain node %s; got:\n%s", id, body)
-		}
-	}
-}
-
-func TestTraceNoConnection(t *testing.T) {
-	_, h := newEnv(t)
-	domain := "test-trace-2"
-	idA := addNode(t, h, "Island A", domain, nil)
-	idB := addNode(t, h, "Island B", domain, nil)
-
-	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idB})
-	mustNotError(t, tr) // no path is not an error
-	body := text(t, tr)
-	if !strings.Contains(body, "No path") {
-		t.Errorf("no-path result should say 'No path'; got:\n%s", body)
-	}
-}
-
-func TestTraceIgnoresArchived(t *testing.T) {
-	store, h := newEnv(t)
-	domain := "test-trace-3"
-	idA := addNode(t, h, "Start node", domain, nil)
-	idB := addNode(t, h, "Middle node", domain, nil)
-	idC := addNode(t, h, "End node", domain, nil)
-
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idA, "to_memory": idB, "relationship": "led_to"}))
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idB, "to_memory": idC, "relationship": "led_to"}))
-
-	// Archive the middle node — path A→C no longer traversable.
-	store.ArchiveNode(idB, "test")
-
-	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idC})
-	mustNotError(t, tr)
-	body := text(t, tr)
-	if !strings.Contains(body, "No path") {
-		t.Errorf("trace through archived node should return 'No path'; got:\n%s", body)
-	}
-}
-
-func TestTraceReturnsContextEdges(t *testing.T) {
-	_, h := newEnv(t)
-	domain := "test-trace-4"
-	idA := addNode(t, h, "Start", domain, nil)
-	idB := addNode(t, h, "Middle", domain, nil)
-	idC := addNode(t, h, "End", domain, nil)
-	idX := addNode(t, h, "Side branch X", domain, nil)
-
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idA, "to_memory": idB, "relationship": "led_to"}))
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idB, "to_memory": idC, "relationship": "led_to"}))
-	// Side branch off the path.
-	mustNotError(t, call(t, h, "connect", map[string]any{"from_memory": idB, "to_memory": idX, "relationship": "connects_to"}))
-
-	tr := call(t, h, "trace", map[string]any{"from_id": idA, "to_id": idC})
-	mustNotError(t, tr)
-	body := text(t, tr)
-
-	// idX itself should also appear (it's a neighbour of a path node)
-	if !strings.Contains(body, idX) {
-		t.Errorf("side-branch node X should appear in trace context; got:\n%s", body)
+	tr := call(t, h, "trace", map[string]any{"from_id": "a", "to_id": "b"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
 	}
 }
 

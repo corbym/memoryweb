@@ -86,17 +86,14 @@ session.** A node with no connections is nearly worthless.
   `why_matters`, and `tags`. Returns `truncated: true` when results hit the
   limit. Use words that appear in stored content — not conceptual paraphrases.
   When Ollama is running, results include a `semantic_distance` field.
-- `recent` — what was filed recently. Returns `{nodes, results_truncated}`.
-  Set `group_by_domain=true` (with no domain) for `{groups, results_truncated}`
-  broken down per domain. When `results_truncated` is true, raise `limit`.
-- `history` — nodes ordered by when they actually occurred. Returns
-  `{nodes, results_truncated}`. Supports `from`/`to` date range filtering,
-  `tags` filtering, and `important_only` for curated spine entries only.
+- `history` — chronological listing with two order modes. `order=effective`
+  (default): by COALESCE(occurred_at, created_at); supports `from`/`to`,
+  `important_only`, `tags`. `order=modified`: by last updated (replaces the
+  retired `recent` tool); supports `group_by_domain`. Returns
+  `{nodes, results_truncated}` or `{groups, results_truncated}`.
 - `why_connected` — direct edges between two memories. Prefer
   `from_id`/`to_id` for exact pair verification; `from_label`/`to_label` for
   fuzzy lookup.
-- `trace` — shortest path between two nodes by ID, up to 6 hops. Returns
-  intermediate nodes and edges. Synthesise the result as a narrative.
 - `orient` — full domain summary: rules, declared spine, significant, and
   recent sections. Includes `*_results_truncated` booleans per section.
   Cross-domain bootstrap (no domain) returns `{domains, results_truncated}`.
@@ -121,10 +118,9 @@ it was archived, or `audit(mode=stale)` to surface drift candidates.
 
 ### Archiving and maintenance
 
-- `forget` — archive a single node with a reason. Follow the forget protocol
-  below.
+- `forget` — archive a single node with a reason, or un-archive with
+  `restore=true`. Follow the forget protocol below.
 - `forget_all` — archive multiple nodes atomically in a single call.
-- `restore` — restore an archived node so it surfaces in search again.
 - `audit` — surface nodes that need attention. All modes return wrapped
   objects with `results_truncated`:
   - `mode=stale` — `{candidates, results_truncated}` (default limit 10)
@@ -148,13 +144,10 @@ contradiction awaiting the user's decision.
 
 ### Domain management
 
-- `domains` — list all domains with at least one live node, and all registered
-  aliases.
-- `alias` — manage domain aliases. Actions: `add`, `remove`, `resolve`, `list`.
-  Register short aliases so both `dg` and `deep-game` return the same results.
-- `rename_domain` — rename a domain in place. Automatically registers an alias
-  from the old name so cached references keep working. Fails with a clear error
-  if the new domain already has live nodes — use `merge-domains` (CLI) instead.
+- `domains` — domain admin and discovery. Default (`action=list` or omit):
+  all domains with live nodes plus registered aliases. Also:
+  `action=add_alias`, `remove_alias`, `resolve`, `rename` (in-place domain
+  rename — fails if target domain already has nodes; use `merge-domains` CLI).
 
 ---
 
@@ -196,7 +189,7 @@ Follow this protocol exactly:
 
 5. **After archiving**, tell the user:
    - The node ID
-   - That it can be restored at any time with `restore`
+   - That it can be un-archived at any time with `forget(restore=true)`
 
 ---
 
@@ -225,8 +218,8 @@ After audit returns results:
 ## Domain conventions
 
 - Use `domain` to separate concerns: `deep-game`, `sedex`, `general`, etc.
-- Register short aliases with `alias(action=add)` so both `dg` and `deep-game`
-  work.
+- Register short aliases with `domains(action=add_alias)` so both `dg` and
+  `deep-game` work.
 - An unscoped search crosses all domains — use the domain param when you know
   which project you are in.
 
@@ -275,7 +268,7 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 
 ---
 
-## What is available now (v1.42.1)
+## What is available now (v1.43.0)
 
 | Tool | Status |
 |------|--------|
@@ -286,20 +279,15 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 | `suggest_connections` | Live |
 | `recall` | Live |
 | `search` | Live (semantic + LIKE fallback) |
-| `recent` | Live |
-| `history` | Live |
+| `history` | Live (`order=effective` or `order=modified`) |
 | `why_connected` | Live |
-| `trace` | Live |
 | `orient` | Live (includes declared_spine) |
 | `visualise` | Live |
 | `significance` | Live |
-| `forget` | Live |
+| `forget` | Live (archive + `restore=true` un-archive) |
 | `forget_all` | Live |
-| `restore` | Live |
 | `audit` | Live (mode=stale/orphans/archived/conflicts) |
-| `domains` | Live |
-| `alias` | Live (action=add/remove/resolve/list) |
-| `rename_domain` | Live |
+| `domains` | Live (action=list/add_alias/remove_alias/resolve/rename) |
 
 Purge (hard delete of archived nodes) is **CLI-only** — `memoryweb purge`. It
 will never be an MCP tool. Use `forget` to soft-archive; use the CLI purge

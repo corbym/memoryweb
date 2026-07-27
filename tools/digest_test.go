@@ -108,7 +108,7 @@ func TestRecent_DigestMode_SingleLinePerNode(t *testing.T) {
 	id1 := addNode(t, h, "digest recent one", "digest-recent", nil)
 	id2 := addNode(t, h, "digest recent two", "digest-recent", nil)
 
-	tr := call(t, h, "recent", map[string]any{"domain": "digest-recent", "digest": true, "limit": 10})
+	tr := call(t, h, "history", map[string]any{"domain": "digest-recent", "order": "modified", "digest": true, "limit": 10})
 	mustNotError(t, tr)
 	assertDigestLines(t, text(t, tr), id1, id2)
 }

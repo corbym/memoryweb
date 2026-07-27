@@ -3,15 +3,27 @@ package tools_test
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/corbym/memoryweb/tools"
 )
+
+func callModifiedHistory(t *testing.T, h *tools.Handler, args map[string]any) *tools.ToolResult {
+	t.Helper()
+	if args == nil {
+		args = map[string]any{}
+	}
+	args["order"] = "modified"
+	return call(t, h, "history", args)
+}
 
 func TestRecentChanges_ReturnsNodes(t *testing.T) {
 	_, h := newEnv(t)
 	id1 := addNode(t, h, "Event Alpha", "proj", nil)
 	id2 := addNode(t, h, "Event Beta", "proj", nil)
 
-	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
+	tr := callModifiedHistory(t, h, map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
 	var resp struct {
@@ -35,7 +47,7 @@ func TestRecentChanges_ArchivedNodeExcluded(t *testing.T) {
 	id := addNode(t, h, "Recent archived node", "proj", nil)
 	store.ArchiveNode(id, "test")
 
-	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
+	tr := callModifiedHistory(t, h, map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
 	var resp struct {
@@ -57,7 +69,7 @@ func TestRecentChanges_DomainIsolation(t *testing.T) {
 	idA := addNode(t, h, "Alpha event", "domain-a", nil)
 	addNode(t, h, "Beta event", "domain-b", nil)
 
-	tr := call(t, h, "recent", map[string]any{"domain": "domain-a"})
+	tr := callModifiedHistory(t, h, map[string]any{"domain": "domain-a"})
 	mustNotError(t, tr)
 
 	var resp struct {
@@ -76,7 +88,7 @@ func TestRecentChanges_DomainIsolation(t *testing.T) {
 
 func TestRecentChanges_EmptyDB(t *testing.T) {
 	_, h := newEnv(t)
-	tr := call(t, h, "recent", map[string]any{})
+	tr := callModifiedHistory(t, h, map[string]any{})
 	mustNotError(t, tr)
 }
 
@@ -88,7 +100,7 @@ func TestRecentChanges_GroupByDomain_MultipleDomains(t *testing.T) {
 	idB1 := addNode(t, h, "Beta one", "domain-b", nil)
 	idC1 := addNode(t, h, "Gamma one", "domain-c", nil)
 
-	tr := call(t, h, "recent", map[string]any{
+	tr := callModifiedHistory(t, h, map[string]any{
 		"group_by_domain": true,
 		"limit":           5,
 	})
@@ -138,7 +150,7 @@ func TestRecentChanges_GroupByDomain_PerDomainLimit(t *testing.T) {
 		addNode(t, h, fmt.Sprintf("Node %d", i), "limit-domain", nil)
 	}
 
-	tr := call(t, h, "recent", map[string]any{
+	tr := callModifiedHistory(t, h, map[string]any{
 		"group_by_domain": true,
 		"limit":           2, // per-domain cap
 	})
@@ -173,7 +185,7 @@ func TestRecentChanges_GroupByDomain_WithDomainSpecified_BehavesNormal(t *testin
 	addNode(t, h, "Node B", "domain-b", nil)
 
 	// group_by_domain=true but domain is specified → behaves as normal (flat list).
-	tr := call(t, h, "recent", map[string]any{
+	tr := callModifiedHistory(t, h, map[string]any{
 		"group_by_domain": true,
 		"domain":          "domain-a",
 	})
@@ -199,7 +211,7 @@ func TestRecentChanges_GroupByDomain_False_BehavesAsNormal(t *testing.T) {
 	id1 := addNode(t, h, "Node X", "domain-x", nil)
 	id2 := addNode(t, h, "Node Y", "domain-y", nil)
 
-	tr := call(t, h, "recent", map[string]any{
+	tr := callModifiedHistory(t, h, map[string]any{
 		"group_by_domain": false,
 	})
 	mustNotError(t, tr)
@@ -232,7 +244,7 @@ func TestRecent_TagsFilter(t *testing.T) {
 	taggedID := addNode(t, h, "TDD story", "proj", map[string]any{"tags": "TDD testing"})
 	addNode(t, h, "untagged story", "proj", nil)
 
-	tr := call(t, h, "recent", map[string]any{
+	tr := callModifiedHistory(t, h, map[string]any{
 		"domain": "proj",
 		"tags":   "TDD",
 	})
@@ -267,7 +279,7 @@ func TestRecent_MemoryID_ScopesNeighbourhood(t *testing.T) {
 		"relationship": "connects_to",
 	})
 
-	tr := call(t, h, "recent", map[string]any{
+	tr := callModifiedHistory(t, h, map[string]any{
 		"memory_id": anchorID,
 	})
 	mustNotError(t, tr)
@@ -295,6 +307,32 @@ func TestRecent_MemoryID_ScopesNeighbourhood(t *testing.T) {
 	}
 }
 
+func TestHistory_ModifiedOrder_ForwardsDepth(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	anchor := addNode(t, h, "anchor depth hist", "proj", nil)
+	nodeA := addNode(t, h, "depth1 hist", "proj", nil)
+	nodeB := addNode(t, h, "depth2 hist", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": anchor, "to_memory": nodeA, "relationship": "connects_to",
+	}))
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": nodeA, "to_memory": nodeB, "relationship": "connects_to",
+	}))
+
+	tr := callModifiedHistory(t, h, map[string]any{"memory_id": anchor, "depth": 2})
+	mustNotError(t, tr)
+	if !strings.Contains(text(t, tr), nodeB) {
+		t.Errorf("depth-2 node %q must appear when history order=modified depth=2", nodeB)
+	}
+
+	tr = callModifiedHistory(t, h, map[string]any{"memory_id": anchor, "depth": 1})
+	mustNotError(t, tr)
+	if strings.Contains(text(t, tr), nodeB) {
+		t.Errorf("depth-2 node %q must not appear when history order=modified depth=1", nodeB)
+	}
+}
+
 func TestRecent_TagsAndMemoryID_Combined(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)
@@ -306,7 +344,7 @@ func TestRecent_TagsAndMemoryID_Combined(t *testing.T) {
 	call(t, h, "connect", map[string]any{"from_memory": anchorID, "to_memory": taggedNeighbourID, "relationship": "connects_to"})
 	call(t, h, "connect", map[string]any{"from_memory": anchorID, "to_memory": untaggedNeighbourID, "relationship": "connects_to"})
 
-	tr := call(t, h, "recent", map[string]any{
+	tr := callModifiedHistory(t, h, map[string]any{
 		"memory_id": anchorID,
 		"tags":      "TDD",
 	})
@@ -340,7 +378,7 @@ func TestRecent_ExistingBehaviourUnchanged(t *testing.T) {
 	id1 := addNode(t, h, "alpha recent", "proj", nil)
 	id2 := addNode(t, h, "beta recent", "proj", nil)
 
-	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
+	tr := callModifiedHistory(t, h, map[string]any{"domain": "proj"})
 	mustNotError(t, tr)
 
 	var resp struct {
@@ -361,5 +399,11 @@ func TestRecent_ExistingBehaviourUnchanged(t *testing.T) {
 	}
 }
 
-// TestRecent_SchemaHasTagsAndMemoryID: the recent tool must expose both new
-// properties in its input schema.
+func TestRecent_IsUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "recent", map[string]any{"domain": "proj"})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "unknown tool") {
+		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
