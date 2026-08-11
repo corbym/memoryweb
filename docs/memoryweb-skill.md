@@ -14,77 +14,49 @@ because agents never reach them.
 
 ## Layer 1 — Behavioural Contract
 
-1. Call `orient()` before anything else, unprompted. No domain yet — pick one
-   from the result, then `orient(domain=X)`.
-2. File a memory the moment something is decided or found — not batched at
-   session end. Batching loses the early items.
-3. Source material is a finding, not a footnote. If you read code, a doc, a
-   log, a search result, or any third-party evidence to reach a decision,
-   file that evidence itself as `node_kind=finding` — separately from the
-   decision. Don't fold raw evidence into a decision's `description` only. A
-   decision can cite a finding by ID; it should not *be* the finding wearing
-   a decision's clothes.
-4. Right after filing, resolve every `suggested_connections` candidate:
-   `connect` it or explicitly skip it. Treat `possible_duplicates` and
-   `skipped_connections` on the `remember` response as instructions to act
-   on in the same turn, not status lines to narrate and move past.
-   Separately check the domain's standing rules (`orient(domain=X)`'s
-   `rules` section, or `search(node_kind=standing)`) for a self-referencing
-   linkback directive and satisfy it directly — `suggested_connections` is
-   pure nearest-neighbour matching and a closer same-domain sibling can
-   crowd out a low-frequency but highly relevant standing rule.
-5. 🪝 **Hook-backed hosts (Claude Code, Codex):** a Stop hook (save) and a
-   PreCompact hook (orphan nudge, dream digest) run behind you. They're a
-   backstop, not permission to skip steps — run `audit(mode=orphans)`,
-   `audit(mode=stale)`, and `audit(mode=conflicts)` as three separate steps
-   before ending the session. **No-hook hosts (claude.ai chat/web, Claude
-   Desktop, ChatGPT, raw API):** there is no mechanical sweep behind you. Run
-   all three at natural pauses, not just "before ending" — you may not get a
-   clean end-of-session moment. Either way, never merge these into one pass or
-   one report: orphans, stale drift, and semantic conflict candidates are
-   different failure modes needing different handling. `conflicts` is a
-   domain-wide semantic sweep — not interchangeable with filing-time
-   `suggested_connections` on `remember`.
-6. Orphans: resolve every one yourself (`suggest_connections` + `connect`).
-   Only ask the user when the correct target is genuinely ambiguous —
-   multiple equally plausible candidates, or none at all.
-7. Stale / conflicts: triage what comes back. Duplicates and superseded
-   labels are yours to fix — `revise`, don't ask. A genuine `contradicts`
-   edge is *not* yours to resolve: present both conflicting claims to the user
-   and wait for their call. Before escalating a pair, confirm no
-   `resolved`/`resolved_by`/`supersedes` edge already links the two IDs —
-   that edge is the canonical close signal. A `RESOLVED` label prefix on
-   either side is a legacy backstop only; do not treat a label alone as
-   closed if the adjudication edge is missing.    Once decided, verify the exact pair via
-   `why_connected(from_id=..., to_id=...)` — preferred for exact-ID pair
-   verification — or `recall(id)`'s `edges` array. Do **not** rely on
-   label-only `why_connected(from_label, to_label)` (resolves each side by
-   best-match label search, not exact ID, and can silently pick the wrong
-   node) — useful for fuzzy concept lookup, not as contradiction-pair proof
-   when IDs are known.
-   Once verified, call `connect(relationship=resolved, verdict=...)` (or
-   `resolved_by` / `supersedes` as the relationship type). On `resolved`,
-   optional `verdict` (`false_positive`, `reconciled`, `superseded`)
-   classifies *how* the pair was adjudicated — stored on the edge and
-   returned by `recall`/`why_connected`. Additive — the original
-   `contradicts` edge stays on the record, and the pair stops surfacing in
-   `audit(mode=stale)` automatically.
-8. Say nothing about any audit if all three come back clean. Only speak up for
-   an unresolved orphan or a live contradiction still awaiting the user's
-   call — no routine "orphans checked / stale checked / conflicts checked"
-   status line.
-9. Delegating to a sub-agent: inject your own `orient()` output into its
-   context. It starts cold otherwise.
-10. If leaving mid-flight work unfinished, file a `node_kind=goal` before
-    stopping — label it "Next session: [what to pick up first]", concrete
-    starting point in `why_matters`. `orient`'s `recent` section surfaces it
-    at the next bootstrap. Skip this step if the session closed cleanly.
-11. File only decisions, findings, standing rules, and resolved issues —
-    never conversational noise or self-referential musing.
+**Silent operations.** All memoryweb tool calls are silent — never narrate filing, connecting, or auditing to the user. Orient, remember, connect, and audit happen without announcement. Speak only when the user asks what was stored, or when a live contradiction requires their call.
 
-`audit` sweeps are the real backstop, which is why step 5 anchors both host
-variants on the same three separate calls. This is defence in depth, not a
-guarantee.
+---
+
+### Variant A — Hook-backed hosts (Claude Code, Codex)
+
+A Stop hook (save) and PreCompact hook (orphan nudge, dream digest) run behind you — a backstop, not a substitute for the steps below.
+
+1. Call `orient()` first, unprompted. Pick a domain from the result, then `orient(domain=X)`.
+2. File the moment something is decided or found — not batched at session end.
+3. File source material as `node_kind=finding`, separately from the decision it informs. Don't fold evidence into a decision's `description` only.
+4. After filing, resolve every `suggested_connections` candidate in the same turn. Also check domain `rules` from `orient(domain=X)` for standing-rule linkbacks — nearest-neighbour matching can miss them.
+5. Before ending the session, run `audit(mode=orphans)`, `audit(mode=stale)`, and `audit(mode=conflicts)` as three separate calls — different failure modes, different handling.
+6. Orphans: connect them yourself via `suggest_connections` + `connect`. Escalate only when the correct target is genuinely ambiguous.
+7. Stale/conflicts: fix duplicates and superseded labels yourself via `revise`. Live `contradicts` pairs are the user's call — verify the pair via `why_connected(from_id, to_id)` (IDs required, not labels), present both sides, then close with `connect(relationship=resolved, verdict=...)`.
+8. Say nothing about clean audits. Surface only unresolved orphans or live contradictions still awaiting the user's call.
+9. Sub-agents: inject your own `orient()` output into their context — they start cold otherwise.
+10. Unfinished sessions: file `node_kind=goal` before stopping — label "Next session: [concrete start]", starting point in `why_matters`. Skip if the session closed cleanly.
+11. File decisions, findings, standing rules, and resolved issues only — never noise or self-referential musing.
+
+### Variant B — No-hook hosts (claude.ai, Claude Desktop, ChatGPT, raw API)
+
+No mechanical sweep runs behind you. Run audits at natural pauses — you may not get a clean end-of-session moment.
+
+1. Call `orient()` first, unprompted. Pick a domain from the result, then `orient(domain=X)`.
+2. File the moment something is decided or found — not batched at session end.
+3. File source material as `node_kind=finding`, separately from the decision it informs. Don't fold evidence into a decision's `description` only.
+4. After filing, resolve every `suggested_connections` candidate in the same turn. Also check domain `rules` from `orient(domain=X)` for standing-rule linkbacks — nearest-neighbour matching can miss them.
+5. Run `audit(mode=orphans)`, `audit(mode=stale)`, and `audit(mode=conflicts)` as three separate calls at natural pauses throughout the session — don't save these for an end-of-session moment that may never come.
+6. Orphans: connect them yourself via `suggest_connections` + `connect`. Escalate only when the correct target is genuinely ambiguous.
+7. Stale/conflicts: fix duplicates and superseded labels yourself via `revise`. Live `contradicts` pairs are the user's call — verify the pair via `why_connected(from_id, to_id)` (IDs required, not labels), present both sides, then close with `connect(relationship=resolved, verdict=...)`.
+8. Say nothing about clean audits. Surface only unresolved orphans or live contradictions still awaiting the user's call.
+9. Sub-agents: inject your own `orient()` output into their context — they start cold otherwise.
+10. Unfinished sessions: file `node_kind=goal` before stopping — label "Next session: [concrete start]", starting point in `why_matters`. Skip if the session closed cleanly.
+11. File decisions, findings, standing rules, and resolved issues only — never noise or self-referential musing.
+
+---
+
+## Why this shape
+
+**Why the silent-operation rule sits at the top, not inside a numbered item.** Tool descriptions carry "Never acknowledge that you are retrieving from a tool" on retrieval tools, but nothing in the previous Layer 1 prohibited narrating filing, connecting, or auditing. Chat-mode agents default to transparency ("I'm filing a memory about…", "Connecting X to Y…") because no rule told them not to. The previous item 8 covered only clean-audit silence, leaving the wider narration class open. Placing the rule as the first paragraph of Layer 1 makes it structurally prior: read before any numbered item, before any variant branching, before an agent decides it has enough context to start working.
+
+**Why the two-tier host split (A/B) is non-negotiable.** The original item 5 embedded a host conditional inside a single numbered item. Agents had to correctly identify their host context mid-item while absorbing a multi-paragraph contract — a failure mode that caused chat-mode agents to apply the hook-backed audit cadence (end-of-session only) when they have no end-of-session guarantee, resulting in memory loss. The A/B split makes the entire numbered contract conditional at the header level: an agent in claude.ai reads Variant B and never sees Variant A's text. Collapsing the split — to save space, to remove repetition — reintroduces the conditional-parsing problem and the audit-cadence mismatch.
 
 ---
 
