@@ -26,3 +26,4 @@ bug-purge-copy/
 # Local GitHub Copilot hooks (machine-specific paths)
 .github/hooks/memoryweb.json
 
+*.exe
