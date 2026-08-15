@@ -23,13 +23,27 @@ type ollamaEmbedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
 }
 
-const ollamaModel = "snowflake-arctic-embed"
+const defaultEmbeddingModel = "snowflake-arctic-embed"
+const embeddingDim = 1024
 const ollamaEndpoint = "http://localhost:11434/api/embed"
 
+// embeddingModel returns the Ollama model to use for embeddings.
+// Defaults to snowflake-arctic-embed. Override with MEMORYWEB_EMBED_MODEL.
+func embeddingModel() string {
+	if v := os.Getenv("MEMORYWEB_EMBED_MODEL"); v != "" {
+		return v
+	}
+	return defaultEmbeddingModel
+}
+
+// EmbeddingModel is the exported form of embeddingModel, used by main.go subcommands.
+func EmbeddingModel() string { return embeddingModel() }
+
 // embed calls the local Ollama instance to generate an embedding for the
-// given text using the snowflake-arctic-embed model. Returns nil if Ollama is
-// not running or the model is unavailable — callers must treat nil as a signal
-// to fall back to literal LIKE search.
+// given text using the model returned by embeddingModel() (default:
+// snowflake-arctic-embed; override: MEMORYWEB_EMBED_MODEL env var). Returns
+// nil if Ollama is not running or the model is unavailable — callers must
+// treat nil as a signal to fall back to literal LIKE search.
 //
 // The endpoint may be overridden by MEMORYWEB_OLLAMA_ENDPOINT. Set it to
 // "disabled" to make embed always fail, which is useful in tests that
@@ -42,7 +56,7 @@ func embed(text string) ([]float32, error) {
 		}
 		endpoint = v
 	}
-	body, err := json.Marshal(ollamaEmbedRequest{Model: ollamaModel, Input: text})
+	body, err := json.Marshal(ollamaEmbedRequest{Model: embeddingModel(), Input: text})
 	if err != nil {
 		return nil, err
 	}
@@ -76,11 +90,57 @@ func Embed(text string) ([]float32, error) {
 	return embed(text)
 }
 
+// embedTextForNode produces the canonical embed input for a node —
+// label, description, and why_matters joined by spaces.
+// Single source of truth used by AddNode, AddNodesBatch, BackfillEmbeddings, and UpdateNode.
+func embedTextForNode(label, description, whyMatters string) string {
+	return label + " " + description + " " + whyMatters
+}
+
+// EmbedTextForNode is the exported form of embedTextForNode, for use in tests.
+func EmbedTextForNode(label, description, whyMatters string) string {
+	return embedTextForNode(label, description, whyMatters)
+}
+
+// storedEmbeddingModel reads the embedding model recorded in the config table.
+// Returns "" if no model has been recorded yet.
+func (s *Store) storedEmbeddingModel() string {
+	var v string
+	s.db.QueryRow(`SELECT value FROM config WHERE key = 'embedding_model'`).Scan(&v)
+	return v
+}
+
+// setStoredEmbeddingModel writes or updates the embedding model in the config table.
+func (s *Store) setStoredEmbeddingModel(model string) {
+	s.db.Exec( //nolint:errcheck
+		`INSERT INTO config(key, value) VALUES('embedding_model', ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		model,
+	)
+}
+
+// clearEmbeddings deletes all rows from node_embeddings.
+func (s *Store) clearEmbeddings() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM node_embeddings`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // storeEmbedding inserts or replaces the embedding for a node in the
 // node_embeddings virtual table. Returns true if the embedding was stored
 // successfully. A failure only degrades search quality, not correctness.
 func (s *Store) storeEmbedding(id string, embedding []float32) bool {
 	if !s.vecAvailable || len(embedding) == 0 {
+		return false
+	}
+	if len(embedding) != embeddingDim {
+		log.Printf(
+			"[memoryweb] embedding dimension mismatch for %s: got %d, want %d — "+
+				"check MEMORYWEB_EMBED_MODEL; only %d-dim models are compatible with this database",
+			id, len(embedding), embeddingDim, embeddingDim,
+		)
 		return false
 	}
 	blob, err := vec.SerializeFloat32(embedding)
@@ -100,13 +160,24 @@ func (s *Store) storeEmbedding(id string, embedding []float32) bool {
 
 // BackfillEmbeddings generates and stores embeddings for all live nodes that
 // do not yet have one. Returns the count of embeddings successfully written.
-// Requires Ollama to be running with the snowflake-arctic-embed model.
+// Requires Ollama to be running with the model named by embeddingModel()
+// (default: snowflake-arctic-embed; override: MEMORYWEB_EMBED_MODEL env var).
+// The model must output exactly 1024-dimensional vectors.
 // progress is called after each successful embedding with (done, total);
 // pass nil to disable progress reporting.
 func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) {
 	if !s.vecAvailable {
 		return 0, fmt.Errorf("sqlite-vec not available; cannot backfill embeddings")
 	}
+
+	current := embeddingModel()
+	if stored := s.storedEmbeddingModel(); stored != "" && stored != current {
+		log.Printf("[memoryweb] embedding model changed from %q to %q — clearing existing embeddings", stored, current)
+		if _, err := s.clearEmbeddings(); err != nil {
+			return 0, fmt.Errorf("clear embeddings on model change: %w", err)
+		}
+	}
+
 	rows, err := s.db.Query(`
 		SELECT n.id, n.label, n.description, n.why_matters
 		FROM nodes n
@@ -129,12 +200,27 @@ func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) 
 		}
 		candidates = append(candidates, c)
 	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 	rows.Close()
+
+	// Early-exit: probe the first candidate to detect a dimension mismatch
+	// before running the full loop.
+	if len(candidates) > 0 {
+		probe, probeErr := embed(candidates[0].label)
+		if probeErr == nil && len(probe) != embeddingDim {
+			return 0, fmt.Errorf(
+				"embedding model %q returned %d-dim vectors; this database requires %d — "+
+					"set MEMORYWEB_EMBED_MODEL to a %d-dim model (e.g. bge-m3, mxbai-embed-large)",
+				embeddingModel(), len(probe), embeddingDim, embeddingDim,
+			)
+		}
+	}
 
 	n := 0
 	for i, c := range candidates {
-		text := c.label + " " + c.description + " " + c.whyMatters
-		embedding, err := embed(text)
+		embedding, err := embed(embedTextForNode(c.label, c.description, c.whyMatters))
 		if progress != nil {
 			progress(i+1, len(candidates))
 		}
@@ -150,6 +236,12 @@ func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) 
 		if s.storeEmbedding(c.id, embedding) {
 			n++
 		}
+	}
+
+	// Record the current model only when the run produced results or there was
+	// nothing to do — not when Ollama was unavailable and candidates were skipped.
+	if n > 0 || len(candidates) == 0 {
+		s.setStoredEmbeddingModel(current)
 	}
 	return n, nil
 }

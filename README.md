@@ -180,7 +180,7 @@ memoryweb dream                              # reads ~/.memoryweb.db
 memoryweb dream --db /path/to/your.db        # explicit DB path
 ```
 
-The `backfill` subcommand generates embeddings for all live nodes that don't yet have one. Requires Ollama to be running with the `snowflake-arctic-embed` model.
+The `backfill` subcommand generates embeddings for all live nodes that don't yet have one. Requires Ollama to be running with the configured embedding model (default: `snowflake-arctic-embed`).
 
 ```bash
 memoryweb backfill                           # reads ~/.memoryweb.db
@@ -188,7 +188,46 @@ memoryweb backfill --db /path/to/your.db     # explicit DB path
 memoryweb backfill -q                        # quiet mode — no progress output
 ```
 
-The `setup` subcommand installs hooks into `~/.claude/settings.local.json`, detects Claude Desktop and offers to configure it automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for `snowflake-arctic-embed` and pulls it if missing.
+#### Embedding model
+
+By default, memoryweb uses `snowflake-arctic-embed` for semantic search embeddings. Set `MEMORYWEB_EMBED_MODEL` to switch to a different model:
+
+```bash
+export MEMORYWEB_EMBED_MODEL=bge-m3
+```
+
+Only models that output **exactly 1024-dimensional vectors** are compatible. The vector table dimension is fixed at schema creation time (migration 9). Mismatched models are detected by a dimension guard and rejected with a clear log message rather than silently corrupting the database.
+
+**Compatible models (1024-dim):**
+
+| Model | Notes |
+|-------|-------|
+| `snowflake-arctic-embed` | Default. English-optimised. |
+| `bge-m3` | Multilingual — 100+ languages including Chinese, Japanese, Korean. Recommended for non-English use. |
+| `mxbai-embed-large` | English-focused; strong general retrieval quality. |
+
+Common incompatible models: `nomic-embed-text` (768-dim), `all-minilm` (384-dim). Always verify with `ollama show <model>` before switching.
+
+**Switching models:**
+
+```bash
+# 1. Pull the new model
+ollama pull bge-m3
+
+# 2. Set the env var (add to your shell profile or MCP server config)
+export MEMORYWEB_EMBED_MODEL=bge-m3
+
+# 3. Regenerate — backfill detects the model change and clears automatically
+memoryweb backfill
+```
+
+memoryweb tracks which model was used for the last backfill. When `MEMORYWEB_EMBED_MODEL` changes, the next backfill detects the difference, logs the change, clears all existing embeddings, and regenerates from scratch. No manual intervention needed — embeddings from different models live in incompatible vector spaces, and the auto-clear ensures the database is always consistent.
+
+> **Note:** Run `memoryweb backfill` promptly after changing the env var. Any nodes filed between the model change and the next backfill will have their embeddings cleared and regenerated at backfill time — this is correct behaviour; backfill is the point of consistency.
+
+**Checking the configured model:** `memoryweb doctor` reports the active model under "Ollama model".
+
+The `setup` subcommand installs hooks into `~/.claude/settings.local.json`, detects Claude Desktop and offers to configure it automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for the configured embedding model and pulls it if missing.
 
 ```bash
 memoryweb setup                                      # interactive setup

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/corbym/memoryweb/db"
 )
 
 func TestSearchNodes_FindsByLabel(t *testing.T) {
@@ -342,7 +344,7 @@ func TestSearch_ExactFalse_BehavesLikeDefault(t *testing.T) {
 // words retrieves the semantically similar node.
 func TestSearchSemantic_FindsRelatedContent(t *testing.T) {
 	if !ollamaRunning(t) {
-		t.Skip("Ollama with snowflake-arctic-embed not available")
+		t.Skip("Ollama with " + db.EmbeddingModel() + " not available")
 	}
 	_, h := newEnv(t)
 
@@ -368,7 +370,7 @@ func TestSearchSemantic_FindsRelatedContent(t *testing.T) {
 // topic must not be returned for a domain-specific technical query.
 func TestSearchSemantic_ExcludesIrrelevantNode(t *testing.T) {
 	if !ollamaRunning(t) {
-		t.Skip("Ollama with snowflake-arctic-embed not available")
+		t.Skip("Ollama with " + db.EmbeddingModel() + " not available")
 	}
 	_, h := newEnv(t)
 
@@ -397,7 +399,7 @@ func TestSearchSemantic_ExcludesIrrelevantNode(t *testing.T) {
 // falls back to LIKE and still surfaces LIKE matches.
 func TestSearchSemantic_FallsBackToLikeWhenNoEmbeddings(t *testing.T) {
 	if !ollamaRunning(t) {
-		t.Skip("Ollama with snowflake-arctic-embed not available")
+		t.Skip("Ollama with " + db.EmbeddingModel() + " not available")
 	}
 	// Add node with Ollama disabled so no embedding is stored.
 	_, h := newEnv(t)

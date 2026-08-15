@@ -79,6 +79,12 @@ func (s *Store) VecAvailable() bool {
 	return s.vecAvailable
 }
 
+// DB returns the underlying *sql.DB. Used only in tests that need raw SQL access
+// to internal tables (config, node_embeddings) to set up or assert state.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // checkVecAvailable verifies that the sqlite-vec extension is loaded and the
 // node_embeddings table exists. Sets s.vecAvailable accordingly.
 func (s *Store) checkVecAvailable() {

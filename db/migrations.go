@@ -222,6 +222,17 @@ CREATE INDEX IF NOT EXISTS idx_significance_log_call_id ON significance_log(call
 			return err
 		},
 	},
+	{
+		version: 15,
+		desc:    "add config key-value table",
+		up: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS config (
+				key   TEXT PRIMARY KEY,
+				value TEXT NOT NULL
+			)`)
+			return err
+		},
+	},
 }
 
 // migrate creates the schema_migrations tracking table (if needed) then applies

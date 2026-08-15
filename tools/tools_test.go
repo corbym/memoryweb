@@ -17,7 +17,7 @@ import (
 // ── test helpers ──────────────────────────────────────────────────────────────
 
 // ollamaRunning returns true when the Ollama server is reachable and the
-// snowflake-arctic-embed model is available. The base URL is taken from the
+// configured embedding model is available. The base URL is taken from the
 // OLLAMA_HOST environment variable when set, so it works in both local
 // development and CI environments. Tests that exercise LIKE search should call
 // disableOllama(t) instead.
@@ -42,7 +42,7 @@ func ollamaRunning(t *testing.T) bool {
 		return false
 	}
 	for _, m := range body.Models {
-		if strings.HasPrefix(m.Name, "snowflake-arctic-embed") {
+		if strings.HasPrefix(m.Name, db.EmbeddingModel()) {
 			return true
 		}
 	}

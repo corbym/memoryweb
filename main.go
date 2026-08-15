@@ -298,7 +298,7 @@ func drawProgressBar(out io.Writer, done, total int) {
 }
 
 // runBackfill generates embeddings for all live nodes that do not yet have one.
-// Requires Ollama to be running with the snowflake-arctic-embed model.
+// Requires Ollama to be running with the model named by db.EmbeddingModel().
 func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 	if !store.VecAvailable() {
 		return fmt.Errorf("sqlite-vec extension is not available; cannot generate embeddings\n" +
@@ -306,9 +306,10 @@ func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 	}
 
 	if !quiet {
+		model := db.EmbeddingModel()
 		fmt.Fprintln(out, "Backfilling embeddings for nodes without one...")
-		fmt.Fprintln(out, "  This requires Ollama to be running with the snowflake-arctic-embed model.")
-		fmt.Fprintln(out, "  Run: ollama pull snowflake-arctic-embed")
+		fmt.Fprintf(out, "  This requires Ollama to be running with the %s model.\n", model)
+		fmt.Fprintf(out, "  Run: ollama pull %s\n", model)
 	}
 
 	var progressFired bool
@@ -598,9 +599,9 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string)
 	return nil
 }
 
-// setupOllama checks whether Ollama is installed and whether the
-// snowflake-arctic-embed model is pulled, prompting the user to install/pull
-// as needed. In dry-run mode it reports what would happen without prompting.
+// setupOllama checks whether Ollama is installed and whether the configured
+// embedding model is pulled, prompting the user to install/pull as needed.
+// In dry-run mode it reports what would happen without prompting.
 func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) {
 	_, err := exec.LookPath("ollama")
 	if err != nil {
@@ -627,15 +628,16 @@ func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) {
 	setupStartOllama(out, dryRun)
 
 	// Check if the model is pulled.
+	model := db.EmbeddingModel()
 	listCmd := exec.Command("ollama", "list")
 	listOut, err := listCmd.Output()
-	if err != nil || !strings.Contains(string(listOut), "snowflake-arctic-embed") {
+	if err != nil || !strings.Contains(string(listOut), model) {
 		if dryRun {
-			fmt.Fprintln(out, "[dry-run] snowflake-arctic-embed not found — would pull automatically")
+			fmt.Fprintf(out, "[dry-run] %s not found — would pull automatically\n", model)
 			return
 		}
-		fmt.Fprintln(out, "Pulling snowflake-arctic-embed model for semantic search...")
-		cmd := exec.Command("ollama", "pull", "snowflake-arctic-embed")
+		fmt.Fprintf(out, "Pulling %s model for semantic search...\n", model)
+		cmd := exec.Command("ollama", "pull", model)
 		cmd.Stdout = out
 		cmd.Stderr = out
 		if err := cmd.Run(); err != nil {
@@ -644,7 +646,7 @@ func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) {
 		return
 	}
 
-	fmt.Fprintln(out, "Ollama: snowflake-arctic-embed is ready.")
+	fmt.Fprintf(out, "Ollama: %s is ready.\n", model)
 }
 
 // setupStartOllama ensures the Ollama server is running. It checks whether
@@ -854,10 +856,11 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 
 	if ollamaServerOK {
 		listOut, err := exec.Command("ollama", "list").Output()
-		if err != nil || !strings.Contains(string(listOut), "snowflake-arctic-embed") {
-			add("Ollama model", "fail", "snowflake-arctic-embed not found — run: ollama pull snowflake-arctic-embed")
+		model := db.EmbeddingModel()
+		if err != nil || !strings.Contains(string(listOut), model) {
+			add("Ollama model", "fail", model+" not found — run: ollama pull "+model)
 		} else {
-			add("Ollama model", "ok", "snowflake-arctic-embed ready")
+			add("Ollama model", "ok", model+" ready")
 		}
 	} else {
 		add("Ollama model", "warn", "skipped (Ollama server not available)")
