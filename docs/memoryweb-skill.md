@@ -293,7 +293,7 @@ migrations from the 21-tool surface:
 | `connect(...)` | Wire memories together; adjudicate contradictions via `relationship=resolved` (verify the pair via `why_connected(from_id, to_id)` first) |
 | `disconnect(id)` | Hard-delete an edge by edge ID — irreversible |
 | `remember(...)` | File a new memory; may return `trust_nudge`, `possible_misdomain`/`suggested_domain`/`suggested_memory_id` on new-domain creation (KNN requires embeddings) |
-| `revise(id, ...)` | Update an existing memory; optional `trust_nudge` on content-changing updates when outbound `connects_to`/`depends_on`/`caused_by`/`blocked_by` reach low-trust targets; also handles single-node domain moves |
+| `revise(id, ...)` | Update an existing memory. Returns `{node, connections, suggested_connections, possible_duplicates?, trust_nudge?}` — review connections and suggested_connections same-turn; disconnect stale edges, add new ones. Batch mode (`items`) returns `{updated: [{node, connections, suggested_connections, trust_nudge?}]}` |
 | `forget(id, reason)` / `forget_all(items=[...])` | Archive — confirmation required |
 | `forget(id, restore=true)` | Un-archive |
 | `audit(mode=...)` | `stale` / `orphans` / `archived` / `conflicts` / `kind_coverage` |

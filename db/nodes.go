@@ -74,7 +74,7 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 	}
 
 	// Generate and store an embedding for semantic search (best-effort, after commit).
-	if embedding, err := embed(label + " " + description + " " + whyMatters); err == nil {
+	if embedding, err := embed(embedTextForNode(label, description, whyMatters)); err == nil {
 		s.storeEmbedding(id, embedding)
 	}
 
@@ -90,6 +90,34 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 		OccurredAt:  occurredAt,
 		NodeKind:    nodeKind,
 	}, nil
+}
+
+// GetNodeLabels returns a map of id → label for the given node IDs.
+// Missing or archived nodes are omitted from the result.
+func (s *Store) GetNodeLabels(ids []string) map[string]string {
+	if len(ids) == 0 {
+		return map[string]string{}
+	}
+	clause, args := inClause(ids)
+	rows, err := s.db.Query(
+		`SELECT id, label FROM nodes WHERE id IN (`+clause+`) AND archived_at IS NULL`,
+		args...,
+	)
+	if err != nil {
+		return map[string]string{}
+	}
+	defer rows.Close()
+	out := make(map[string]string, len(ids))
+	for rows.Next() {
+		var id, label string
+		if rows.Scan(&id, &label) == nil {
+			out[id] = label
+		}
+	}
+	if rows.Err() != nil {
+		return map[string]string{}
+	}
+	return out
 }
 
 func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
@@ -244,6 +272,14 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	}
 	n.OccurredAt = nullTimeToPtr(oa)
 	n.ArchivedAt = nullTimeToPtr(aa)
+
+	// Re-embed if semantic fields changed (best-effort, never fails the update).
+	if n.Label != cur.Label || n.Description != cur.Description || n.WhyMatters != cur.WhyMatters {
+		if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
+			s.storeEmbedding(id, embedding)
+		}
+	}
+
 	return &n, nil
 }
 
@@ -272,8 +308,9 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 	}
 	now := time.Now().UTC()
 	nodes := make([]*Node, 0, len(inputs))
+	semanticChanged := make([]bool, len(inputs))
 
-	for _, inp := range inputs {
+	for i, inp := range inputs {
 		var cur Node
 		var curOA, curAA sql.NullTime
 		if err := tx.QueryRow(
@@ -352,6 +389,12 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			return nil, err
 		}
 
+		// Track whether semantic fields changed (for re-embed after commit).
+		labelChanged := inp.Label != nil && *inp.Label != cur.Label
+		descChanged := inp.Description != nil && *inp.Description != cur.Description
+		wmChanged := inp.WhyMatters != nil && *inp.WhyMatters != cur.WhyMatters
+		semanticChanged[i] = labelChanged || descChanged || wmChanged
+
 		// Re-fetch within the tx.
 		var n Node
 		var oa, aa sql.NullTime
@@ -370,6 +413,16 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+
+	// Best-effort re-embed for nodes whose semantic fields changed.
+	for i, n := range nodes {
+		if semanticChanged[i] {
+			if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
+				s.storeEmbedding(n.ID, embedding)
+			}
+		}
+	}
+
 	return nodes, nil
 }
 
@@ -438,8 +491,7 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 
 	// Generate and store embeddings for each node (best-effort, after commit).
 	for _, n := range nodes {
-		text := n.Label + " " + n.Description + " " + n.WhyMatters
-		if embedding, err := embed(text); err == nil {
+		if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
 			s.storeEmbedding(n.ID, embedding)
 		}
 	}

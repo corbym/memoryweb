@@ -10,6 +10,48 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
+// reviseConnection is an edge in the revise response envelope.
+type reviseConnection struct {
+	Direction    string `json:"direction"`
+	Relationship string `json:"relationship"`
+	PeerID       string `json:"peer_id"`
+	PeerLabel    string `json:"peer_label,omitempty"`
+}
+
+// buildReviseConnections builds the connections slice from a node's edges,
+// annotating each peer with its label from the provided map.
+func buildReviseConnections(nwe *db.NodeWithEdges, labels map[string]string) []reviseConnection {
+	conns := make([]reviseConnection, 0, len(nwe.Edges))
+	for _, e := range nwe.Edges {
+		var dir, peerID string
+		if e.FromNode == nwe.Node.ID {
+			dir, peerID = "outbound", e.ToNode
+		} else {
+			dir, peerID = "inbound", e.FromNode
+		}
+		conns = append(conns, reviseConnection{
+			Direction:    dir,
+			Relationship: e.Relationship,
+			PeerID:       peerID,
+			PeerLabel:    labels[peerID],
+		})
+	}
+	return conns
+}
+
+// peerIDsFromEdges collects the IDs of all peer nodes in an edge list.
+func peerIDsFromEdges(edges []db.Edge, nodeID string) []string {
+	ids := make([]string, 0, len(edges))
+	for _, e := range edges {
+		if e.FromNode == nodeID {
+			ids = append(ids, e.ToNode)
+		} else {
+			ids = append(ids, e.FromNode)
+		}
+	}
+	return ids
+}
+
 // detectLegacyNodeUpdateKeys inspects raw JSON for the retired revise_all
 // "updates" wrapper key. Returns a non-empty error message if found.
 func detectLegacyNodeUpdateKeys(raw json.RawMessage) string {
@@ -98,23 +140,48 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	nwe, err := h.store.GetNode(a.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	var trustNudge string
 	if contentTouched {
-		nwe, err := h.store.GetNode(a.ID)
-		if err != nil {
-			return nil, err
-		}
-		trustNudge, err = h.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, a.ID), a.ID)
-		if err != nil {
-			log.Printf("[memoryweb] trust nudge for %s: %v", a.ID, err)
+		nudge, nudgeErr := h.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, a.ID), a.ID)
+		if nudgeErr != nil {
+			log.Printf("[memoryweb] trust nudge for %s: %v", a.ID, nudgeErr)
+		} else {
+			trustNudge = nudge
 		}
 	}
+
+	peerIDs := peerIDsFromEdges(nwe.Edges, a.ID)
+	labels := h.store.GetNodeLabels(peerIDs)
+	connections := buildReviseConnections(nwe, labels)
+
+	suggestions, err := h.store.SuggestEdges(a.ID, 5)
+	if err != nil || suggestions == nil {
+		suggestions = []db.EdgeSuggestion{}
+	}
+
+	duplicates, err := h.store.FindPossibleDuplicates(node.Label, node.Domain, node.ID)
+	if err != nil || duplicates == nil {
+		duplicates = []db.Node{}
+	}
+
 	resp := struct {
-		*db.Node
-		TrustNudge string `json:"trust_nudge,omitempty"`
+		Node                 *db.Node            `json:"node"`
+		Connections          []reviseConnection  `json:"connections"`
+		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
+		PossibleDuplicates   []db.Node           `json:"possible_duplicates,omitempty"`
+		TrustNudge           string              `json:"trust_nudge,omitempty"`
 	}{
-		Node:       node,
-		TrustNudge: trustNudge,
+		Node:                 node,
+		Connections:          connections,
+		SuggestedConnections: suggestions,
+		PossibleDuplicates:   duplicates,
+		TrustNudge:           trustNudge,
 	}
 	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
@@ -210,26 +277,45 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	type updatedEntry struct {
-		*db.Node
-		TrustNudge string `json:"trust_nudge,omitempty"`
+		Node                 *db.Node            `json:"node"`
+		Connections          []reviseConnection  `json:"connections"`
+		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
+		TrustNudge           string              `json:"trust_nudge,omitempty"`
 	}
 	updated := make([]updatedEntry, len(nodes))
 	for i, node := range nodes {
-		entry := updatedEntry{Node: node}
+		nwe, err := h.store.GetNode(node.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		var trustNudge string
 		if contentTouched[i] {
-			nwe, err := h.store.GetNode(node.ID)
-			if err != nil {
-				return nil, err
-			}
-			nudge, err := h.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, node.ID), node.ID)
-			if err != nil {
-				log.Printf("[memoryweb] trust nudge for %s: %v", node.ID, err)
+			nudge, nudgeErr := h.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, node.ID), node.ID)
+			if nudgeErr != nil {
+				log.Printf("[memoryweb] trust nudge for %s: %v", node.ID, nudgeErr)
 			} else {
-				entry.TrustNudge = nudge
+				trustNudge = nudge
 			}
 		}
-		updated[i] = entry
+
+		peerIDs := peerIDsFromEdges(nwe.Edges, node.ID)
+		labels := h.store.GetNodeLabels(peerIDs)
+		connections := buildReviseConnections(nwe, labels)
+
+		suggestions, _ := h.store.SuggestEdges(node.ID, 5)
+		if suggestions == nil {
+			suggestions = []db.EdgeSuggestion{}
+		}
+
+		updated[i] = updatedEntry{
+			Node:                 node,
+			Connections:          connections,
+			SuggestedConnections: suggestions,
+			TrustNudge:           trustNudge,
+		}
 	}
 	resp := struct {
 		Updated []updatedEntry `json:"updated"`

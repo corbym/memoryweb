@@ -322,16 +322,18 @@ func TestRevise_Tags_ReplacesExistingTags(t *testing.T) {
 
 	// The returned node must carry the new tags.
 	var resp struct {
-		Tags string `json:"tags"`
+		Node struct {
+			Tags string `json:"tags"`
+		} `json:"node"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse revise response: %v", err)
 	}
-	if strings.Contains(resp.Tags, "old-tag") {
-		t.Errorf("old tags still present after revise; tags = %q", resp.Tags)
+	if strings.Contains(resp.Node.Tags, "old-tag") {
+		t.Errorf("old tags still present after revise; tags = %q", resp.Node.Tags)
 	}
-	if !strings.Contains(resp.Tags, "new-tag") {
-		t.Errorf("new tags not present after revise; tags = %q", resp.Tags)
+	if !strings.Contains(resp.Node.Tags, "new-tag") {
+		t.Errorf("new tags not present after revise; tags = %q", resp.Node.Tags)
 	}
 
 	// Confirm via recall that the stored node reflects the new tags.
@@ -396,7 +398,9 @@ func TestReviseBatch_Tags_ReplacesExistingTags(t *testing.T) {
 
 	var resp struct {
 		Updated []struct {
-			Tags string `json:"tags"`
+			Node struct {
+				Tags string `json:"tags"`
+			} `json:"node"`
 		} `json:"updated"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
@@ -405,7 +409,7 @@ func TestReviseBatch_Tags_ReplacesExistingTags(t *testing.T) {
 	if len(resp.Updated) != 1 {
 		t.Fatalf("expected 1 updated node, got %d", len(resp.Updated))
 	}
-	tags := resp.Updated[0].Tags
+	tags := resp.Updated[0].Node.Tags
 	if strings.Contains(tags, "old-tag") {
 		t.Errorf("old tags still present after batch revise; tags = %q", tags)
 	}
@@ -433,8 +437,10 @@ func TestRevise_BatchViaItems_UpdatesMultiple(t *testing.T) {
 
 	var resp struct {
 		Updated []struct {
-			ID    string `json:"id"`
-			Label string `json:"label"`
+			Node struct {
+				ID    string `json:"id"`
+				Label string `json:"label"`
+			} `json:"node"`
 		} `json:"updated"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
@@ -445,7 +451,7 @@ func TestRevise_BatchViaItems_UpdatesMultiple(t *testing.T) {
 	}
 	ids := map[string]bool{}
 	for _, n := range resp.Updated {
-		ids[n.ID] = true
+		ids[n.Node.ID] = true
 	}
 	if !ids[idA] || !ids[idB] {
 		t.Errorf("unexpected IDs in revise batch response: %v", ids)
@@ -636,16 +642,18 @@ func TestRevise_Domain_MovesNode(t *testing.T) {
 	mustNotError(t, tr)
 
 	var resp struct {
-		Domain string `json:"domain"`
-		ID     string `json:"id"`
+		Node struct {
+			Domain string `json:"domain"`
+			ID     string `json:"id"`
+		} `json:"node"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse revise response: %v", err)
 	}
-	if resp.Domain != "right-domain" {
-		t.Errorf("domain: got %q, want %q", resp.Domain, "right-domain")
+	if resp.Node.Domain != "right-domain" {
+		t.Errorf("domain: got %q, want %q", resp.Node.Domain, "right-domain")
 	}
-	if resp.ID != id {
+	if resp.Node.ID != id {
 		t.Error("ID must not change on domain move")
 	}
 }
@@ -716,11 +724,13 @@ func TestRevise_Domain_ToNewDomain(t *testing.T) {
 	})
 	mustNotError(t, tr)
 	var resp struct {
-		Domain string `json:"domain"`
+		Node struct {
+			Domain string `json:"domain"`
+		} `json:"node"`
 	}
 	json.Unmarshal([]byte(text(t, tr)), &resp)
-	if resp.Domain != "brand-new-domain" {
-		t.Errorf("got domain %q, want brand-new-domain", resp.Domain)
+	if resp.Node.Domain != "brand-new-domain" {
+		t.Errorf("got domain %q, want brand-new-domain", resp.Node.Domain)
 	}
 }
 
@@ -756,15 +766,17 @@ func TestRevise_Batch_Domain_MovesAll(t *testing.T) {
 
 	var resp struct {
 		Updated []struct {
-			Domain string `json:"domain"`
+			Node struct {
+				Domain string `json:"domain"`
+			} `json:"node"`
 		} `json:"updated"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse batch response: %v", err)
 	}
 	for i, u := range resp.Updated {
-		if u.Domain != "dst" {
-			t.Errorf("item %d: domain = %q, want dst", i, u.Domain)
+		if u.Node.Domain != "dst" {
+			t.Errorf("item %d: domain = %q, want dst", i, u.Node.Domain)
 		}
 	}
 }
@@ -783,13 +795,15 @@ func TestRevise_Domain_ViaAliasResolvesOnWrite(t *testing.T) {
 	mustNotError(t, tr)
 
 	var resp struct {
-		Domain string `json:"domain"`
+		Node struct {
+			Domain string `json:"domain"`
+		} `json:"node"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse revise response: %v", err)
 	}
-	if resp.Domain != "canonical-target" {
-		t.Errorf("domain: got %q, want canonical-target", resp.Domain)
+	if resp.Node.Domain != "canonical-target" {
+		t.Errorf("domain: got %q, want canonical-target", resp.Node.Domain)
 	}
 }
 
@@ -806,12 +820,135 @@ func TestRevise_Domain_AliasMatchingCurrent_NoReasonRequired(t *testing.T) {
 	mustNotError(t, tr)
 
 	var resp struct {
-		Domain string `json:"domain"`
+		Node struct {
+			Domain string `json:"domain"`
+		} `json:"node"`
 	}
 	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
 		t.Fatalf("parse revise response: %v", err)
 	}
-	if resp.Domain != "deep-engine" {
-		t.Errorf("domain: got %q, want deep-engine", resp.Domain)
+	if resp.Node.Domain != "deep-engine" {
+		t.Errorf("domain: got %q, want deep-engine", resp.Node.Domain)
+	}
+}
+
+// ── response envelope tests ────────────────────────────────────────────────────
+
+func TestRevise_SingleResponse_HasEnvelope(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "envelope test", "proj", nil)
+	tr := call(t, h, "revise", map[string]any{
+		"id":    id,
+		"label": "envelope test revised",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		Node                 map[string]any   `json:"node"`
+		Connections          []map[string]any `json:"connections"`
+		SuggestedConnections []map[string]any `json:"suggested_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	if resp.Node == nil {
+		t.Error("expected node field in revise response")
+	}
+	if resp.Connections == nil {
+		t.Error("expected connections field in revise response")
+	}
+	if resp.SuggestedConnections == nil {
+		t.Error("expected suggested_connections field in revise response")
+	}
+}
+
+func TestRevise_BatchResponse_HasPerItemEnvelope(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "batch envelope test", "proj", nil)
+	tr := call(t, h, "revise", map[string]any{
+		"items": []map[string]any{
+			{"id": id, "label": "batch envelope revised"},
+		},
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		Updated []struct {
+			Node                 map[string]any   `json:"node"`
+			Connections          []map[string]any `json:"connections"`
+			SuggestedConnections []map[string]any `json:"suggested_connections"`
+		} `json:"updated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse batch revise response: %v", err)
+	}
+	if len(resp.Updated) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(resp.Updated))
+	}
+	if resp.Updated[0].Node == nil {
+		t.Error("expected node field in batch revise item")
+	}
+	if resp.Updated[0].Connections == nil {
+		t.Error("expected connections field in batch revise item")
+	}
+	if resp.Updated[0].SuggestedConnections == nil {
+		t.Error("expected suggested_connections field in batch revise item")
+	}
+}
+
+func TestRevise_Connections_ReflectExistingEdges(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id1 := addNode(t, h, "source node", "proj", nil)
+	id2 := addNode(t, h, "target node", "proj", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": id1, "to_memory": id2, "relationship": "connects_to", "narrative": "test",
+	}))
+	tr := call(t, h, "revise", map[string]any{
+		"id": id1, "label": "source node revised",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		Connections []struct {
+			Direction string `json:"direction"`
+			PeerID    string `json:"peer_id"`
+		} `json:"connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	found := false
+	for _, c := range resp.Connections {
+		if c.PeerID == id2 && c.Direction == "outbound" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected outbound connection to %s in revise response; got: %v", id2, resp.Connections)
+	}
+}
+
+func TestRevise_NoOp_StillReturnsEnvelope(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "stable node", "proj", nil)
+	// Revise with same label (no-op)
+	tr := call(t, h, "revise", map[string]any{
+		"id":    id,
+		"label": "stable node",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		Node                 map[string]any   `json:"node"`
+		SuggestedConnections []map[string]any `json:"suggested_connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse no-op revise response: %v", err)
+	}
+	if resp.Node == nil {
+		t.Error("no-op revise: expected node field in response")
+	}
+	if resp.SuggestedConnections == nil {
+		t.Error("no-op revise: expected suggested_connections field in response")
 	}
 }
