@@ -519,8 +519,8 @@ func TestSaveHookEmbedsDreamDigest(t *testing.T) {
 	// ── actionable guidance ───────────────────────────────────────────────────
 	// The filing instructions must follow the digest so Claude knows what to do.
 
-	if !strings.Contains(stopReason, "remember_all") {
-		t.Errorf("stopReason should contain 'remember_all' filing instruction; got:\n%s", stopReason)
+	if !strings.Contains(stopReason, "remember with an items array") {
+		t.Errorf("stopReason should contain 'remember with an items array' filing instruction; got:\n%s", stopReason)
 	}
 	if !strings.Contains(stopReason, "why_matters") {
 		t.Errorf("stopReason should contain 'why_matters' guidance; got:\n%s", stopReason)
@@ -554,7 +554,7 @@ func TestSaveHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 		t.Errorf("hook output is not valid JSON without dream binary: %v\ngot:\n%s", err, out)
 	}
 	stopReason, _ := envelope["stopReason"].(string)
-	if !strings.Contains(stopReason, "remember_all") {
+	if !strings.Contains(stopReason, "remember with an items array") {
 		t.Errorf("stopReason should still contain filing instructions; got:\n%s", stopReason)
 	}
 }
@@ -604,8 +604,8 @@ func TestPrecompactHookEmbedsDreamDigest(t *testing.T) {
 	if !strings.Contains(stopReason, "Old Canvas-Based Renderer") {
 		t.Errorf("stopReason should surface drift candidate; got:\n%s", stopReason)
 	}
-	if !strings.Contains(stopReason, "remember_all") {
-		t.Errorf("stopReason should contain 'remember_all' filing instruction; got:\n%s", stopReason)
+	if !strings.Contains(stopReason, "remember with an items array") {
+		t.Errorf("stopReason should contain 'remember with an items array' filing instruction; got:\n%s", stopReason)
 	}
 }
 
@@ -631,7 +631,7 @@ func TestPrecompactHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 		t.Errorf("hook output is not valid JSON without dream binary: %v\ngot:\n%s", err, out)
 	}
 	stopReason, _ := envelope["stopReason"].(string)
-	if !strings.Contains(stopReason, "remember_all") {
+	if !strings.Contains(stopReason, "remember with an items array") {
 		t.Errorf("stopReason should still contain filing instructions; got:\n%s", stopReason)
 	}
 }

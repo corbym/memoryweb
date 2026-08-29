@@ -80,8 +80,8 @@ fi
 memoryweb_json_escape "${dream_digest}"
 
 if [ -n "${_esc}" ]; then
-  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now.\\n\\n%s\\n\\nCall remember_all with any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n' "${_esc}"
+  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now.\\n\\n%s\\n\\nCall remember with an items array for any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n' "${_esc}"
 else
-  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now. Call remember_all with any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
+  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now. Call remember with an items array for any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
 fi
 
