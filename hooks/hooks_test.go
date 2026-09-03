@@ -79,22 +79,36 @@ func hooksDir(t *testing.T) string {
 	return filepath.Join(findRepoRoot(t), "hooks")
 }
 
-// makeTranscript creates a JSONL transcript with numHuman human messages under
-// projectsDir/<project>/<sessionID>.jsonl.
-func makeTranscript(t *testing.T, projectsDir, sessionID string, numHuman int) {
+// makeTranscript creates a JSONL transcript with numUser real user-prompt messages
+// under projectsDir/<project>/<sessionID>.jsonl, using the Claude Code JSONL shape:
+// real prompts have "type":"user" and no "toolUseResult" key.
+func makeTranscript(t *testing.T, projectsDir, sessionID string, numUser int) {
+	t.Helper()
+	makeTranscriptWithToolResults(t, projectsDir, sessionID, numUser, 0)
+}
+
+// makeTranscriptWithToolResults creates a JSONL transcript with numUser real user-prompt
+// messages followed by numToolResults tool-result messages. Tool-result lines carry
+// "toolUseResult" and must not be counted toward the save interval.
+func makeTranscriptWithToolResults(t *testing.T, projectsDir, sessionID string, numUser, numToolResults int) {
 	t.Helper()
 	projectDir := filepath.Join(projectsDir, "test-project")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatalf("makeTranscript: mkdir: %v", err)
+		t.Fatalf("makeTranscriptWithToolResults: mkdir: %v", err)
 	}
 	f, err := os.Create(filepath.Join(projectDir, sessionID+".jsonl"))
 	if err != nil {
-		t.Fatalf("makeTranscript: create: %v", err)
+		t.Fatalf("makeTranscriptWithToolResults: create: %v", err)
 	}
 	defer f.Close()
-	for i := 0; i < numHuman; i++ {
-		fmt.Fprintf(f, `{"role":"human","content":"message %d"}`+"\n", i+1)
-		fmt.Fprintf(f, `{"role":"assistant","content":"reply %d"}`+"\n", i+1)
+	for i := 0; i < numUser; i++ {
+		// Real user prompt: "type":"user", content is a string, no toolUseResult key.
+		fmt.Fprintf(f, `{"type":"user","message":{"role":"user","content":"message %d"},"origin":"user","promptSource":"user"}`+"\n", i+1)
+		fmt.Fprintf(f, `{"type":"assistant","message":{"role":"assistant","content":"reply %d"}}`+"\n", i+1)
+	}
+	for i := 0; i < numToolResults; i++ {
+		// Tool result: "type":"user" but carries "toolUseResult" — must not be counted.
+		fmt.Fprintf(f, `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_%d","content":"result"}]},"toolUseResult":{"invocationId":"toolu_%d","name":"some_tool"}}`+"\n", i+1, i+1)
 	}
 }
 
@@ -193,6 +207,26 @@ func TestSaveHookAllowsBelowThreshold(t *testing.T) {
 	}
 	if !strings.Contains(out, `"continue":true`) {
 		t.Errorf("expected continue:true for 5 messages below threshold; got:\n%s", out)
+	}
+}
+
+func TestSaveHookDoesNotCountToolResults(t *testing.T) {
+	saveHook := filepath.Join(hooksDir(t), "memoryweb_save_hook.sh")
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	sessionID := "test-save-no-tool-count"
+
+	// 5 real user messages + 20 tool-result messages = 5 real, still below threshold (15).
+	makeTranscriptWithToolResults(t, projectsDir, sessionID, 5, 20)
+
+	out, code := runHookExtra(t, saveHook, sessionID, stateDir, projectsDir,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true when only 5 real user messages (20 tool-result lines excluded); got:\n%s", out)
 	}
 }
 

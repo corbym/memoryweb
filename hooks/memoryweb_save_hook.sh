@@ -48,7 +48,9 @@ fi
 current_count=0
 transcript=$(find "${PROJECTS_DIR}" -name "${session_id}.jsonl" 2>/dev/null | head -1)
 if [ -n "${transcript}" ] && [ -f "${transcript}" ]; then
-  current_count=$(grep -c '"role"[[:space:]]*:[[:space:]]*"human"' "${transcript}" 2>/dev/null || true)
+  current_count=$(grep '"type"[[:space:]]*:[[:space:]]*"user"' "${transcript}" 2>/dev/null \
+    | grep -cv '"toolUseResult"' \
+    || true)
   current_count=${current_count:-0}
 fi
 
