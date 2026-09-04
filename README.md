@@ -23,7 +23,7 @@ Agents are no different. Context is tokens in relation to other tokens. What mak
 
 ## Philosophy
 
-memoryweb optimises for remembering things *well*, not remembering things fast. Filing requires a moment of judgement: why does this matter, how does it connect to what else is known, what would be useful to know when coming back to this cold?
+memoryweb optimises for remembering things *well*, not remembering things in their entirity. Filing requires a moment of judgement: why does this matter, how does it connect to what else is known, what would be useful to know when coming back to this cold?
 
 This makes it a **decision log**, not an event log. An event log records what happened. A decision log records what was learned, decided, and why — and that's what lets you pick up where you left off without re-learning everything.
 
