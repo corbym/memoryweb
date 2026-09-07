@@ -241,7 +241,7 @@ complete.
 | `audit(mode=kind_coverage)` | `{total_nodes, by_kind, legacy_dominant_pct, migration_candidates, results_truncated}` |
 | `significance` | section booleans: `declared_results_truncated`, `structural_results_truncated`, `uncurated_results_truncated`, `potentially_stale_results_truncated`; `call_id` is opaque analytics metadata — ignore |
 | `orient(domain=X)` | `significant_results_truncated`, `recent_results_truncated`, `declared_spine_results_truncated`, `rules_results_truncated`; low-trust nodes in `significant` carry optional `trust` |
-| `orient()` (no domain) | `{domains, results_truncated}` — each domain entry has `recent_results_truncated`; pass `limit` to raise per-domain recent cap (default 5) |
+| `orient()` (no domain) | `{domains, results_truncated}` — each domain entry has `recent_results_truncated`; pass `limit` to raise per-domain recent cap (default 5). With `digest=true`, each domain entry's `recent` becomes `[]string` lines of the form `[id] label (updated_at)` instead of JSON objects. |
 
 Per-node excerpt truncation uses `truncated` on lean entries — distinct from
 list-level `results_truncated`.

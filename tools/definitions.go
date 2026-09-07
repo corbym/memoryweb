@@ -220,7 +220,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 						Items:       json.RawMessage(`{"type":"string"}`),
 					},
 					"topic":  {Type: "string", Description: "Optional — the user's current question or task. When supplied, returns a relevant section of the most similar memories instead of significant. Applies to all domains when using the domains array. Pass topic when the session has a known purpose."},
-					"digest": {Type: "boolean", Description: "When true, collapse list sections (rules, declared_spine, significant/relevant, recent) to compact text lines (always a string array). Default false."},
+					"digest": {Type: "boolean", Description: "When true, collapse list sections (rules, declared_spine, significant/relevant, recent) to compact text lines (always a string array). Default false. Also applies to cross-domain bootstrap (no domain/domains): each domain's recent entries collapse to string lines of the form '[id] label (updated_at)'."},
 					"limit":  {Type: "integer", Description: "Cross-domain snapshot only — max recent entries per domain (default 5, max 500). Ignored when domain or domains is supplied."},
 				},
 			},

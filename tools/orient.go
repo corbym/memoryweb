@@ -59,7 +59,7 @@ func (h *Handler) crossDomainRecentEntries(nodes []db.Node) ([]crossDomainRecent
 	return entries, nil
 }
 
-func (h *Handler) orientCrossDomain(limit int) (*ToolResult, error) {
+func (h *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, error) {
 	if limit <= 0 {
 		limit = orientRecentCap
 	}
@@ -71,12 +71,6 @@ func (h *Handler) orientCrossDomain(limit int) (*ToolResult, error) {
 	all, err := h.store.RecentChanges("", 1000, nil)
 	if err != nil {
 		return nil, err
-	}
-
-	type domainEntry struct {
-		Domain                 string                   `json:"domain"`
-		Recent                 []crossDomainRecentEntry `json:"recent"`
-		RecentResultsTruncated bool                     `json:"recent_results_truncated"`
 	}
 
 	grouped := make(map[string][]db.Node)
@@ -95,6 +89,49 @@ func (h *Handler) orientCrossDomain(limit int) (*ToolResult, error) {
 		grouped[n.Domain] = append(grouped[n.Domain], n)
 	}
 
+	if digest {
+		type digestDomainEntry struct {
+			Domain                 string   `json:"domain"`
+			Recent                 []string `json:"recent"`
+			RecentResultsTruncated bool     `json:"recent_results_truncated"`
+		}
+		domains := make([]digestDomainEntry, 0, len(domainOrder))
+		for _, d := range domainOrder {
+			entries, err := h.crossDomainRecentEntries(grouped[d])
+			if err != nil {
+				return nil, err
+			}
+			lines := digestLines(entries, func(e crossDomainRecentEntry) string {
+				line := fmt.Sprintf("[%s] %s (%s)", e.ID, e.Label, e.UpdatedAt)
+				if e.LifecycleState != "" {
+					line += fmt.Sprintf(" (%s)", e.LifecycleState)
+				}
+				return line
+			})
+			domains = append(domains, digestDomainEntry{
+				Domain:                 d,
+				Recent:                 lines,
+				RecentResultsTruncated: domainTruncated[d],
+			})
+		}
+		resp := struct {
+			Mode             string              `json:"mode"`
+			Domains          []digestDomainEntry `json:"domains"`
+			ResultsTruncated bool                `json:"results_truncated"`
+		}{
+			Mode:             "cross_domain_snapshot",
+			Domains:          domains,
+			ResultsTruncated: resultsTruncated,
+		}
+		b, _ := json.MarshalIndent(resp, "", "  ")
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	}
+
+	type domainEntry struct {
+		Domain                 string                   `json:"domain"`
+		Recent                 []crossDomainRecentEntry `json:"recent"`
+		RecentResultsTruncated bool                     `json:"recent_results_truncated"`
+	}
 	domains := make([]domainEntry, 0, len(domainOrder))
 	for _, d := range domainOrder {
 		recent, err := h.crossDomainRecentEntries(grouped[d])
@@ -339,7 +376,7 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 
 func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	if argsEmpty(args) {
-		return h.orientCrossDomain(0)
+		return h.orientCrossDomain(0, false)
 	}
 	var a struct {
 		Domain  string   `json:"domain"`
@@ -359,7 +396,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 
 	// No domain and no domains → cross-domain bootstrap.
 	if a.Domain == "" && len(a.Domains) == 0 {
-		return h.orientCrossDomain(a.Limit)
+		return h.orientCrossDomain(a.Limit, a.Digest)
 	}
 
 	// Mutual exclusion: domain + domains together is an error.

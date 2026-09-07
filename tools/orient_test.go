@@ -1694,6 +1694,59 @@ func TestOrient_DomainsArray_SchemaHasDomainsProperty(t *testing.T) {
 	t.Fatal("orient tool not found in ListTools")
 }
 
+// TestOrient_CrossDomainDigest_ReturnsStringLines: orient(digest=true) with no
+// domain should return each domain's recent entries as string lines, not structs.
+func TestOrient_CrossDomainDigest_ReturnsStringLines(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Alpha widget", "dom-alpha", map[string]any{"why_matters": "alpha matters"})
+	addNode(t, h, "Beta gadget", "dom-beta", map[string]any{"why_matters": "beta matters"})
+
+	tr := call(t, h, "orient", map[string]any{"digest": true})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	var resp struct {
+		Mode    string `json:"mode"`
+		Domains []struct {
+			Domain string          `json:"domain"`
+			Recent json.RawMessage `json:"recent"`
+		} `json:"domains"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Mode != "cross_domain_snapshot" {
+		t.Errorf("mode = %q, want cross_domain_snapshot", resp.Mode)
+	}
+	if len(resp.Domains) == 0 {
+		t.Fatal("expected at least one domain in response")
+	}
+	for _, d := range resp.Domains {
+		var lines []string
+		if err := json.Unmarshal(d.Recent, &lines); err != nil {
+			t.Errorf("domain %q: recent should be []string in digest mode, got %s", d.Domain, d.Recent)
+		}
+	}
+}
+
+// TestOrient_SingleDomainDigest_Unchanged: orient(domain=X, digest=true) must
+// NOT fall through to cross-domain; the domain-scoped path is unaffected by this story.
+func TestOrient_SingleDomainDigest_Unchanged(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Gamma node", "dom-gamma", map[string]any{"why_matters": "gamma matters"})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "dom-gamma", "digest": true})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	if strings.Contains(body, "cross_domain_snapshot") {
+		t.Error("orient with domain set must not return cross_domain_snapshot mode")
+	}
+	if !strings.Contains(body, "Gamma node") {
+		t.Errorf("orient with domain should include filed node label; got:\n%s", body)
+	}
+}
+
 // TestOrient_RememberViaAliasVisibleOnOrient: filing with an alias domain name
 // must store the canonical domain so orient(domain=alias) finds the memory.
 func TestOrient_RememberViaAliasVisibleOnOrient(t *testing.T) {
