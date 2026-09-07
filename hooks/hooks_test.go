@@ -829,6 +829,19 @@ func runUPSHook(t *testing.T, sessionID, stateDir, projectsDir, message string, 
 	return string(out), code
 }
 
+// wantHookSpecificOutput asserts the hook output wraps additionalContext under
+// hookSpecificOutput with the matching hookEventName — the shape Claude Code
+// actually injects (bare top-level additionalContext is silently discarded).
+func wantHookSpecificOutput(t *testing.T, out, eventName string) {
+	t.Helper()
+	if !strings.Contains(out, `"hookSpecificOutput"`) {
+		t.Errorf("expected hookSpecificOutput wrapper; got:\n%s", out)
+	}
+	if !strings.Contains(out, `"hookEventName":"`+eventName+`"`) {
+		t.Errorf("expected hookEventName %q; got:\n%s", eventName, out)
+	}
+}
+
 // ── UserPromptSubmit hook tests ───────────────────────────────────────────────
 
 func TestUserPromptSubmitHook_OrientNotCalled(t *testing.T) {
@@ -847,6 +860,7 @@ func TestUserPromptSubmitHook_OrientNotCalled(t *testing.T) {
 	if !strings.Contains(out, `"additionalContext"`) {
 		t.Errorf("expected additionalContext when orient not called; got:\n%s", out)
 	}
+	wantHookSpecificOutput(t, out, "UserPromptSubmit")
 	if !strings.Contains(out, "orient") {
 		t.Errorf("expected 'orient' in additionalContext; got:\n%s", out)
 	}
@@ -974,6 +988,7 @@ func TestUserPromptSubmitHook_AutoRecallEnabled(t *testing.T) {
 	if !strings.Contains(out, `"additionalContext"`) {
 		t.Errorf("expected additionalContext with recall results; got:\n%s", out)
 	}
+	wantHookSpecificOutput(t, out, "UserPromptSubmit")
 	if !strings.Contains(out, "memoryweb relevant memories") {
 		t.Errorf("expected 'memoryweb relevant memories' in additionalContext; got:\n%s", out)
 	}
@@ -1043,6 +1058,7 @@ func TestUserPromptSubmitHook_BothNudgeAndRecall(t *testing.T) {
 	if !strings.Contains(out, `"additionalContext"`) {
 		t.Errorf("expected additionalContext; got:\n%s", out)
 	}
+	wantHookSpecificOutput(t, out, "UserPromptSubmit")
 	if !strings.Contains(out, "orient") {
 		t.Errorf("expected orient nudge in additionalContext; got:\n%s", out)
 	}
@@ -1100,6 +1116,7 @@ func TestSubagentStartHook_WithDreamDigest(t *testing.T) {
 	if !strings.Contains(out, `"additionalContext"`) {
 		t.Errorf("expected additionalContext with dream digest; got:\n%s", out)
 	}
+	wantHookSpecificOutput(t, out, "SubagentStart")
 	if !strings.Contains(out, "memoryweb") {
 		t.Errorf("expected 'memoryweb' in additionalContext; got:\n%s", out)
 	}
@@ -1220,6 +1237,7 @@ func TestPostCompactHook_WithContextFile(t *testing.T) {
 	if !strings.Contains(out, `"additionalContext"`) {
 		t.Errorf("expected additionalContext; got:\n%s", out)
 	}
+	wantHookSpecificOutput(t, out, "PostCompact")
 	if !strings.Contains(out, "deep-game") {
 		t.Errorf("expected domain 'deep-game' in additionalContext; got:\n%s", out)
 	}
@@ -1246,6 +1264,7 @@ func TestPostCompactHook_NoContextFile(t *testing.T) {
 	if !strings.Contains(out, `"additionalContext"`) {
 		t.Errorf("expected additionalContext even without ctx file; got:\n%s", out)
 	}
+	wantHookSpecificOutput(t, out, "PostCompact")
 	// Without a ctx file, orient hint should be generic orient().
 	if !strings.Contains(out, "orient()") {
 		t.Errorf("expected generic 'orient()' hint in additionalContext; got:\n%s", out)

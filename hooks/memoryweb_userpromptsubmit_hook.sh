@@ -3,6 +3,7 @@
 # Two behaviours: orient nudge (session_orient_enabled) + auto-recall (auto_recall).
 set -euo pipefail
 
+# shellcheck source=memoryweb_lib.sh
 source "$(dirname "$0")/memoryweb_lib.sh"
 
 MEMORYWEB_BIN="${MEMORYWEB_BIN:-memoryweb}"
@@ -80,9 +81,11 @@ if memoryweb_option_enabled "auto_recall" "false" \
 fi
 
 # ── Emit ──────────────────────────────────────────────────────────────────────
+# Claude Code silently discards a bare top-level additionalContext; it must be
+# nested under hookSpecificOutput with the matching hookEventName.
 if [ -n "${additional_parts}" ]; then
   memoryweb_json_escape "${additional_parts}"
-  printf '{"continue":true,"additionalContext":"%s"}\n' "${_esc}"
+  printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"%s"}}\n' "${_esc}"
 else
   printf '{"continue":true}\n'
 fi

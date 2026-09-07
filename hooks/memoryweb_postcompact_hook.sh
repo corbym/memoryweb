@@ -3,6 +3,7 @@
 # Reinjects orient context after context compaction.
 set -euo pipefail
 
+# shellcheck source=memoryweb_lib.sh
 source "$(dirname "$0")/memoryweb_lib.sh"
 
 MEMORYWEB_BIN="${MEMORYWEB_BIN:-memoryweb}"
@@ -50,13 +51,17 @@ if command -v "${MEMORYWEB_BIN}" >/dev/null 2>&1; then
   dream_digest=$("${MEMORYWEB_BIN}" dream --db "${MEMORYWEB_DB}" 2>/dev/null || true)
 fi
 
-memoryweb_json_escape "${dream_digest}"
+# Build the combined hint with real newlines, then escape once. The digest must
+# NOT be escaped before embedding (F7): escaping it first and then escaping the
+# whole string double-encodes the content. Building with real newlines and a
+# single escape preserves them as \n in the emitted JSON.
+if [ -n "${dream_digest}" ]; then
+  additional="Context was just compacted. Call ${orient_hint} to restore your working context before continuing.
 
-if [ -n "${_esc}" ]; then
-  additional="Context was just compacted. Call ${orient_hint} to restore your working context before continuing.\\n\\n${_esc}"
+${dream_digest}"
 else
   additional="Context was just compacted. Call ${orient_hint} to restore your working context before continuing."
 fi
 
 memoryweb_json_escape "${additional}"
-printf '{"continue":true,"additionalContext":"%s"}\n' "${_esc}"
+printf '{"hookSpecificOutput":{"hookEventName":"PostCompact","additionalContext":"%s"}}\n' "${_esc}"

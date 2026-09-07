@@ -443,7 +443,7 @@ func TestSearchCmd_LeanOutput(t *testing.T) {
 	store.Close()
 
 	var buf bytes.Buffer
-	if err := runSearchCmd(&buf, dbPath, "WebGL Renderer", "", 10, true); err != nil {
+	if err := runSearchCmd(&buf, dbPath, "WebGL Renderer", "", 10, true, false); err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
 	}
 	out := buf.String()
@@ -465,10 +465,33 @@ func TestSearchCmd_LeanOutput(t *testing.T) {
 	}
 }
 
+func TestSearchCmd_ExactMode(t *testing.T) {
+	store, dbPath := newTestStore(t)
+	if _, err := store.AddNode("STORY-123 done: exact label match", "desc", "An exact identifier lookup.", "deep-game", nil, "", "decision"); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if _, err := store.AddNode("CSS Animation Approach", "desc2", "Unrelated node that should not match.", "deep-game", nil, "", "decision"); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	store.Close()
+
+	var buf bytes.Buffer
+	if err := runSearchCmd(&buf, dbPath, "STORY-123", "", 10, true, true); err != nil {
+		t.Fatalf("runSearchCmd exact: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "STORY-123 done") {
+		t.Errorf("exact mode should substring-match the query; got: %q", out)
+	}
+	if strings.Contains(out, "CSS Animation") {
+		t.Errorf("exact mode must not return unrelated nodes; got: %q", out)
+	}
+}
+
 func TestSearchCmd_NoResults(t *testing.T) {
 	_, dbPath := newTestStore(t)
 	var buf bytes.Buffer
-	if err := runSearchCmd(&buf, dbPath, "nonexistent query xyz123", "", 10, true); err != nil {
+	if err := runSearchCmd(&buf, dbPath, "nonexistent query xyz123", "", 10, true, false); err != nil {
 		t.Fatalf("runSearchCmd should not error on empty results: %v", err)
 	}
 	if buf.String() != "" {
@@ -478,7 +501,7 @@ func TestSearchCmd_NoResults(t *testing.T) {
 
 func TestSearchCmd_MissingQuery(t *testing.T) {
 	_, dbPath := newTestStore(t)
-	err := runSearchCmd(io.Discard, dbPath, "", "", 10, false)
+	err := runSearchCmd(io.Discard, dbPath, "", "", 10, false, false)
 	if err == nil {
 		t.Fatal("expected error for empty query")
 	}

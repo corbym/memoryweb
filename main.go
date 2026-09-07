@@ -280,8 +280,9 @@ func searchCmd() {
 	domain := flags.String("domain", "", "restrict to domain")
 	limit := flags.Int("limit", 10, "max results")
 	lean := flags.Bool("lean", false, "compact one-line output")
+	exact := flags.Bool("exact", false, "exact sub-string label match instead of semantic search (for hyphenated IDs)")
 	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
-	if err := runSearchCmd(os.Stdout, *dbFlag, *query, *domain, *limit, *lean); err != nil {
+	if err := runSearchCmd(os.Stdout, *dbFlag, *query, *domain, *limit, *lean, *exact); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
@@ -290,7 +291,7 @@ func searchCmd() {
 // runSearchCmd opens the DB, runs SearchNodes, and writes results to out.
 // With lean=false it prints one JSON object per result; with lean=true it
 // prints a compact single-line summary per result.
-func runSearchCmd(out io.Writer, dbPath, query, domain string, limit int, lean bool) error {
+func runSearchCmd(out io.Writer, dbPath, query, domain string, limit int, lean, exact bool) error {
 	if strings.TrimSpace(query) == "" {
 		return fmt.Errorf("--query is required")
 	}
@@ -303,7 +304,12 @@ func runSearchCmd(out io.Writer, dbPath, query, domain string, limit int, lean b
 	}
 	defer store.Close()
 
-	result, err := store.SearchNodes(query, domain, limit, "", nil)
+	var result *db.SearchResult
+	if exact {
+		result, err = store.SearchNodesExact(query, domain, limit, "", nil)
+	} else {
+		result, err = store.SearchNodes(query, domain, limit, "", nil)
+	}
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}

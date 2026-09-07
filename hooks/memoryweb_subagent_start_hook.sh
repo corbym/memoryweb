@@ -3,6 +3,7 @@
 # Injects a memoryweb dream digest into the sub-agent's starting context.
 set -euo pipefail
 
+# shellcheck source=memoryweb_lib.sh
 source "$(dirname "$0")/memoryweb_lib.sh"
 
 MEMORYWEB_BIN="${MEMORYWEB_BIN:-memoryweb}"
@@ -30,7 +31,7 @@ fi
 memoryweb_json_escape "${dream_digest}"
 
 if [ -n "${_esc}" ]; then
-  printf '{"continue":true,"additionalContext":"memoryweb context for this sub-agent session:\\n\\n%s"}\n' "${_esc}"
+  printf '{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"memoryweb context for this sub-agent session:\\n\\n%s"}}\n' "${_esc}"
 else
   printf '{"continue":true}\n'
 fi

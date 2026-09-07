@@ -3,6 +3,7 @@
 # Prompts the sub-agent to connect orphaned nodes before it exits.
 set -euo pipefail
 
+# shellcheck source=memoryweb_lib.sh
 source "$(dirname "$0")/memoryweb_lib.sh"
 
 STATE_DIR="${MEMORYWEB_HOOK_STATE_DIR:-${HOME}/.memoryweb/hook_state}"
