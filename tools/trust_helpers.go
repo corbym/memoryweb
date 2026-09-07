@@ -10,6 +10,42 @@ import (
 
 const orientTrustRecencyWindow = 90
 
+// annotateTrustDeltas appends a worsening hint ("↓ since last orient") to the
+// Trust field of entries that are currently low-trust but had a positive score the
+// last time trust was logged. At most maxDeltas entries are annotated to cap token
+// overhead. Only entries already marked low-trust (Trust != "") are candidates.
+func (h *Handler) annotateTrustDeltas(entries []scoredLeanEntry, maxDeltas int) ([]scoredLeanEntry, error) {
+	// Collect IDs of currently-low-trust entries.
+	var ids []string
+	for _, e := range entries {
+		if e.Trust != "" {
+			ids = append(ids, e.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return entries, nil
+	}
+	prior, err := h.store.LastTrustScores(ids)
+	if err != nil {
+		return entries, nil // non-fatal: skip delta annotations
+	}
+	const worseningThreshold = 0.3
+	annotated := 0
+	for i, e := range entries {
+		if annotated >= maxDeltas {
+			break
+		}
+		if e.Trust == "" {
+			continue
+		}
+		if score, ok := prior[e.ID]; ok && score > worseningThreshold {
+			entries[i].Trust += "; ↓ since last orient"
+			annotated++
+		}
+	}
+	return entries, nil
+}
+
 func (h *Handler) annotateSignificantTrust(entries []scoredLeanEntry) ([]scoredLeanEntry, error) {
 	if len(entries) == 0 {
 		return entries, nil

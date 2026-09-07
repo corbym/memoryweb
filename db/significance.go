@@ -404,3 +404,39 @@ func (s *Store) logSignificance(callID string, calledAt time.Time, domain string
 	)
 	return err
 }
+
+// LastTrustScores returns the most recently logged trust score from significance_log
+// for each supplied node ID, keyed by node ID. Nodes with no prior trust log entry
+// are absent from the map. Used by orient digest mode to detect trust worsening.
+func (s *Store) LastTrustScores(nodeIDs []string) (map[string]float64, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	ph, args := inClause(nodeIDs)
+	q := `SELECT sl.node_id, sl.score
+	      FROM significance_log sl
+	      INNER JOIN (
+	        SELECT node_id, MAX(called_at) AS max_at
+	        FROM significance_log
+	        WHERE node_id IN (` + ph + `)
+	          AND rank_type = 'trust'
+	          AND score IS NOT NULL
+	        GROUP BY node_id
+	      ) latest ON sl.node_id = latest.node_id AND sl.called_at = latest.max_at
+	      WHERE sl.rank_type = 'trust' AND sl.score IS NOT NULL`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("LastTrustScores: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]float64)
+	for rows.Next() {
+		var nodeID string
+		var score float64
+		if err := rows.Scan(&nodeID, &score); err != nil {
+			return nil, fmt.Errorf("LastTrustScores scan: %w", err)
+		}
+		result[nodeID] = score
+	}
+	return result, rows.Err()
+}

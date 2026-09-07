@@ -367,6 +367,12 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
+		if digest {
+			sigEntries, err = h.annotateTrustDeltas(sigEntries, 3)
+			if err != nil {
+				return orientDomainEntry{}, err
+			}
+		}
 		for _, e := range sigEntries {
 			if e.Trust != "" {
 				entry.LoadBearingLowTrust++
@@ -483,6 +489,12 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	sigEntries, err = h.annotateSignificantTrust(sigEntries)
 	if err != nil {
 		return nil, err
+	}
+	if a.Digest {
+		sigEntries, err = h.annotateTrustDeltas(sigEntries, 3)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	lowTrustCount := 0

@@ -1793,6 +1793,83 @@ func TestOrient_SingleDomainDigest_Unchanged(t *testing.T) {
 	}
 }
 
+// TestOrient_TrustDelta_AppearsInDigest: when a significant node is now
+// low-trust but had a positive prior trust score in significance_log, digest
+// orient must append "↓ since last orient" to the trust annotation.
+func TestOrient_TrustDelta_AppearsInDigest(t *testing.T) {
+	dbPath, store, h := newEnvWithPath(t)
+
+	// File a decision and an assumption that contradicts it.
+	decID := addNode(t, h, "Delta decision", "trust-delta-test", map[string]any{
+		"why_matters": "load-bearing decision",
+		"node_kind":   "decision",
+	})
+	assID := addNode(t, h, "Delta assumption", "trust-delta-test", map[string]any{
+		"why_matters": "an assumption that contradicts",
+		"node_kind":   "assumption",
+	})
+	// Connect assumption→decision with contradicts so decision becomes low-trust.
+	call(t, h, "connect", map[string]any{
+		"from_memory":  assID,
+		"to_memory":    decID,
+		"relationship": "contradicts",
+		"narrative":    "undermines the decision",
+	})
+	_ = store // referenced to keep import
+
+	// Insert a prior trust log entry showing decID had positive trust before.
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer rawDB.Close()
+	priorTime := time.Now().Add(-24 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	_, err = rawDB.Exec(
+		`INSERT INTO significance_log (id, call_id, called_at, domain, limit_n, node_id, node_label, rank_type, score)
+		 VALUES ('prior-trust-entry', 'prior-call', ?, 'trust-delta-test', 10, ?, 'Delta decision', 'trust', 0.8)`,
+		priorTime, decID,
+	)
+	if err != nil {
+		t.Fatalf("insert significance_log: %v", err)
+	}
+
+	tr := call(t, h, "orient", map[string]any{"domain": "trust-delta-test", "digest": true})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "↓ since last orient") {
+		t.Errorf("digest orient should contain trust delta hint when trust worsened; got:\n%s", body)
+	}
+}
+
+// TestOrient_TrustDelta_AbsentWithoutPriorLog: when a significant node is
+// low-trust but has no prior trust log entry, no delta hint should appear.
+func TestOrient_TrustDelta_AbsentWithoutPriorLog(t *testing.T) {
+	_, h := newEnv(t)
+
+	decID := addNode(t, h, "NoDelta decision", "trust-nodelta-test", map[string]any{
+		"why_matters": "load-bearing",
+		"node_kind":   "decision",
+	})
+	assID := addNode(t, h, "NoDelta assumption", "trust-nodelta-test", map[string]any{
+		"why_matters": "contradicting assumption",
+		"node_kind":   "assumption",
+	})
+	call(t, h, "connect", map[string]any{
+		"from_memory":  assID,
+		"to_memory":    decID,
+		"relationship": "contradicts",
+		"narrative":    "undermines it",
+	})
+
+	// No prior significance_log entries — no delta should appear.
+	tr := call(t, h, "orient", map[string]any{"domain": "trust-nodelta-test", "digest": true})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if strings.Contains(body, "↓ since last orient") {
+		t.Errorf("no prior trust log → delta hint must not appear; got:\n%s", body)
+	}
+}
+
 // TestOrient_RememberViaAliasVisibleOnOrient: filing with an alias domain name
 // must store the canonical domain so orient(domain=alias) finds the memory.
 func TestOrient_RememberViaAliasVisibleOnOrient(t *testing.T) {
