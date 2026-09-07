@@ -187,9 +187,9 @@ func TestSetupInstallsHooks(t *testing.T) {
 	}
 
 	// Dry-run must not write the settings file.
-	settingsPath := filepath.Join(tmpHome, ".claude", "settings.local.json")
+	settingsPath := filepath.Join(tmpHome, ".claude", "settings.json")
 	if _, err := os.Stat(settingsPath); err == nil {
-		t.Error("--dry-run should not write settings.local.json")
+		t.Error("--dry-run should not write settings.json")
 	}
 }
 
@@ -214,7 +214,7 @@ func TestSetupMergesExistingConfig(t *testing.T) {
 		},
 	}
 	existingBytes, _ := json.MarshalIndent(existing, "", "  ")
-	settingsPath := filepath.Join(claudeDir, "settings.local.json")
+	settingsPath := filepath.Join(claudeDir, "settings.json")
 	if err := os.WriteFile(settingsPath, existingBytes, 0644); err != nil {
 		t.Fatalf("write existing settings: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestSetupIdempotent(t *testing.T) {
 		t.Fatal("second setup run failed")
 	}
 
-	settingsPath := filepath.Join(tmpHome, ".claude", "settings.local.json")
+	settingsPath := filepath.Join(tmpHome, ".claude", "settings.json")
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings: %v", err)

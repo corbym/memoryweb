@@ -173,7 +173,7 @@ func TestRunDoctor_DatabaseCheck_PassesOnFreshDB(t *testing.T) {
 
 func TestRunDoctor_HooksCheck_FailsWhenNoSettings(t *testing.T) {
 	store, dbPath := newTestStore(t)
-	home := t.TempDir() // no .claude/settings.local.json
+	home := t.TempDir() // no .claude/settings.json
 
 	var buf bytes.Buffer
 	runDoctor(store, &buf, dbPath, home, false)
@@ -420,7 +420,7 @@ func testEntryEnv(t *testing.T, e interface{}) string {
 
 // TestSetupUpsertCommand_RefreshesEnvOnSamePath: re-running setup with the same
 // hook command path but a new DB path must update the existing entry's env —
-// otherwise a stale relative --db survives forever in settings.local.json.
+// otherwise a stale relative --db survives forever in settings.json.
 func TestSetupUpsertCommand_RefreshesEnvOnSamePath(t *testing.T) {
 	cmd := "/hooks/memoryweb_save_hook.sh"
 	staleDB := "./.memoryweb.db"
@@ -529,7 +529,7 @@ func TestRunSetup_IdempotentHookEntries(t *testing.T) {
 		}
 	}
 
-	settingsPath := filepath.Join(home, ".claude", "settings.local.json")
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings: %v", err)
@@ -775,7 +775,7 @@ func TestOptionsCmd_Idempotent(t *testing.T) {
 
 // ── doctorCheckHooks tests ────────────────────────────────────────────────────
 
-// writeHookSettings writes ~/.claude/settings.local.json containing the given
+// writeHookSettings writes ~/.claude/settings.json containing the given
 // event→script mapping, mirroring the shape `memoryweb setup` produces.
 func writeHookSettings(t *testing.T, home string, hookScripts map[string]string) {
 	t.Helper()
@@ -801,13 +801,13 @@ func writeHookSettings(t *testing.T, home string, hookScripts map[string]string)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
-	settingsPath := filepath.Join(dir, "settings.local.json")
+	settingsPath := filepath.Join(dir, "settings.json")
 	if err := os.WriteFile(settingsPath, data, 0600); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
 }
 
-// writeHookSettingsWith writes a settings.local.json given a raw event→entries
+// writeHookSettingsWith writes a settings.json given a raw event→entries
 // map, mirroring whatever polluted state an install may have left behind.
 func writeHookSettingsWith(t *testing.T, home string, eventEntries map[string]interface{}) {
 	t.Helper()
@@ -820,7 +820,7 @@ func writeHookSettingsWith(t *testing.T, home string, eventEntries map[string]in
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
-	settingsPath := filepath.Join(dir, "settings.local.json")
+	settingsPath := filepath.Join(dir, "settings.json")
 	if err := os.WriteFile(settingsPath, data, 0600); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
@@ -895,7 +895,7 @@ func TestDoctorCheckHooks_ReportsEachMissingHook(t *testing.T) {
 
 func TestDoctorCheckHooks_NoHooksConfigured(t *testing.T) {
 	home := t.TempDir()
-	// settings.local.json exists but has no memoryweb hooks.
+	// settings.json exists but has no memoryweb hooks.
 	writeHookSettings(t, home, map[string]string{})
 
 	message, status := doctorCheckHooks(home)
@@ -983,15 +983,15 @@ func TestSetupResolvesRelativeDBPath(t *testing.T) {
 		t.Fatalf("runSetup: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.local.json"))
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
 	if err != nil {
-		t.Fatalf("settings.local.json not written: %v", err)
+		t.Fatalf("settings.json not written: %v", err)
 	}
 	var settings struct {
 		Hooks map[string]interface{} `json:"hooks"`
 	}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatalf("settings.local.json invalid JSON: %v\n%s", err, data)
+		t.Fatalf("settings.json invalid JSON: %v\n%s", err, data)
 	}
 	stopEntry, ok := settings.Hooks["Stop"].([]interface{})
 	if !ok || len(stopEntry) == 0 {
@@ -1048,15 +1048,15 @@ func TestSetupRunRemovesStaleHookEntries(t *testing.T) {
 		t.Fatalf("runSetup: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.local.json"))
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
 	if err != nil {
-		t.Fatalf("settings.local.json not written: %v", err)
+		t.Fatalf("settings.json not written: %v", err)
 	}
 	var settings struct {
 		Hooks map[string]interface{} `json:"hooks"`
 	}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatalf("settings.local.json invalid JSON: %v\n%s", err, data)
+		t.Fatalf("settings.json invalid JSON: %v\n%s", err, data)
 	}
 
 	assertHookEntries := func(event, scriptName string) {

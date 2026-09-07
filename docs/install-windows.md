@@ -89,7 +89,7 @@ memoryweb setup
 The setup program will:
 - Detect that Ollama is already installed and start the server if it is not running.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
-- Install the `Stop` and `PreCompact` hooks into `%USERPROFILE%\.claude\settings.local.json`.
+- Install the `Stop` and `PreCompact` hooks into `%USERPROFILE%\.claude\settings.json`.
 - Detect **Claude Desktop** (if installed) and ask whether to configure it:
   ```
   Detected Claude Desktop. Configure it? [y/N]

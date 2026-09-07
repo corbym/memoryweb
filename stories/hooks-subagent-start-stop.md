@@ -186,7 +186,7 @@ Follow the existing pattern in `hooks_test.go`:
 ## Acceptance criteria
 
 - `memoryweb setup` installs four hook entries (Stop, PreCompact, SubagentStart,
-  SubagentStop) into `settings.local.json`; running it twice leaves exactly four
+  SubagentStop) into `settings.json`; running it twice leaves exactly four
   entries (idempotency — covered by the existing setup-idempotency story).
 - `TestSubagentStartHook_NoMemoryweb`: output is `{"continue":true}`, no
   `additionalContext` key.

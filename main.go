@@ -549,7 +549,7 @@ func setupCmd() {
 	}
 }
 
-// runSetup installs Claude Code hooks into ~/.claude/settings.local.json,
+// runSetup installs Claude Code hooks into ~/.claude/settings.json,
 // detects desktop MCP clients (Claude Desktop, ChatGPT Desktop) and offers to
 // configure each one, then optionally sets up Ollama for semantic search.
 // Separated from setupCmd so tests can inject writers and readers.
@@ -615,7 +615,7 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 	// ── Claude Code hooks ─────────────────────────────────────────────────────
 
 	// Read or start with an empty settings object.
-	settingsPath := filepath.Join(home, ".claude", "settings.local.json")
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	var settings map[string]interface{}
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
@@ -1256,21 +1256,21 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 	return passed
 }
 
-// doctorCheckHooks inspects ~/.claude/settings.local.json and returns a
+// doctorCheckHooks inspects ~/.claude/settings.json and returns a
 // human-readable message and status about the memoryweb hook configuration.
 // It validates every hook `setup` installs (Stop/save, PreCompact,
 // UserPromptSubmit, SubagentStart, SubagentStop, PostCompact).
 func doctorCheckHooks(home string) (message, status string) {
-	settingsPath := filepath.Join(home, ".claude", "settings.local.json")
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
 
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		return "settings.local.json not found — run: memoryweb setup", "fail"
+		return "settings.json not found — run: memoryweb setup", "fail"
 	}
 
 	var settings map[string]interface{}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return fmt.Sprintf("settings.local.json is not valid JSON: %v", err), "fail"
+		return fmt.Sprintf("settings.json is not valid JSON: %v", err), "fail"
 	}
 
 	hooks, _ := settings["hooks"].(map[string]interface{})

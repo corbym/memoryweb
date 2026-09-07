@@ -113,7 +113,7 @@ The setup program will:
 - If `ollama` is not in PATH: prompt you to install it automatically via `https://ollama.com/install.sh`.
 - If `ollama` is installed but the server is not running: start it in the background.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
-- Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
+- Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.json`.
 - Detect **Claude Desktop** (if `~/.config/Claude/` exists) and ask whether to configure it:
   ```
   Detected Claude Desktop. Configure it? [y/N]
@@ -231,7 +231,7 @@ cp /tmp/memoryweb_linux_amd64/hooks/*.sh ~/.config/memoryweb/hooks/
 chmod +x ~/.config/memoryweb/hooks/*.sh
 ```
 
-Then add the following to `~/.claude/settings.local.json`:
+Then add the following to `~/.claude/settings.json`:
 
 ```json
 {

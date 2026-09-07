@@ -79,7 +79,7 @@ Then drop the `SELECT COUNT(*) FROM nodes WHERE id = ?` pre-checks — let the F
 
 **Locations.**
 - `main.go:383` — `~/Library/Application Support/Claude/claude_desktop_config.json` and `~/AppData/Roaming/ChatGPT/mcp.json` written `0644`
-- `main.go:510` — `~/.claude/settings.local.json` written `0644`
+- `main.go:672` — `~/.claude/settings.json` written `0644`
 - `main.go:504, 507, 380` — directories under `~/.memoryweb/` and `~/.claude/` created `0755`
 - `stats/stats.go:126, 136, 157, 161, 214, 229` — stats and `.current` files written `0644`
 - `db/db.go:94` — SQLite database created with the process's umask defaults (typically `0644`/`0664`)
@@ -274,7 +274,7 @@ dsn := "file:" + url.PathEscape(path) + "?_journal_mode=WAL&_foreign_keys=on"
 
 **Locations:** `main.go:383, 510`, `stats/stats.go:157, 161`, etc.
 
-`os.WriteFile` truncates and writes in place. A SIGKILL (or full disk) mid-write leaves a half-written `~/.claude/settings.local.json`, which Claude Code can then fail to parse on next start.
+`os.WriteFile` truncates and writes in place. A SIGKILL (or full disk) mid-write leaves a half-written `~/.claude/settings.json`, which Claude Code can then fail to parse on next start.
 
 **Recommendation.** Write to `<path>.tmp` and `os.Rename` over the destination — atomic on POSIX, near-atomic on Windows. The existing `.current` recovery path in `stats` already does this conceptually; generalising it to all config writes is cheap.
 

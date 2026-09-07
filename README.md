@@ -227,7 +227,7 @@ memoryweb tracks which model was used for the last backfill. When `MEMORYWEB_EMB
 
 **Checking the configured model:** `memoryweb doctor` reports the active model under "Ollama model".
 
-The `setup` subcommand installs hooks into `~/.claude/settings.local.json`, detects Claude Desktop and offers to configure it automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for the configured embedding model and pulls it if missing.
+The `setup` subcommand installs hooks into `~/.claude/settings.json`, detects Claude Desktop and offers to configure it automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for the configured embedding model and pulls it if missing.
 
 ```bash
 memoryweb setup                                      # interactive setup
@@ -334,7 +334,7 @@ Or install manually:
 chmod +x hooks/memoryweb_save_hook.sh hooks/memoryweb_precompact_hook.sh hooks/memoryweb_userpromptsubmit_hook.sh hooks/memoryweb_subagent_start_hook.sh hooks/memoryweb_subagent_stop_hook.sh hooks/memoryweb_postcompact_hook.sh
 ```
 
-Add to `~/.claude/settings.local.json`:
+Add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -420,7 +420,7 @@ Create `.github/hooks/memoryweb.json` in your repository:
 }
 ```
 
-VS Code loads the hooks automatically — no restart needed. If you have already installed the Claude Code hooks via `~/.claude/settings.local.json`, VS Code Copilot picks them up from there without any additional configuration.
+VS Code loads the hooks automatically — no restart needed. If you have already installed the Claude Code hooks via `~/.claude/settings.json`, VS Code Copilot picks them up from there without any additional configuration.
 
 ### Other tools
 

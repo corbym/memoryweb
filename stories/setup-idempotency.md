@@ -1,7 +1,7 @@
 # setup idempotency — no duplicate hook entries on second run
 
 Fixes `memoryweb setup` so running it twice does not write duplicate hook entries to
-`~/.claude/settings.local.json`. Adds unit tests for `runSetup` and `setupUpsertCommand`,
+`~/.claude/settings.json`. Adds unit tests for `runSetup` and `setupUpsertCommand`,
 which currently have no test coverage. Mirrors the same idempotency requirement as
 recordari STORY-313 (`recordari-client init --hooks`).
 
@@ -10,7 +10,7 @@ recordari STORY-313 (`recordari-client init --hooks`).
 ## Motivation
 
 Running `memoryweb setup` twice produces duplicate hook entries in
-`~/.claude/settings.local.json`. Duplicate entries cause every lifecycle event to fire the
+`~/.claude/settings.json`. Duplicate entries cause every lifecycle event to fire the
 hook twice — double orient() calls, double audits, double context injections.
 
 The `setupUpsertCommand` helper already uses `filepath.Base` to match by script filename
@@ -44,7 +44,7 @@ Add `TestRunSetup_IdempotentHookEntries` in `main_test.go`:
 func TestRunSetup_IdempotentHookEntries(t *testing.T) {
     // arrange: temp home dir, fake hook scripts, real runSetup
     // act: call runSetup twice with the same paths and a scripted "n" reader
-    // assert: settings.local.json Stop and PreCompact arrays each have exactly
+    // assert: settings.json Stop and PreCompact arrays each have exactly
     //         one entry after the second call
 }
 ```
@@ -60,7 +60,7 @@ outer entry structure written by `makeEntry` is read back in a shape that doesn'
 the traversal in `setupUpsertCommand` — fix the traversal. The contract is:
 
 > A second `memoryweb setup` call with the same binary path must produce **no change** to
-> `settings.local.json` if the hook entries are already present.
+> `settings.json` if the hook entries are already present.
 
 ---
 

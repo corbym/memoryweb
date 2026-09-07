@@ -10,7 +10,7 @@ highest-precedence layer. Mirrors Recordari STORY-326 (`recordari options`).
 ## Motivation
 
 memoryweb's hook behaviours are currently hardcoded or controlled only by env vars set
-at setup time. There is no way to toggle a hook off without editing `settings.local.json`
+at setup time. There is no way to toggle a hook off without editing `settings.json`
 or unsetting env vars. Recordari gained a user options system (STORY-316/318/326) that
 lets users view and set per-hook toggles via `recordari options`. memoryweb needs the
 same, both for parity and because the new UserPromptSubmit and PostCompact hooks

@@ -108,7 +108,7 @@ The setup program will:
 - If `ollama` is not in PATH: offer to install it automatically via `https://ollama.com/install.sh`. **Note:** this script is primarily designed for Linux — if the automatic install fails on macOS, follow the [manual Ollama install](#manual-ollama-install-if-setup-cannot-install-it) steps below, then re-run `memoryweb setup`.
 - If `ollama` is installed but the server is not running: start it in the background.
 - Pull the `snowflake-arctic-embed` model if it has not been pulled yet.
-- Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.local.json`.
+- Install the `Stop` and `PreCompact` hooks into `~/.claude/settings.json`.
 - Detect **Claude Desktop** (if installed) and ask whether to configure it:
   ```
   Detected Claude Desktop. Configure it? [y/N]
@@ -206,7 +206,7 @@ Save the file, then **quit and relaunch Claude Desktop**. memoryweb will appear 
 
 ### Claude Code
 
-Claude Code picks up the hooks installed by `memoryweb setup` automatically. If you skipped the setup step, add the following to `~/.claude/settings.local.json`:
+Claude Code picks up the hooks installed by `memoryweb setup` automatically. If you skipped the setup step, add the following to `~/.claude/settings.json`:
 
 ```json
 {
