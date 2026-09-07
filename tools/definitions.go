@@ -73,7 +73,7 @@ func (h *Handler) ListTools() (interface{}, error) {
 					"exact":     {Type: "boolean", Description: "When true, bypass semantic ranking and use pure substring (LIKE) matching only. Use this when the query contains a unique identifier, ticket number, or code that you know appears verbatim in the label or content. Results will not include a semantic_distance field."},
 					"memory_id": {Type: "string", Description: "Anchor memory ID. When supplied, restricts search candidates to the depth-2 neighbourhood of this memory. Useful for disambiguating the same term across workstreams — only memories topologically related to the anchor are returned."},
 					"node_kind": {Type: "string", Description: "Optional filter by node_kind. Space-separated for OR match (e.g. 'decision standing'). When set without query, lists matching memories ordered by updated_at DESC."},
-					"digest":    {Type: "boolean", Description: "When true, collapse each result memory to a single compact text line in a lines array instead of JSON objects — saves tokens on multi-result calls. Default false. Does not apply when exact: true (full content path). Each line includes id for recall(id) follow-up."},
+					"digest":    {Type: "boolean", Description: "When true, collapse each result memory to a single compact text line in a lines array instead of JSON objects — saves tokens on multi-result calls. Default false. Does not apply when exact: true (full content path). Each line has the form: [id] label — excerpt (domain, node_kind). When semantic search is active, a distance score (0.00–1.00) is appended after two spaces — lower is closer. Each line includes id for recall(id) follow-up."},
 				},
 			},
 		},

@@ -13,6 +13,8 @@ import (
 // from/to IDs and relationship type; narrative text requires recall(id).
 type leanSearchNode struct {
 	leanEntry
+	Domain           string   `json:"domain,omitempty"`
+	NodeKind         string   `json:"node_kind,omitempty"`
 	SemanticDistance *float64 `json:"semantic_distance,omitempty"`
 }
 
@@ -31,7 +33,12 @@ type leanSearchResult struct {
 func toLeanSearchResult(r *db.SearchResult) leanSearchResult {
 	nodes := make([]leanSearchNode, len(r.Nodes))
 	for i, nr := range r.Nodes {
-		nodes[i] = leanSearchNode{leanEntry: toLeanEntry(nr.Node), SemanticDistance: nr.SemanticDistance}
+		nodes[i] = leanSearchNode{
+			leanEntry:        toLeanEntry(nr.Node),
+			Domain:           nr.Node.Domain,
+			NodeKind:         nr.Node.NodeKind,
+			SemanticDistance: nr.SemanticDistance,
+		}
 	}
 	edges := make([]leanEdge, len(r.Edges))
 	for i, e := range r.Edges {
@@ -205,9 +212,19 @@ func digestLineFromScored(e scoredLeanEntry) string {
 }
 
 func digestLineFromSearchNode(n leanSearchNode) string {
-	line := digestLineFromEntry(n.leanEntry)
-	if n.SemanticDistance != nil {
-		line += fmt.Sprintf(" (dist: %.3f)", *n.SemanticDistance)
+	label := sanitiseDigestField(n.Label)
+	var line string
+	if n.WhyMatters != "" {
+		excerpt := sanitiseDigestField(n.WhyMatters)
+		line = fmt.Sprintf("[%s] %s — %s (%s, %s)", n.ID, label, excerpt, n.Domain, n.NodeKind)
+	} else {
+		line = fmt.Sprintf("[%s] %s (%s, %s)", n.ID, label, n.Domain, n.NodeKind)
+	}
+	if n.LifecycleState != "" {
+		line += fmt.Sprintf(" (%s)", n.LifecycleState)
+	}
+	if n.SemanticDistance != nil && *n.SemanticDistance > 0 {
+		line += fmt.Sprintf("  %.2f", *n.SemanticDistance)
 	}
 	return line
 }

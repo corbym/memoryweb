@@ -487,3 +487,93 @@ func TestSearch_MemoryID_AbsentBehavesLikeDefault(t *testing.T) {
 
 // TestSearch_MemoryID_SchemaHasProperty: the search tool input schema must
 // expose the memory_id property so agents know it exists.
+
+// TestSearch_CompactLinesNoDistanceWhenZero: LIKE-only results (distance absent)
+// must not include a trailing decimal score in digest compact lines.
+func TestSearch_CompactLinesNoDistanceWhenZero(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "compact no dist alpha", "compact-dist", map[string]any{"why_matters": "why alpha"})
+	addNode(t, h, "compact no dist beta", "compact-dist", map[string]any{"why_matters": "why beta"})
+
+	tr := call(t, h, "search", map[string]any{
+		"query": "compact no dist", "domain": "compact-dist", "digest": true,
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Lines []string `json:"lines"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse digest search response: %v", err)
+	}
+	if len(resp.Lines) < 2 {
+		t.Fatalf("expected 2 digest lines, got %d", len(resp.Lines))
+	}
+	for _, line := range resp.Lines {
+		// Lines from LIKE search must not end with a bare decimal score.
+		// A trailing two-space + decimal like "  0.12" must be absent.
+		if strings.Contains(line, "  0.") {
+			t.Errorf("LIKE-only digest line must not include distance score; got: %q", line)
+		}
+	}
+}
+
+// TestSearch_CompactLinesDomainAndKindPresent: digest compact lines must include
+// (domain, node_kind) so agents can distinguish sources without a follow-up recall.
+func TestSearch_CompactLinesDomainAndKindPresent(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "compact domain kind node", "compact-dk", map[string]any{
+		"node_kind":   "finding",
+		"why_matters": "domain kind test",
+	})
+
+	tr := call(t, h, "search", map[string]any{
+		"query": "compact domain kind", "domain": "compact-dk", "digest": true,
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Lines []string `json:"lines"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse digest search response: %v", err)
+	}
+	if len(resp.Lines) == 0 {
+		t.Fatal("expected at least 1 digest line")
+	}
+	line := resp.Lines[0]
+	if !strings.Contains(line, "compact-dk") {
+		t.Errorf("digest line must include domain; got: %q", line)
+	}
+	if !strings.Contains(line, "finding") {
+		t.Errorf("digest line must include node_kind; got: %q", line)
+	}
+}
+
+// TestSearch_SingleResultJsonHasSemanticDistanceField: non-digest search must
+// return nodes as JSON objects; semantic_distance must be absent when LIKE-only.
+func TestSearch_SingleResultJsonHasSemanticDistanceField(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "single result lean check", "single-lean", nil)
+
+	tr := call(t, h, "search", map[string]any{"query": "single result lean check"})
+	mustNotError(t, tr)
+	body := text(t, tr)
+
+	var resp struct {
+		Nodes []map[string]json.RawMessage `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("non-digest search must return JSON; got: %v\nbody: %s", err, body)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected at least 1 node")
+	}
+	// LIKE-only: semantic_distance must be absent.
+	if _, ok := resp.Nodes[0]["semantic_distance"]; ok {
+		t.Error("LIKE-only non-digest result must not include semantic_distance field")
+	}
+}

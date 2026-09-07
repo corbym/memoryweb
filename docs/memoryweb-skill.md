@@ -247,6 +247,10 @@ list-level `results_truncated`.
 - Set `exact: true` for identifiers (ticket numbers, short codes) — normal
   ranking can bury an exact match, and short hyphenated codes don't tokenise
   well for lexical matching either way.
+- `digest: true` collapses each result to a single line: `[id] label — excerpt (domain, node_kind)`.
+  When Ollama is running and the result came from semantic search, a distance score is appended
+  after two spaces (e.g. `  0.12`; lower = closer). LIKE-only results omit the score.
+  Use `recall(id)` for full content; the digest line gives enough context to triage.
 
 ### Version awareness
 
