@@ -38,16 +38,17 @@ func tagFilter(col string, tags []string, conds []string, args []interface{}) ([
 	}
 	var clauses []string
 	for _, tag := range tags {
+		low := strings.ToLower(tag)
 		clauses = append(clauses,
-			"("+col+" = ? OR "+col+" LIKE ? || ' %' OR "+col+" LIKE '% ' || ? OR "+col+" LIKE '% ' || ? || ' %')")
-		args = append(args, tag, tag, tag, tag)
+			"(LOWER("+col+") = ? OR LOWER("+col+") LIKE ? || ' %' OR LOWER("+col+") LIKE '% ' || ? OR LOWER("+col+") LIKE '% ' || ? || ' %')")
+		args = append(args, low, low, low, low)
 	}
 	conds = append(conds, "("+strings.Join(clauses, " OR ")+")")
 	return conds, args
 }
 
 // nodeMatchesTags reports whether the space-separated tagString contains at least
-// one of the supplied tags as a whole word (case-sensitive, matching tagFilter semantics).
+// one of the supplied tags as a whole word (case-insensitive, matching tagFilter semantics).
 func nodeMatchesTags(tagString string, tags []string) bool {
 	if tagString == "" || len(tags) == 0 {
 		return false
@@ -55,7 +56,7 @@ func nodeMatchesTags(tagString string, tags []string) bool {
 	parts := strings.Fields(tagString)
 	for _, want := range tags {
 		for _, have := range parts {
-			if have == want {
+			if strings.EqualFold(have, want) {
 				return true
 			}
 		}
