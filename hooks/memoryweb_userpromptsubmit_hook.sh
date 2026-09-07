@@ -33,13 +33,16 @@ if memoryweb_option_enabled "session_orient_enabled" "false" && [ -n "${session_
   domain_seen=""
   transcript=$(find "${PROJECTS_DIR}" -name "${session_id}.jsonl" 2>/dev/null | head -1)
   if [ -n "${transcript}" ] && [ -f "${transcript}" ]; then
-    if grep -q '"name"[[:space:]]*:[[:space:]]*"orient"' "${transcript}" 2>/dev/null; then
-      orient_found=true
-      domain_seen=$(grep '"name"[[:space:]]*:[[:space:]]*"orient"' "${transcript}" 2>/dev/null \
-        | tail -1 \
-        | grep -o '"domain"[[:space:]]*:[[:space:]]*"[^"]*"' \
-        | grep -o '"[^"]*"$' | tr -d '"' || true)
-    fi
+  # MCP tools are serialised in the transcript with an mcp__<server>__ prefix,
+  # so a bare "name":"orient" never matches a real session. Accept an optional
+  # mcp__<server>__ prefix (e.g. mcp__memoryweb__orient).
+  if grep -Eq '"name"[[:space:]]*:[[:space:]]*"(mcp__[A-Za-z0-9_-]+__)?orient"' "${transcript}" 2>/dev/null; then
+    orient_found=true
+    domain_seen=$(grep -E '"name"[[:space:]]*:[[:space:]]*"(mcp__[A-Za-z0-9_-]+__)?orient"' "${transcript}" 2>/dev/null \
+      | tail -1 \
+      | grep -o '"domain"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | grep -o '"[^"]*"$' | tr -d '"' || true)
+  fi
   fi
 
   # Write context file on first orient detection (PostCompact will read it).

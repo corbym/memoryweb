@@ -803,6 +803,22 @@ func makeOrientTranscript(t *testing.T, projectsDir, sessionID, domain string) {
 	fmt.Fprintf(f, `{"type":"assistant","content":{"name":"orient","arguments":{"domain":%q}}}`+"\n", domain)
 }
 
+// makeMCPOrientTranscript writes a JSONL transcript containing an orient tool
+// call serialised the way Claude Code actually records MCP tools: the tool name
+// on the assistant tool_use block carries an mcp__<server>__ prefix (e.g.
+// mcp__memoryweb__orient). Fixtures must use this real shape, not the bare name.
+func makeMCPOrientTranscript(t *testing.T, projectsDir, sessionID, domain string) {
+	t.Helper()
+	projectDir := filepath.Join(projectsDir, "test-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("makeMCPOrientTranscript: mkdir: %v", err)
+	}
+	line := fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_mcp01","name":"mcp__memoryweb__orient","input":{"domain":%q}}]}}`+"\n", domain)
+	if err := os.WriteFile(filepath.Join(projectDir, sessionID+".jsonl"), []byte(line), 0644); err != nil {
+		t.Fatalf("makeMCPOrientTranscript: write: %v", err)
+	}
+}
+
 // runUPSHook runs the UserPromptSubmit hook with the given sessionID, message,
 // stateDir, projectsDir, and extra env vars.
 func runUPSHook(t *testing.T, sessionID, stateDir, projectsDir, message string, extraEnv ...string) (string, int) {
@@ -908,6 +924,38 @@ func TestUserPromptSubmitHook_WritesContextFile(t *testing.T) {
 	data, err := os.ReadFile(ctxFile)
 	if err != nil {
 		t.Fatalf("expected context file to be written: %v", err)
+	}
+	if !strings.Contains(string(data), "deep-game") {
+		t.Errorf("context file should contain domain 'deep-game'; got: %s", data)
+	}
+}
+
+func TestUserPromptSubmitHook_OrientAlreadyCalled_MCPPrefixedName(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "ups-orient-mcp"
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+	makeMCPOrientTranscript(t, projectsDir, sessionID, "deep-game")
+
+	out, code := runUPSHook(t, sessionID, stateDir, projectsDir, "continue working",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected no orient nudge when orient already called via mcp__memoryweb__orient; got:\n%s", out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true; got:\n%s", out)
+	}
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	data, err := os.ReadFile(ctxFile)
+	if err != nil {
+		t.Fatalf("expected context file written from MCP-prefixed orient call: %v", err)
 	}
 	if !strings.Contains(string(data), "deep-game") {
 		t.Errorf("context file should contain domain 'deep-game'; got: %s", data)
