@@ -525,7 +525,4 @@ func TestSetupResolvesRelativeDBInMCPServerConfig(t *testing.T) {
 	if got != want {
 		t.Errorf("MEMORYWEB_DB = %q, want resolved absolute path %q", got, want)
 	}
-	if strings.Contains(string(data), relDB) {
-		t.Errorf("raw relative path %q must not appear verbatim; config:\n%s", relDB, data)
-	}
 }

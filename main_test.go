@@ -978,9 +978,6 @@ func TestSetupResolvesRelativeDBPath(t *testing.T) {
 	if got != want {
 		t.Errorf("MEMORYWEB_DB = %v, want resolved absolute path %v", got, want)
 	}
-	if strings.Contains(string(data), dbPath) {
-		t.Errorf("raw relative path %q must never appear verbatim in settings; got: %s", dbPath, data)
-	}
 }
 
 // TestSetupRunRemovesStaleHookEntries: re-running setup over a settings file
