@@ -1729,6 +1729,52 @@ func TestOrient_CrossDomainDigest_ReturnsStringLines(t *testing.T) {
 	}
 }
 
+// TestOrient_LoadBearingLowTrust_ZeroOnHealthyDomain: a domain with no
+// low-trust load-bearing nodes must return load_bearing_low_trust = 0.
+func TestOrient_LoadBearingLowTrust_ZeroOnHealthyDomain(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Healthy decision", "lbt-clean", map[string]any{
+		"why_matters": "a well-supported decision",
+		"node_kind":   "decision",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "lbt-clean"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		LoadBearingLowTrust int `json:"load_bearing_low_trust"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.LoadBearingLowTrust != 0 {
+		t.Errorf("load_bearing_low_trust = %d, want 0 on healthy domain", resp.LoadBearingLowTrust)
+	}
+}
+
+// TestOrient_LoadBearingLowTrust_FieldPresent: load_bearing_low_trust field must
+// be present in orient response for a domain with nodes.
+func TestOrient_LoadBearingLowTrust_FieldPresent(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "Some node", "lbt-present", map[string]any{
+		"why_matters": "just checking field presence",
+	})
+	call(t, h, "connect", map[string]any{
+		"from_memory":  "Some node",
+		"to_memory":    "Some node",
+		"relationship": "connects_to",
+		"narrative":    "self-loop for structural weight",
+	})
+
+	tr := call(t, h, "orient", map[string]any{"domain": "lbt-present"})
+	mustNotError(t, tr)
+
+	body := text(t, tr)
+	if !strings.Contains(body, "load_bearing_low_trust") {
+		t.Errorf("orient response missing load_bearing_low_trust field; got:\n%s", body)
+	}
+}
+
 // TestOrient_SingleDomainDigest_Unchanged: orient(domain=X, digest=true) must
 // NOT fall through to cross-domain; the domain-scoped path is unaffected by this story.
 func TestOrient_SingleDomainDigest_Unchanged(t *testing.T) {

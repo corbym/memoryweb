@@ -220,26 +220,28 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 	}
 
 	resp := struct {
-		SummaryHint   string      `json:"summary_hint"`
-		ServerVersion string      `json:"server_version"`
-		LiveNodes     int         `json:"live_nodes"`
-		ArchivedNodes int         `json:"archived_nodes"`
-		StaleCount    int         `json:"stale_count"`
-		Rules         interface{} `json:"rules,omitempty"`
-		DeclaredSpine interface{} `json:"declared_spine"`
-		Relevant      interface{} `json:"relevant"`
-		Recent        interface{} `json:"recent"`
+		SummaryHint         string      `json:"summary_hint"`
+		ServerVersion       string      `json:"server_version"`
+		LiveNodes           int         `json:"live_nodes"`
+		ArchivedNodes       int         `json:"archived_nodes"`
+		StaleCount          int         `json:"stale_count"`
+		LoadBearingLowTrust int         `json:"load_bearing_low_trust"`
+		Rules               interface{} `json:"rules,omitempty"`
+		DeclaredSpine       interface{} `json:"declared_spine"`
+		Relevant            interface{} `json:"relevant"`
+		Recent              interface{} `json:"recent"`
 		orientSectionTruncation
 	}{
-		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. relevant lists memories most similar to the supplied topic. declared_spine lists key decisions chronologically. rules lists the standing constraints and durable decisions that govern this domain. recent shows where work was last happening. Plain prose, no bullet points.",
-		ServerVersion: h.version,
-		LiveNodes:     liveNodes,
-		ArchivedNodes: archivedNodes,
-		StaleCount:    staleCount,
-		Rules:         rulesField,
-		DeclaredSpine: spineField,
-		Relevant:      relevantField,
-		Recent:        recentField,
+		SummaryHint:         "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. relevant lists memories most similar to the supplied topic. declared_spine lists key decisions chronologically. rules lists the standing constraints and durable decisions that govern this domain. recent shows where work was last happening. Plain prose, no bullet points.",
+		ServerVersion:       h.version,
+		LiveNodes:           liveNodes,
+		ArchivedNodes:       archivedNodes,
+		StaleCount:          staleCount,
+		LoadBearingLowTrust: 0,
+		Rules:               rulesField,
+		DeclaredSpine:       spineField,
+		Relevant:            relevantField,
+		Recent:              recentField,
 		orientSectionTruncation: orientSectionTruncation{
 			RelevantResultsTruncated:      relevantTrunc,
 			RecentResultsTruncated:        recentTrunc,
@@ -255,15 +257,16 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 // orientDomainEntry builds the full orient data for one domain. Used by the
 // multi-domain (domains array) path.
 type orientDomainEntry struct {
-	Domain        string      `json:"domain"`
-	Rules         interface{} `json:"rules,omitempty"`
-	DeclaredSpine interface{} `json:"declared_spine"`
-	Significant   interface{} `json:"significant,omitempty"`
-	Relevant      interface{} `json:"relevant,omitempty"`
-	Recent        interface{} `json:"recent"`
-	TotalNodes    int         `json:"total_nodes"`
-	ArchivedNodes int         `json:"archived_nodes"`
-	StaleCount    int         `json:"stale_count"`
+	Domain              string      `json:"domain"`
+	Rules               interface{} `json:"rules,omitempty"`
+	DeclaredSpine       interface{} `json:"declared_spine"`
+	Significant         interface{} `json:"significant,omitempty"`
+	Relevant            interface{} `json:"relevant,omitempty"`
+	Recent              interface{} `json:"recent"`
+	TotalNodes          int         `json:"total_nodes"`
+	ArchivedNodes       int         `json:"archived_nodes"`
+	StaleCount          int         `json:"stale_count"`
+	LoadBearingLowTrust int         `json:"load_bearing_low_trust"`
 	orientSectionTruncation
 }
 
@@ -363,6 +366,11 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 		sigEntries, err = h.annotateSignificantTrust(sigEntries)
 		if err != nil {
 			return orientDomainEntry{}, err
+		}
+		for _, e := range sigEntries {
+			if e.Trust != "" {
+				entry.LoadBearingLowTrust++
+			}
 		}
 		entry.Significant, err = h.orientScoredSection(sigEntries, digest)
 		if err != nil {
@@ -477,6 +485,13 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
+	lowTrustCount := 0
+	for _, e := range sigEntries {
+		if e.Trust != "" {
+			lowTrustCount++
+		}
+	}
+
 	var rulesField interface{}
 	if len(rulesNodes) > 0 {
 		rulesField, err = h.orientLeanSection(rulesNodes, a.Digest)
@@ -498,26 +513,28 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	resp := struct {
-		SummaryHint   string      `json:"summary_hint"`
-		ServerVersion string      `json:"server_version"`
-		LiveNodes     int         `json:"live_nodes"`
-		ArchivedNodes int         `json:"archived_nodes"`
-		StaleCount    int         `json:"stale_count"`
-		Rules         interface{} `json:"rules,omitempty"`
-		DeclaredSpine interface{} `json:"declared_spine"`
-		Significant   interface{} `json:"significant"`
-		Recent        interface{} `json:"recent"`
+		SummaryHint         string      `json:"summary_hint"`
+		ServerVersion       string      `json:"server_version"`
+		LiveNodes           int         `json:"live_nodes"`
+		ArchivedNodes       int         `json:"archived_nodes"`
+		StaleCount          int         `json:"stale_count"`
+		LoadBearingLowTrust int         `json:"load_bearing_low_trust"`
+		Rules               interface{} `json:"rules,omitempty"`
+		DeclaredSpine       interface{} `json:"declared_spine"`
+		Significant         interface{} `json:"significant"`
+		Recent              interface{} `json:"recent"`
 		orientSectionTruncation
 	}{
-		SummaryHint:   "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. rules lists the standing constraints and durable decisions that govern this domain. significant lists structurally load-bearing memories right now. recent shows where work was last happening. Plain prose, no bullet points.",
-		ServerVersion: h.version,
-		LiveNodes:     liveNodes,
-		ArchivedNodes: archivedNodes,
-		StaleCount:    staleCount,
-		Rules:         rulesField,
-		DeclaredSpine: spineField,
-		Significant:   significantField,
-		Recent:        recentField,
+		SummaryHint:         "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. rules lists the standing constraints and durable decisions that govern this domain. significant lists structurally load-bearing memories right now. recent shows where work was last happening. When load_bearing_low_trust > 0, inspect significant entries with a trust annotation and consider whether they warrant review. Plain prose, no bullet points.",
+		ServerVersion:       h.version,
+		LiveNodes:           liveNodes,
+		ArchivedNodes:       archivedNodes,
+		StaleCount:          staleCount,
+		LoadBearingLowTrust: lowTrustCount,
+		Rules:               rulesField,
+		DeclaredSpine:       spineField,
+		Significant:         significantField,
+		Recent:              recentField,
 		orientSectionTruncation: orientSectionTruncation{
 			SignificantResultsTruncated:   sigResult.StructuralResultsTruncated,
 			RecentResultsTruncated:        recentTrunc,
