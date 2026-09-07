@@ -346,6 +346,15 @@ func TestDisconnectAll_RemovesAll(t *testing.T) {
 		"items": []map[string]any{{"edge_id": edge1.ID}, {"edge_id": edge2.ID}},
 	})
 	mustNotError(t, trDA)
+	var daResp struct {
+		Removed int `json:"removed"`
+	}
+	if err := json.Unmarshal([]byte(text(t, trDA)), &daResp); err != nil {
+		t.Fatalf("disconnect_all response parse: %v", err)
+	}
+	if daResp.Removed != 2 {
+		t.Errorf("disconnect_all: expected removed=2, got %d", daResp.Removed)
+	}
 
 	recallTr := call(t, h, "recall", map[string]any{"id": from})
 	mustNotError(t, recallTr)

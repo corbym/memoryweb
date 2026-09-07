@@ -1219,3 +1219,81 @@ func TestFindKindCoverage_WhyMattersPattern(t *testing.T) {
 		t.Error("expected migration candidate when why_matters matches finding pattern")
 	}
 }
+
+// TestFindDrift_ConnectedStale verifies Rule 9: a live node whose every edge
+// endpoint has been archived is surfaced with reason "connected-stale".
+func TestFindDrift_ConnectedStale(t *testing.T) {
+	s := newStore(t)
+	domain := "cs-drift-domain"
+
+	// A is the node under test; B and C are its only neighbours.
+	aNode := mustAddNode(t, s, "A connected-stale candidate", domain)
+	bNode := mustAddNode(t, s, "B archived neighbour", domain)
+	cNode := mustAddNode(t, s, "C archived neighbour", domain)
+
+	if _, err := s.AddEdge(aNode.ID, bNode.ID, "depends_on", "needs B"); err != nil {
+		t.Fatalf("AddEdge A->B: %v", err)
+	}
+	if _, err := s.AddEdge(aNode.ID, cNode.ID, "connects_to", "connects to C"); err != nil {
+		t.Fatalf("AddEdge A->C: %v", err)
+	}
+
+	// Archive both neighbours.
+	if err := s.ArchiveNode(bNode.ID, "test: archive B"); err != nil {
+		t.Fatalf("ArchiveNode B: %v", err)
+	}
+	if err := s.ArchiveNode(cNode.ID, "test: archive C"); err != nil {
+		t.Fatalf("ArchiveNode C: %v", err)
+	}
+
+	candidates, err := s.FindDrift(domain, 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+
+	var found bool
+	for _, c := range candidates {
+		if c.Node.ID == aNode.ID {
+			found = true
+			if c.Reason != "connected-stale: all connected neighbours have been archived" {
+				t.Errorf("unexpected reason %q", c.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("connected-stale node A (%s) not returned by FindDrift; got %d candidates", aNode.ID, len(candidates))
+	}
+}
+
+// TestFindDrift_ConnectedStale_LiveNeighbourExcluded verifies that a node with
+// even one live neighbour is NOT returned as connected-stale.
+func TestFindDrift_ConnectedStale_LiveNeighbourExcluded(t *testing.T) {
+	s := newStore(t)
+	domain := "cs-live-domain"
+
+	aNode := mustAddNode(t, s, "A has live neighbour", domain)
+	bNode := mustAddNode(t, s, "B archived", domain)
+	cNode := mustAddNode(t, s, "C still live", domain)
+
+	if _, err := s.AddEdge(aNode.ID, bNode.ID, "depends_on", "needs B"); err != nil {
+		t.Fatalf("AddEdge A->B: %v", err)
+	}
+	if _, err := s.AddEdge(aNode.ID, cNode.ID, "connects_to", "connects to C"); err != nil {
+		t.Fatalf("AddEdge A->C: %v", err)
+	}
+
+	// Only archive B; C remains live.
+	if err := s.ArchiveNode(bNode.ID, "test: archive B"); err != nil {
+		t.Fatalf("ArchiveNode B: %v", err)
+	}
+
+	candidates, err := s.FindDrift(domain, 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, c := range candidates {
+		if c.Node.ID == aNode.ID && c.Reason == "connected-stale: all connected neighbours have been archived" {
+			t.Errorf("node A must not be connected-stale when it still has a live neighbour C")
+		}
+	}
+}

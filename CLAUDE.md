@@ -1,3 +1,4 @@
+@AGENTS.md
 # CLAUDE.md — coding agent instructions for memoryweb
 
 Read this before touching any file in this repo.
@@ -304,23 +305,43 @@ the binary or committing any change. No exceptions.
 `/opt/homebrew/bin/memoryweb`. Use `brew upgrade memoryweb` to deploy a release.
 The manual `mv` pattern is superseded — use Homebrew.
 
+**Cutting a release — mandatory pre-flight checklist:**
+
+1. **Verify all commits are pushed first.** Run `git status` and
+   `git log --oneline origin/master..HEAD` before calling `gh release create`.
+   If any commits are unpushed, push them (`git push origin master`) and confirm
+   the push succeeds before tagging. A release tag placed on a commit that isn't
+   on the remote will cause CI to build binaries from the wrong code. Homebrew
+   checksums the release assets — a tag on the wrong commit means a wrong binary
+   ships to every upgrader.
+
+2. **Never delete and recreate a published tag for a version bump.** If a tag
+   was cut from the wrong commit, delete the release and remote tag, push the
+   correct commits, then create a **new patch version** (e.g. v1.51.0 gone →
+   v1.51.1). Reusing a tag name with different content breaks Homebrew caches and
+   any downstream that pinned the version.
+
+3. **Write a human-readable release description.** Empty descriptions or
+   commit-hash-only notes are not useful to upgraders. Every release must include
+   a prose summary of what changed.
+
 ---
 
-## What's implemented (v1.43.0)
+## What's implemented (v1.52.0)
 
-All 16 MCP tools are live. See the tools table in AGENTS.md for the full list.
+All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
 Key implemented features:
 - Core graph: nodes, edges, search (LIKE + semantic), timeline, connections, aliases
 - Soft delete: archived_at, audit_log with provenance column, ArchiveNode, RestoreNode
 - Semantic search via sqlite-vec and Ollama (snowflake-arctic-embed)
 - Batch operations: remember/revise/connect all accept `items` arrays
-- orient: lean field format (id + label + why_matters ≤150 chars, sentence-boundary truncated, truncated flag); significant=10/recent=5/spine=20; live_nodes + archived_nodes; optional topic parameter returns relevant section instead of significant
+- orient: lean field format (id + label + why_matters ≤150 chars, sentence-boundary truncated, truncated flag); significant=10/recent=5/spine=20; live_nodes + archived_nodes; optional topic parameter returns relevant section instead of significant; no-domain digest mode with load_bearing_low_trust counter and trust delta hints
 - significance: dual-signal importance (declared + structural recency-weighted); memory_id + tags filter modes
 - history: memory_id mode (neighbourhood-scoped); tags filter
 - visualise: domain graph and single-node neighbourhood as Mermaid with truncation metadata
-- audit: stale/orphans/archived modes replacing whats_stale/disconnected/forgotten
-- forget_all: batch archive in a single atomic call
+- audit: stale/orphans/archived/conflicts/kind_coverage modes; stale Rule 9: connected-stale (live node whose every edge endpoint is archived surfaces as candidate)
+- forget_all / restore_all / disconnect_all: batch archive/restore/edge-removal in single atomic calls; disconnect_all returns {removed: N}
 - domains(action=rename) + merge-domains CLI
 - node_kind filter on search/history/significance/audit
 - revise(domain): non-destructive node-level domain reassignment with mandatory reason and audit log; batch supported
@@ -329,8 +350,8 @@ Key implemented features:
 - Schema staleness defence: legacy key rejection, server_version in orient, tools/list_changed notification
 - Instructions: credentials advisory (never file credentials/API keys/tokens in memories)
 - purge: domain filter is case/whitespace-insensitive; `--include-live` hard-deletes live nodes in a domain (requires `--domain`); dry-run/confirm both report `LiveRemaining` so an operator can't mistake "0 archived candidates" for "domain is empty"
-- connect: `relationship` enum includes `resolved`, `resolved_by`, `supersedes` for contradiction resolution (previously missing from the schema, which silently blocked the mechanism for any client enforcing enum constraints); `audit`'s stale/conflicts suppression recognises all three; `audit`'s description no longer instructs disconnecting the `contradicts` edge
-- remember: `orphan_warning` no longer instructs agents to pass `connect` a `domain` parameter — `connect` has never accepted one (IDs are global); the instruction dated back to a false premise in the original cross-domain-connect-ux fix and had stood since 2026-05-23
+- connect: `relationship` enum includes `resolved`, `resolved_by`, `supersedes` for contradiction resolution
+- remember: `orphan_warning` no longer instructs agents to pass `connect` a `domain` parameter
 - lean/digest lifecycle: list-shaped retrieval tools annotate `lifecycle_state` (`contested`, `resolved`, `superseded`) from live graph edges; digest lines append `(state)`; archived edge endpoints are ignored; cross-domain `orient()` recent entries included
 
 ---

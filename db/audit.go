@@ -599,6 +599,57 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		return nil, err
 	}
 
+	// ── Rule 9: connected-stale (all edge endpoints archived) ────────────────
+	// A live, non-transient node whose every connected neighbour has been
+	// archived is no longer reachable through the live graph — it is orphaned
+	// by attrition. It must have ≥1 edge (otherwise FindDisconnected catches it)
+	// but no live node on the other end of any of those edges.
+	var rows8 *sql.Rows
+	if domain != "" {
+		rows8, err = s.db.Query(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
+			 FROM nodes n
+			 WHERE archived_at IS NULL
+			   AND node_kind != 'transient'
+			   AND domain = ?
+			   AND EXISTS (SELECT 1 FROM edges e WHERE e.from_node = n.id OR e.to_node = n.id)
+			   AND NOT EXISTS (
+			       SELECT 1 FROM edges e
+			       JOIN nodes n2 ON n2.id = CASE WHEN e.from_node = n.id THEN e.to_node ELSE e.from_node END
+			       WHERE (e.from_node = n.id OR e.to_node = n.id)
+			         AND n2.archived_at IS NULL
+			   )`,
+			domain)
+	} else {
+		rows8, err = s.db.Query(
+			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
+			 FROM nodes n
+			 WHERE archived_at IS NULL
+			   AND node_kind != 'transient'
+			   AND EXISTS (SELECT 1 FROM edges e WHERE e.from_node = n.id OR e.to_node = n.id)
+			   AND NOT EXISTS (
+			       SELECT 1 FROM edges e
+			       JOIN nodes n2 ON n2.id = CASE WHEN e.from_node = n.id THEN e.to_node ELSE e.from_node END
+			       WHERE (e.from_node = n.id OR e.to_node = n.id)
+			         AND n2.archived_at IS NULL
+			   )`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for rows8.Next() {
+		n, err := scanNodeRow(rows8)
+		if err != nil {
+			rows8.Close()
+			return nil, err
+		}
+		add(n, nil, "connected-stale: all connected neighbours have been archived")
+	}
+	rows8.Close()
+	if err = rows8.Err(); err != nil {
+		return nil, err
+	}
+
 	// Post-filter by neighbourhood (memory_id scoping).
 	if memoryID != "" {
 		allowedIDs, _, err := s.neighbourhoodIDs(memoryID, depth)

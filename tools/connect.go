@@ -201,6 +201,6 @@ func (h *Handler) disconnectAll(args json.RawMessage) (*ToolResult, error) {
 	if err := h.store.DeleteEdgesBatch(ids); err != nil {
 		return errorResult(err.Error()), nil
 	}
-	b, _ := json.Marshal(map[string]any{"disconnected": len(ids)})
+	b, _ := json.Marshal(map[string]any{"removed": len(ids)})
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
