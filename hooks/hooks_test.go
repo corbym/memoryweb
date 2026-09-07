@@ -819,6 +819,44 @@ func makeMCPOrientTranscript(t *testing.T, projectsDir, sessionID, domain string
 	}
 }
 
+// orientAssistantLine builds a Claude Code assistant tool_use transcript line
+// for an orient MCP call. An empty domain yields an empty input — a
+// cross-domain orient() call that carries no domain field at all.
+func orientAssistantLine(id, domain string) string {
+	if domain == "" {
+		return fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"%s","name":"mcp__memoryweb__orient","input":{}}]}}`, id)
+	}
+	return fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"%s","name":"mcp__memoryweb__orient","input":{"domain":%q}}]}}`, id, domain)
+}
+
+// orientAttachmentLine builds an attachment record that mentions the orient
+// tool name verbatim (so it matches the name regex) but carries no domain
+// field — the real-session shape that made a naive tail -1 extraction land on
+// a non-orient line.
+func orientAttachmentLine() string {
+	return `{"type":"attachment","attachment":{"kind":"text","content":[{"type":"text","text":"session excerpt"}],"included_calls":[{"name":"mcp__memoryweb__orient","status":"recorded"}]}}`
+}
+
+// appendTranscriptLines appends JSONL lines to the session transcript under
+// projectsDir/test-project/<sessionID>.jsonl, creating it if absent.
+func appendTranscriptLines(t *testing.T, projectsDir, sessionID string, lines ...string) {
+	t.Helper()
+	projectDir := filepath.Join(projectsDir, "test-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("appendTranscriptLines: mkdir: %v", err)
+	}
+	f, err := os.OpenFile(filepath.Join(projectDir, sessionID+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("appendTranscriptLines: open: %v", err)
+	}
+	defer f.Close()
+	for _, l := range lines {
+		if _, err := f.WriteString(l + "\n"); err != nil {
+			t.Fatalf("appendTranscriptLines: write: %v", err)
+		}
+	}
+}
+
 // runUPSHook runs the UserPromptSubmit hook with the given sessionID, message,
 // stateDir, projectsDir, and extra env vars.
 func runUPSHook(t *testing.T, sessionID, stateDir, projectsDir, message string, extraEnv ...string) (string, int) {
@@ -959,6 +997,79 @@ func TestUserPromptSubmitHook_OrientAlreadyCalled_MCPPrefixedName(t *testing.T) 
 	}
 	if !strings.Contains(string(data), "deep-game") {
 		t.Errorf("context file should contain domain 'deep-game'; got: %s", data)
+	}
+}
+
+func TestUserPromptSubmitHook_OrientDomain_IgnoresNonDomainTrailingRecords(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "ups-orient-domain-tail"
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+
+	// Real-session order: cross-domain orient, orient(domain=deep-game), then an
+	// attachment record that mentions the tool name but carries no domain. The
+	// naive tail -1 over name-matching lines lands on the attachment and
+	// produces an empty domain.
+	appendTranscriptLines(t, projectsDir, sessionID,
+		orientAssistantLine("toolu_cross", ""),
+		orientAssistantLine("toolu_ctx", "deep-game"),
+		orientAttachmentLine(),
+	)
+
+	out, code := runUPSHook(t, sessionID, stateDir, projectsDir, "continue",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected no orient nudge; got:\n%s", out)
+	}
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	data, err := os.ReadFile(ctxFile)
+	if err != nil {
+		t.Fatalf("expected context file: %v", err)
+	}
+	if !strings.Contains(string(data), `"domain":"deep-game"`) {
+		t.Errorf("ctx file should carry the last domain-carrying orient, not an empty domain; got: %s", data)
+	}
+}
+
+func TestUserPromptSubmitHook_OrientDomain_TracksLatestDomain(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "ups-orient-domain-update"
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+
+	appendTranscriptLines(t, projectsDir, sessionID, orientAssistantLine("toolu_a", "alpha"))
+	if _, code := runUPSHook(t, sessionID, stateDir, projectsDir, "continue",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	); code != 0 {
+		t.Fatalf("hook exited %d after first orient", code)
+	}
+
+	// The session re-orients to a new domain; the ctx file must follow it so
+	// PostCompact reinjects into the current domain, not the first one.
+	appendTranscriptLines(t, projectsDir, sessionID, orientAssistantLine("toolu_b", "beta"))
+	if _, code := runUPSHook(t, sessionID, stateDir, projectsDir, "continue",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	); code != 0 {
+		t.Fatalf("hook exited %d after second orient", code)
+	}
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	data, err := os.ReadFile(ctxFile)
+	if err != nil {
+		t.Fatalf("expected context file: %v", err)
+	}
+	if !strings.Contains(string(data), `"domain":"beta"`) {
+		t.Errorf("ctx file should track the latest oriented domain; got: %s", data)
 	}
 }
 

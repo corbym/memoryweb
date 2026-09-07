@@ -36,17 +36,25 @@ if memoryweb_option_enabled "session_orient_enabled" "false" && [ -n "${session_
   # MCP tools are serialised in the transcript with an mcp__<server>__ prefix,
   # so a bare "name":"orient" never matches a real session. Accept an optional
   # mcp__<server>__ prefix (e.g. mcp__memoryweb__orient).
-  if grep -Eq '"name"[[:space:]]*:[[:space:]]*"(mcp__[A-Za-z0-9_-]+__)?orient"' "${transcript}" 2>/dev/null; then
+  name_re='"name"[[:space:]]*:[[:space:]]*"(mcp__[A-Za-z0-9_-]+__)?orient"'
+  if grep -Eq "${name_re}" "${transcript}" 2>/dev/null; then
     orient_found=true
-    domain_seen=$(grep -E '"name"[[:space:]]*:[[:space:]]*"(mcp__[A-Za-z0-9_-]+__)?orient"' "${transcript}" 2>/dev/null \
+    # Records other than the orient call itself (attachments, tool results) can
+    # mention the tool name without carrying a domain. Extract the domain from
+    # the LAST orient line that actually has a non-empty domain field — "the
+    # last domain the session oriented to".
+    domain_seen=$(grep -E "${name_re}" "${transcript}" 2>/dev/null \
+      | grep -E '"domain"[[:space:]]*:[[:space:]]*"[^"]+"' \
       | tail -1 \
       | grep -o '"domain"[[:space:]]*:[[:space:]]*"[^"]*"' \
       | grep -o '"[^"]*"$' | tr -d '"' || true)
   fi
   fi
 
-  # Write context file on first orient detection (PostCompact will read it).
-  if "${orient_found}" && [ ! -f "${ctx_file}" ]; then
+  # Write (or refresh) the context file whenever a domain-carrying orient is
+  # detected, so PostCompact re-orients into the domain the session currently
+  # works in. Never persist an empty domain.
+  if "${orient_found}" && [ -n "${domain_seen}" ]; then
     printf '{"domain":"%s"}\n' "${domain_seen}" > "${ctx_file}"
   fi
 
