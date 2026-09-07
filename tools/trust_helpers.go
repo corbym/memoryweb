@@ -14,8 +14,10 @@ const orientTrustRecencyWindow = 90
 // Trust field of entries that are currently low-trust but had a positive score the
 // last time trust was logged. At most maxDeltas entries are annotated to cap token
 // overhead. Only entries already marked low-trust (Trust != "") are candidates.
-func (h *Handler) annotateTrustDeltas(entries []scoredLeanEntry, maxDeltas int) ([]scoredLeanEntry, error) {
-	// Collect IDs of currently-low-trust entries.
+// Non-blocking: store failures are silently swallowed so orient never fails due
+// to delta annotation. The signature returns no error to make this intent explicit
+// and prevent callers from accidentally propagating store errors.
+func (h *Handler) annotateTrustDeltas(entries []scoredLeanEntry, maxDeltas int) []scoredLeanEntry {
 	var ids []string
 	for _, e := range entries {
 		if e.Trust != "" {
@@ -23,11 +25,11 @@ func (h *Handler) annotateTrustDeltas(entries []scoredLeanEntry, maxDeltas int) 
 		}
 	}
 	if len(ids) == 0 {
-		return entries, nil
+		return entries
 	}
 	prior, err := h.store.LastTrustScores(ids)
 	if err != nil {
-		return entries, nil // non-fatal: skip delta annotations
+		return entries // non-fatal: skip delta annotations
 	}
 	const worseningThreshold = 0.3
 	annotated := 0
@@ -43,7 +45,7 @@ func (h *Handler) annotateTrustDeltas(entries []scoredLeanEntry, maxDeltas int) 
 			annotated++
 		}
 	}
-	return entries, nil
+	return entries
 }
 
 func (h *Handler) annotateSignificantTrust(entries []scoredLeanEntry) ([]scoredLeanEntry, error) {

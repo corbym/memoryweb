@@ -413,17 +413,16 @@ func (s *Store) LastTrustScores(nodeIDs []string) (map[string]float64, error) {
 		return nil, nil
 	}
 	ph, args := inClause(nodeIDs)
-	q := `SELECT sl.node_id, sl.score
-	      FROM significance_log sl
-	      INNER JOIN (
-	        SELECT node_id, MAX(called_at) AS max_at
+	// ROW_NUMBER() partitioned by node_id ensures exactly one row per node even
+	// when two log entries share an identical called_at timestamp.
+	q := `SELECT node_id, score FROM (
+	        SELECT node_id, score,
+	               ROW_NUMBER() OVER (PARTITION BY node_id ORDER BY called_at DESC) AS rn
 	        FROM significance_log
 	        WHERE node_id IN (` + ph + `)
 	          AND rank_type = 'trust'
 	          AND score IS NOT NULL
-	        GROUP BY node_id
-	      ) latest ON sl.node_id = latest.node_id AND sl.called_at = latest.max_at
-	      WHERE sl.rank_type = 'trust' AND sl.score IS NOT NULL`
+	      ) WHERE rn = 1`
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("LastTrustScores: %w", err)

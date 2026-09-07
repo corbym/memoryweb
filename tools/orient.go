@@ -368,10 +368,7 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 			return orientDomainEntry{}, err
 		}
 		if digest {
-			sigEntries, err = h.annotateTrustDeltas(sigEntries, 3)
-			if err != nil {
-				return orientDomainEntry{}, err
-			}
+			sigEntries = h.annotateTrustDeltas(sigEntries, 3)
 		}
 		for _, e := range sigEntries {
 			if e.Trust != "" {
@@ -491,10 +488,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	if a.Digest {
-		sigEntries, err = h.annotateTrustDeltas(sigEntries, 3)
-		if err != nil {
-			return nil, err
-		}
+		sigEntries = h.annotateTrustDeltas(sigEntries, 3)
 	}
 
 	lowTrustCount := 0
