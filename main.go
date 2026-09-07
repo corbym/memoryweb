@@ -1219,6 +1219,8 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 
 // doctorCheckHooks inspects ~/.claude/settings.local.json and returns a
 // human-readable message and status about the memoryweb hook configuration.
+// It validates every hook `setup` installs (Stop/save, PreCompact,
+// UserPromptSubmit, SubagentStart, SubagentStop, PostCompact).
 func doctorCheckHooks(home string) (message, status string) {
 	settingsPath := filepath.Join(home, ".claude", "settings.local.json")
 
@@ -1233,30 +1235,42 @@ func doctorCheckHooks(home string) (message, status string) {
 	}
 
 	hooks, _ := settings["hooks"].(map[string]interface{})
-	saveCmd := doctorFindHookCommand(setupToSlice(hooks["Stop"]), "memoryweb_save_hook.sh")
-	precompactCmd := doctorFindHookCommand(setupToSlice(hooks["PreCompact"]), "memoryweb_precompact_hook.sh")
 
-	var issues []string
-	if saveCmd == "" {
-		issues = append(issues, "Stop/save hook not found")
-	} else if info, err := os.Stat(saveCmd); err != nil {
-		issues = append(issues, fmt.Sprintf("save hook script missing: %s", saveCmd))
-	} else if info.Mode()&0o111 == 0 {
-		issues = append(issues, fmt.Sprintf("save hook not executable: %s", saveCmd))
+	type hookCheck struct {
+		event  string // Claude Code hook event key
+		name   string // human-readable name for reports
+		script string // hook script filename
+	}
+	checks := []hookCheck{
+		{"Stop", "Stop", "memoryweb_save_hook.sh"},
+		{"PreCompact", "PreCompact", "memoryweb_precompact_hook.sh"},
+		{"UserPromptSubmit", "UserPromptSubmit", "memoryweb_userpromptsubmit_hook.sh"},
+		{"SubagentStart", "SubagentStart", "memoryweb_subagent_start_hook.sh"},
+		{"SubagentStop", "SubagentStop", "memoryweb_subagent_stop_hook.sh"},
+		{"PostCompact", "PostCompact", "memoryweb_postcompact_hook.sh"},
 	}
 
-	if precompactCmd == "" {
-		issues = append(issues, "PreCompact hook not found")
-	} else if info, err := os.Stat(precompactCmd); err != nil {
-		issues = append(issues, fmt.Sprintf("precompact hook script missing: %s", precompactCmd))
-	} else if info.Mode()&0o111 == 0 {
-		issues = append(issues, fmt.Sprintf("precompact hook not executable: %s", precompactCmd))
+	var issues []string
+	installed := 0
+	for _, c := range checks {
+		cmd := doctorFindHookCommand(setupToSlice(hooks[c.event]), c.script)
+		if cmd == "" {
+			issues = append(issues, c.name+" hook missing")
+			continue
+		}
+		installed++
+		info, err := os.Stat(cmd)
+		if err != nil {
+			issues = append(issues, fmt.Sprintf("%s hook script missing: %s", c.name, cmd))
+		} else if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
+			issues = append(issues, fmt.Sprintf("%s hook not executable: %s", c.name, cmd))
+		}
 	}
 
 	if len(issues) == 0 {
-		return "Stop and PreCompact hooks installed", "ok"
+		return "All hooks installed", "ok"
 	}
-	if saveCmd == "" && precompactCmd == "" {
+	if installed == 0 {
 		return strings.Join(issues, "; ") + " — run: memoryweb setup", "fail"
 	}
 	return strings.Join(issues, "; "), "warn"

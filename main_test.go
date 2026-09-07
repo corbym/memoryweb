@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -626,5 +627,168 @@ func TestOptionsCmd_Idempotent(t *testing.T) {
 	}
 	if !strings.Contains(s, `"sweep_interval_turns": 20`) {
 		t.Errorf("sweep_interval_turns should be 20; got: %s", s)
+	}
+}
+
+// ── doctorCheckHooks tests ────────────────────────────────────────────────────
+
+// writeHookSettings writes ~/.claude/settings.local.json containing the given
+// event→script mapping, mirroring the shape `memoryweb setup` produces.
+func writeHookSettings(t *testing.T, home string, hookScripts map[string]string) {
+	t.Helper()
+	hooks := make(map[string]interface{})
+	for event, script := range hookScripts {
+		hooks[event] = []interface{}{
+			map[string]interface{}{
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"type":    "command",
+						"command": script,
+					},
+				},
+			},
+		}
+	}
+	settings := map[string]interface{}{"hooks": hooks}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	settingsPath := filepath.Join(dir, "settings.local.json")
+	if err := os.WriteFile(settingsPath, data, 0600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+}
+
+// writeHookScript creates the named hook script in dir with the given mode.
+func writeHookScript(t *testing.T, dir, name string, mode os.FileMode) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte("#!/usr/bin/env bash\n"), mode); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return p
+}
+
+// allHookScripts returns the six hook event→script names supported by setup.
+var allHookScripts = []struct {
+	event  string
+	name   string
+	script string
+}{
+	{"Stop", "Stop", "memoryweb_save_hook.sh"},
+	{"PreCompact", "PreCompact", "memoryweb_precompact_hook.sh"},
+	{"UserPromptSubmit", "UserPromptSubmit", "memoryweb_userpromptsubmit_hook.sh"},
+	{"SubagentStart", "SubagentStart", "memoryweb_subagent_start_hook.sh"},
+	{"SubagentStop", "SubagentStop", "memoryweb_subagent_stop_hook.sh"},
+	{"PostCompact", "PostCompact", "memoryweb_postcompact_hook.sh"},
+}
+
+func TestDoctorCheckHooks_AllInstalled(t *testing.T) {
+	home := t.TempDir()
+	scriptsDir := t.TempDir()
+	hookScripts := make(map[string]string)
+	for _, h := range allHookScripts {
+		hookScripts[h.event] = writeHookScript(t, scriptsDir, h.script, 0755)
+	}
+	writeHookSettings(t, home, hookScripts)
+
+	message, status := doctorCheckHooks(home)
+	if status != "ok" {
+		t.Fatalf("expected status ok, got %q (message: %s)", status, message)
+	}
+	if message != "All hooks installed" {
+		t.Errorf("expected 'All hooks installed', got %q", message)
+	}
+}
+
+func TestDoctorCheckHooks_ReportsEachMissingHook(t *testing.T) {
+	home := t.TempDir()
+	scriptsDir := t.TempDir()
+	// Only Stop + PreCompact installed — the pre-v1.54.0 surface.
+	writeHookSettings(t, home, map[string]string{
+		"Stop":       writeHookScript(t, scriptsDir, "memoryweb_save_hook.sh", 0755),
+		"PreCompact": writeHookScript(t, scriptsDir, "memoryweb_precompact_hook.sh", 0755),
+	})
+
+	message, status := doctorCheckHooks(home)
+	if status != "warn" {
+		t.Fatalf("expected status warn for partial install, got %q (message: %s)", status, message)
+	}
+	for _, h := range allHookScripts {
+		switch h.event {
+		case "Stop", "PreCompact":
+			continue
+		default:
+			if !strings.Contains(message, h.name+" hook missing") {
+				t.Errorf("expected message to report missing %q hook; got: %s", h.name, message)
+			}
+		}
+	}
+}
+
+func TestDoctorCheckHooks_NoHooksConfigured(t *testing.T) {
+	home := t.TempDir()
+	// settings.local.json exists but has no memoryweb hooks.
+	writeHookSettings(t, home, map[string]string{})
+
+	message, status := doctorCheckHooks(home)
+	if status != "fail" {
+		t.Fatalf("expected status fail for no hooks, got %q (message: %s)", status, message)
+	}
+	if !strings.Contains(message, "run: memoryweb setup") {
+		t.Errorf("expected setup hint in message; got: %s", message)
+	}
+	if !strings.Contains(message, "Stop hook missing") {
+		t.Errorf("expected Stop hook to be reported missing; got: %s", message)
+	}
+}
+
+func TestDoctorCheckHooks_NoSettingsFile(t *testing.T) {
+	home := t.TempDir()
+	message, status := doctorCheckHooks(home)
+	if status != "fail" {
+		t.Fatalf("expected status fail when settings file missing, got %q", status)
+	}
+	if !strings.Contains(message, "run: memoryweb setup") {
+		t.Errorf("expected setup hint when settings file missing; got: %s", message)
+	}
+}
+
+func TestDoctorCheckHooks_ScriptMissing(t *testing.T) {
+	home := t.TempDir()
+	// Config points at a script that does not exist.
+	phantomDir := t.TempDir()
+	writeHookSettings(t, home, map[string]string{
+		"Stop": filepath.Join(phantomDir, "memoryweb_save_hook.sh"),
+	})
+	message, status := doctorCheckHooks(home)
+	if status != "warn" {
+		t.Fatalf("expected status warn for missing script file, got %q (message: %s)", status, message)
+	}
+	if !strings.Contains(message, "Stop hook script missing") {
+		t.Errorf("expected script-missing report for Stop; got: %s", message)
+	}
+}
+
+func TestDoctorCheckHooks_NotExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable bit is not tracked on Windows")
+	}
+	home := t.TempDir()
+	scriptsDir := t.TempDir()
+	writeHookSettings(t, home, map[string]string{
+		"Stop": writeHookScript(t, scriptsDir, "memoryweb_save_hook.sh", 0644),
+	})
+	message, status := doctorCheckHooks(home)
+	if status != "warn" {
+		t.Fatalf("expected status warn for non-executable script, got %q (message: %s)", status, message)
+	}
+	if !strings.Contains(message, "Stop hook not executable") {
+		t.Errorf("expected not-executable report for Stop; got: %s", message)
 	}
 }

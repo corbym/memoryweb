@@ -52,18 +52,22 @@ Claude Code and GitHub Copilot (VS Code) both support hook events that fire auto
 
 ### What happens automatically (when hooks are installed)
 
-Two hooks run in the background:
+Six hooks run in the background:
 
 - **Save hook (Stop event):** every 15 AI responses, the hook pauses the session and asks the agent to save anything significant before continuing. You will see a brief pause while the agent files its findings. The interval is configurable via the `MEMORYWEB_SAVE_INTERVAL` environment variable if 15 is too frequent or too infrequent for your workflow.
 - **PreCompact hook:** fires before context compaction and asks the agent to save everything important that hasn't been saved yet. This prevents knowledge loss when the context window is about to be trimmed.
+- **UserPromptSubmit hook:** fires whenever you submit a prompt. If the agent hasn't oriented yet this session, it nudges it to run `orient` first; if you have enabled `session_orient` or `auto_recall` options, it also injects relevant prior memories into your prompt context.
+- **SubagentStart hook:** injects a memoryweb dream digest into each sub-agent's starting context so nested agents don't start cold.
+- **SubagentStop hook:** when a sub-agent finishes, it is prompted to connect any orphaned nodes it may have filed before exiting.
+- **PostCompact hook:** after Claude Code compacts the conversation, it reinjects orient context so the agent regains its bearings.
 
-If you have run `memoryweb setup`, these are already active. Verify with:
+If you have run `memoryweb setup`, all six are already active. Verify with:
 
 ```bash
 memoryweb doctor
 ```
 
-Look for `[✓] Claude hooks:   Stop and PreCompact hooks installed`. If you see `[✗]`, re-run setup or check the hooks section of the README.
+Look for `[✓] Claude hooks:   All hooks installed`. If you see `[✗]` or `[!]`, the message lists each missing hook (e.g. `UserPromptSubmit hook missing`) — re-run setup or check the hooks section of the README.
 
 ### Orienting the agent at the start of a session
 

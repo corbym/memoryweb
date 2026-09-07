@@ -260,7 +260,7 @@ Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[
 [✗] Ollama binary:   not found in PATH — install from https://ollama.com/download
 [!] Ollama server:   skipped (Ollama binary not found)
 [!] Ollama model:    skipped (Ollama server not available)
-[✓] Claude hooks:    Stop and PreCompact hooks installed
+[✓] Claude hooks:    All hooks installed
 [i] Graph:           145 live nodes, 12 archived, 203 edges, 4 domain(s) (deep-game, ...), 2 alias(es)
 [i] Drift:           3 candidate(s): 1 contradicts, 2 stale labels
 [i] Last activity:   2026-04-29 update (node "open question on backfill")
@@ -298,7 +298,7 @@ memoryweb check-for-updates
 
 ## Hooks
 
-Two Claude Code hooks automate filing and pre-compaction capture.
+Six Claude Code hooks automate filing, pre-compaction capture, context reinjection, and sub-agent orientation.
 
 ### What they do
 
@@ -307,6 +307,18 @@ Counts human messages in the session transcript. Every `SAVE_INTERVAL` messages 
 
 **`hooks/memoryweb_precompact_hook.sh`** (PreCompact hook — fires before context compaction)  
 Blocks compaction once and asks the model to file everything important that hasn't been filed yet. Allows on re-entry so compaction proceeds after the filing pass.
+
+**`hooks/memoryweb_userpromptsubmit_hook.sh`** (UserPromptSubmit hook — fires on every prompt)  
+If the agent has not oriented this session, it is nudged to run `orient`. With the `session_orient_enabled` and `auto_recall` options (see `memoryweb options`), it also injects relevant prior memories into the prompt context.
+
+**`hooks/memoryweb_subagent_start_hook.sh`** (SubagentStart hook — fires when a sub-agent starts)  
+Injects a `memoryweb dream` digest into the sub-agent's starting context so nested agents do not start cold.
+
+**`hooks/memoryweb_subagent_stop_hook.sh`** (SubagentStop hook — fires when a sub-agent exits)  
+Prompts the sub-agent to connect any orphaned nodes it filed before it finishes.
+
+**`hooks/memoryweb_postcompact_hook.sh`** (PostCompact hook — fires after context compaction)  
+Reinjects orient context after the conversation is compacted so the agent regains its bearings. Configurable via the `reinject_on_compact` option.
 
 ### Install (Claude Code)
 
@@ -319,7 +331,7 @@ Run setup once after building:
 Or install manually:
 
 ```bash
-chmod +x hooks/memoryweb_save_hook.sh hooks/memoryweb_precompact_hook.sh
+chmod +x hooks/memoryweb_save_hook.sh hooks/memoryweb_precompact_hook.sh hooks/memoryweb_userpromptsubmit_hook.sh hooks/memoryweb_subagent_start_hook.sh hooks/memoryweb_subagent_stop_hook.sh hooks/memoryweb_postcompact_hook.sh
 ```
 
 Add to `~/.claude/settings.local.json`:
