@@ -26,4 +26,7 @@ bug-purge-copy/
 # Local GitHub Copilot hooks (machine-specific paths)
 .github/hooks/memoryweb.json
 
+# machine-specific Claude Code config & local skills
+.claude/
+
 *.exe

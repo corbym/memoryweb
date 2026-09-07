@@ -388,7 +388,14 @@ func TestRunSetup_IdempotentHookEntries(t *testing.T) {
 	home := t.TempDir()
 	hooksDir := t.TempDir()
 	// On Windows the executable-bit check is skipped, so empty files are fine.
-	for _, name := range []string{"memoryweb_save_hook.sh", "memoryweb_precompact_hook.sh"} {
+	for _, name := range []string{
+		"memoryweb_save_hook.sh",
+		"memoryweb_precompact_hook.sh",
+		"memoryweb_userpromptsubmit_hook.sh",
+		"memoryweb_subagent_start_hook.sh",
+		"memoryweb_subagent_stop_hook.sh",
+		"memoryweb_postcompact_hook.sh",
+	} {
 		p := filepath.Join(hooksDir, name)
 		if err := os.WriteFile(p, []byte("#!/usr/bin/env bash\n"), 0755); err != nil {
 			t.Fatal(err)
@@ -415,11 +422,68 @@ func TestRunSetup_IdempotentHookEntries(t *testing.T) {
 		t.Fatalf("parse settings: %v", err)
 	}
 	hooks, _ := settings["hooks"].(map[string]interface{})
-	for _, hookName := range []string{"Stop", "PreCompact"} {
+	for _, hookName := range []string{"Stop", "PreCompact", "UserPromptSubmit", "SubagentStart", "SubagentStop", "PostCompact"} {
 		entries := setupToSlice(hooks[hookName])
 		if len(entries) != 1 {
 			t.Errorf("%s: want 1 entry after two setup runs, got %d", hookName, len(entries))
 		}
+	}
+}
+
+// ── search subcommand tests (hooks-userpromptsubmit story) ───────────────────
+
+func TestSearchCmd_LeanOutput(t *testing.T) {
+	store, dbPath := newTestStore(t)
+	if _, err := store.AddNode("WebGL Renderer Architecture", "desc", "Sets the rendering budget and browser support matrix.", "deep-game", nil, "", "decision"); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if _, err := store.AddNode("CSS Animation Approach", "desc2", "Alternative CSS-based card flip; rejected due to performance on low-end Android.", "deep-game", nil, "", "decision"); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	store.Close()
+
+	var buf bytes.Buffer
+	if err := runSearchCmd(&buf, dbPath, "WebGL Renderer", "", 10, true); err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	out := buf.String()
+	if out == "" {
+		t.Fatal("expected non-empty output")
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 1 {
+		t.Fatalf("expected at least 1 line; got %d", len(lines))
+	}
+	if !strings.HasPrefix(lines[0], "[") {
+		t.Errorf("lean line should start with '['; got: %q", lines[0])
+	}
+	if !strings.Contains(out, "WebGL Renderer Architecture") {
+		t.Errorf("expected node label in output; got: %q", out)
+	}
+	if !strings.Contains(out, "deep-game") {
+		t.Errorf("expected domain in output; got: %q", out)
+	}
+}
+
+func TestSearchCmd_NoResults(t *testing.T) {
+	_, dbPath := newTestStore(t)
+	var buf bytes.Buffer
+	if err := runSearchCmd(&buf, dbPath, "nonexistent query xyz123", "", 10, true); err != nil {
+		t.Fatalf("runSearchCmd should not error on empty results: %v", err)
+	}
+	if buf.String() != "" {
+		t.Errorf("expected empty output for no results; got: %q", buf.String())
+	}
+}
+
+func TestSearchCmd_MissingQuery(t *testing.T) {
+	_, dbPath := newTestStore(t)
+	err := runSearchCmd(io.Discard, dbPath, "", "", 10, false)
+	if err == nil {
+		t.Fatal("expected error for empty query")
+	}
+	if !strings.Contains(err.Error(), "--query") {
+		t.Errorf("expected '--query' in error message; got: %v", err)
 	}
 }
 

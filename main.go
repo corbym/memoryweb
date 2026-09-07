@@ -70,6 +70,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "  options        View or set hook behaviour options")
 			fmt.Fprintln(os.Stdout, "  doctor         Run diagnostic checks on the installation")
 			fmt.Fprintln(os.Stdout, "  dream          Print a digest of recent nodes and drift candidates")
+			fmt.Fprintln(os.Stdout, "  search         Search nodes and print lean results (for scripting / hooks)")
 			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one")
 			fmt.Fprintln(os.Stdout, "  merge-domains  Merge all nodes from one domain into another")
 			fmt.Fprintln(os.Stdout, "  backup         Write a consistent standalone snapshot of the database")
@@ -83,6 +84,9 @@ func main() {
 			return
 		case "dream":
 			dreamCmd()
+			return
+		case "search":
+			searchCmd()
 			return
 		case "backfill":
 			backfillCmd()
@@ -107,7 +111,7 @@ func main() {
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "memoryweb: unknown subcommand %q\n\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "Subcommands: setup, options, doctor, dream, backfill, merge-domains, backup, purge, version")
+			fmt.Fprintln(os.Stderr, "Subcommands: setup, options, doctor, dream, search, backfill, merge-domains, backup, purge, version")
 			fmt.Fprintln(os.Stderr, "Run 'memoryweb --help' for usage.")
 			os.Exit(1)
 		}
@@ -266,6 +270,88 @@ func runDream(store *db.Store, out io.Writer) error {
 
 	fmt.Fprintln(out, "== end ==")
 	return nil
+}
+
+// searchCmd implements the "memoryweb search" subcommand.
+func searchCmd() {
+	flags := flag.NewFlagSet("search", flag.ExitOnError)
+	dbFlag := flags.String("db", "", "database path (default ~/.memoryweb.db)")
+	query := flags.String("query", "", "search terms")
+	domain := flags.String("domain", "", "restrict to domain")
+	limit := flags.Int("limit", 10, "max results")
+	lean := flags.Bool("lean", false, "compact one-line output")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+	if err := runSearchCmd(os.Stdout, *dbFlag, *query, *domain, *limit, *lean); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runSearchCmd opens the DB, runs SearchNodes, and writes results to out.
+// With lean=false it prints one JSON object per result; with lean=true it
+// prints a compact single-line summary per result.
+func runSearchCmd(out io.Writer, dbPath, query, domain string, limit int, lean bool) error {
+	if strings.TrimSpace(query) == "" {
+		return fmt.Errorf("--query is required")
+	}
+	if dbPath == "" {
+		dbPath = resolveDBPath()
+	}
+	store, err := db.New(dbPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer store.Close()
+
+	result, err := store.SearchNodes(query, domain, limit, "", nil)
+	if err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+	if len(result.Nodes) == 0 {
+		return nil
+	}
+
+	for _, nr := range result.Nodes {
+		if lean {
+			why := searchTruncateWhy(nr.Node.WhyMatters)
+			meta := nr.Node.Domain
+			if nr.Node.NodeKind != "" {
+				meta = nr.Node.Domain + ", " + nr.Node.NodeKind
+			}
+			dist := ""
+			if nr.SemanticDistance != nil && *nr.SemanticDistance != 0 {
+				dist = fmt.Sprintf("  %.4f", *nr.SemanticDistance)
+			}
+			fmt.Fprintf(out, "[%s] %s -- %s (%s)%s\n", nr.Node.ID, nr.Node.Label, why, meta, dist)
+		} else {
+			b, _ := json.Marshal(nr)
+			fmt.Fprintln(out, string(b))
+		}
+	}
+	return nil
+}
+
+// searchTruncateWhy truncates a why_matters string to ≤150 chars at a sentence
+// boundary where possible, or appends "..." otherwise.
+func searchTruncateWhy(s string) string {
+	const limit = 150
+	if len(s) <= limit {
+		return s
+	}
+	sub := s[:limit]
+	lastBoundary := -1
+	for i := 0; i < len(sub); i++ {
+		if sub[i] == '.' || sub[i] == '!' || sub[i] == '?' {
+			next := i + 1
+			if next >= len(sub) || sub[next] == ' ' || sub[next] == '\n' || sub[next] == '\t' {
+				lastBoundary = i + 1
+			}
+		}
+	}
+	if lastBoundary > 0 {
+		return strings.TrimRight(s[:lastBoundary], " \t\n")
+	}
+	return s[:limit] + "..."
 }
 
 // backfillCmd implements the "memoryweb backfill" subcommand.
@@ -496,8 +582,12 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 
 	saveHook := filepath.Join(hooksDir, "memoryweb_save_hook.sh")
 	precompactHook := filepath.Join(hooksDir, "memoryweb_precompact_hook.sh")
+	userpromptsubmitHook := filepath.Join(hooksDir, "memoryweb_userpromptsubmit_hook.sh")
+	subagentStartHook := filepath.Join(hooksDir, "memoryweb_subagent_start_hook.sh")
+	subagentStopHook := filepath.Join(hooksDir, "memoryweb_subagent_stop_hook.sh")
+	postcompactHook := filepath.Join(hooksDir, "memoryweb_postcompact_hook.sh")
 
-	for _, script := range []string{saveHook, precompactHook} {
+	for _, script := range []string{saveHook, precompactHook, userpromptsubmitHook, subagentStartHook, subagentStopHook, postcompactHook} {
 		info, err := os.Stat(script)
 		if err != nil {
 			return fmt.Errorf("hook script not found: %s (%w)", script, err)
@@ -546,6 +636,10 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 
 	hooks["Stop"] = setupUpsertCommand(setupToSlice(hooks["Stop"]), saveHook, makeEntry(saveHook))
 	hooks["PreCompact"] = setupUpsertCommand(setupToSlice(hooks["PreCompact"]), precompactHook, makeEntry(precompactHook))
+	hooks["UserPromptSubmit"] = setupUpsertCommand(setupToSlice(hooks["UserPromptSubmit"]), userpromptsubmitHook, makeEntry(userpromptsubmitHook))
+	hooks["SubagentStart"] = setupUpsertCommand(setupToSlice(hooks["SubagentStart"]), subagentStartHook, makeEntry(subagentStartHook))
+	hooks["SubagentStop"] = setupUpsertCommand(setupToSlice(hooks["SubagentStop"]), subagentStopHook, makeEntry(subagentStopHook))
+	hooks["PostCompact"] = setupUpsertCommand(setupToSlice(hooks["PostCompact"]), postcompactHook, makeEntry(postcompactHook))
 
 	settings["hooks"] = hooks
 

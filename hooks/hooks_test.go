@@ -784,3 +784,516 @@ func TestPreCompactHook_OptionDisabled(t *testing.T) {
 		t.Errorf("expected no stopReason when disabled; got:\n%s", out)
 	}
 }
+
+// ── UserPromptSubmit hook helpers ─────────────────────────────────────────────
+
+// makeOrientTranscript writes a JSONL transcript containing an orient tool call
+// under projectsDir/test-project/<sessionID>.jsonl.
+func makeOrientTranscript(t *testing.T, projectsDir, sessionID, domain string) {
+	t.Helper()
+	projectDir := filepath.Join(projectsDir, "test-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("makeOrientTranscript: mkdir: %v", err)
+	}
+	f, err := os.Create(filepath.Join(projectDir, sessionID+".jsonl"))
+	if err != nil {
+		t.Fatalf("makeOrientTranscript: create: %v", err)
+	}
+	defer f.Close()
+	fmt.Fprintf(f, `{"type":"assistant","content":{"name":"orient","arguments":{"domain":%q}}}`+"\n", domain)
+}
+
+// runUPSHook runs the UserPromptSubmit hook with the given sessionID, message,
+// stateDir, projectsDir, and extra env vars.
+func runUPSHook(t *testing.T, sessionID, stateDir, projectsDir, message string, extraEnv ...string) (string, int) {
+	t.Helper()
+	script := filepath.Join(hooksDir(t), "memoryweb_userpromptsubmit_hook.sh")
+	payload, _ := json.Marshal(map[string]string{"session_id": sessionID, "message": message})
+	cmd := shellCmd(script)
+	cmd.Stdin = strings.NewReader(string(payload))
+	env := append(os.Environ(),
+		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
+		"MEMORYWEB_PROJECTS_DIR="+projectsDir,
+	)
+	env = append(env, extraEnv...)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			t.Fatalf("exec userpromptsubmit hook: %v", err)
+		}
+	}
+	return string(out), code
+}
+
+// ── UserPromptSubmit hook tests ───────────────────────────────────────────────
+
+func TestUserPromptSubmitHook_OrientNotCalled(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir() // no transcript file → orient not found
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+
+	out, code := runUPSHook(t, "ups-orient-not-called", stateDir, projectsDir, "what should we build next?",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected additionalContext when orient not called; got:\n%s", out)
+	}
+	if !strings.Contains(out, "orient") {
+		t.Errorf("expected 'orient' in additionalContext; got:\n%s", out)
+	}
+}
+
+func TestUserPromptSubmitHook_OrientAlreadyCalled(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+	makeOrientTranscript(t, projectsDir, "ups-orient-called", "deep-game")
+
+	out, code := runUPSHook(t, "ups-orient-called", stateDir, projectsDir, "continue working",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected no additionalContext when orient already called; got:\n%s", out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true; got:\n%s", out)
+	}
+}
+
+func TestUserPromptSubmitHook_WritesContextFile(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "ups-ctx-file"
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+	makeOrientTranscript(t, projectsDir, sessionID, "deep-game")
+
+	_, code := runUPSHook(t, sessionID, stateDir, projectsDir, "next task",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited non-zero: %d", code)
+	}
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	data, err := os.ReadFile(ctxFile)
+	if err != nil {
+		t.Fatalf("expected context file to be written: %v", err)
+	}
+	if !strings.Contains(string(data), "deep-game") {
+		t.Errorf("context file should contain domain 'deep-game'; got: %s", data)
+	}
+}
+
+func TestUserPromptSubmitHook_OrientOptionDisabled(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir() // no config → session_orient_enabled defaults to false
+
+	out, code := runUPSHook(t, "ups-orient-disabled", stateDir, projectsDir, "any message",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected no additionalContext when option disabled; got:\n%s", out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true when option disabled; got:\n%s", out)
+	}
+}
+
+func TestUserPromptSubmitHook_NoSessionID(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+
+	// Send a payload with no session_id field.
+	script := filepath.Join(hooksDir(t), "memoryweb_userpromptsubmit_hook.sh")
+	cmd := shellCmd(script)
+	cmd.Stdin = strings.NewReader(`{"message":"hello"}`)
+	cmd.Env = append(os.Environ(),
+		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
+		"MEMORYWEB_PROJECTS_DIR="+projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	rawOut, _ := cmd.CombinedOutput()
+	out := string(rawOut)
+
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true with no session_id; got:\n%s", out)
+	}
+	// No ctx file should have been created.
+	entries, _ := os.ReadDir(stateDir)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "mw_orient_ctx_") {
+			t.Errorf("no ctx file should be created when session_id is missing; found: %s", e.Name())
+		}
+	}
+}
+
+func TestUserPromptSubmitHook_AutoRecallEnabled(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "recall.db")
+
+	// Seed the DB with a node that will match the search query.
+	seedRealisticDB(t, dbPath)
+	writeConfig(t, home, map[string]interface{}{"auto_recall": true, "session_orient_enabled": false})
+
+	out, code := runUPSHook(t, "ups-recall-enabled", stateDir, projectsDir,
+		"WebGL renderer architecture decision",
+		"HOME="+home,
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected additionalContext with recall results; got:\n%s", out)
+	}
+	if !strings.Contains(out, "memoryweb relevant memories") {
+		t.Errorf("expected 'memoryweb relevant memories' in additionalContext; got:\n%s", out)
+	}
+}
+
+func TestUserPromptSubmitHook_AutoRecallDisabled(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir() // no config → auto_recall defaults to false
+
+	out, code := runUPSHook(t, "ups-recall-disabled", stateDir, projectsDir, "WebGL renderer",
+		"HOME="+home,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if strings.Contains(out, "memoryweb relevant memories") {
+		t.Errorf("expected no recall section when auto_recall=false; got:\n%s", out)
+	}
+}
+
+func TestUserPromptSubmitHook_AutoRecallNoResults(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "empty.db")
+	writeConfig(t, home, map[string]interface{}{"auto_recall": true, "session_orient_enabled": false})
+
+	// Empty DB — search will return no results.
+	out, code := runUPSHook(t, "ups-recall-no-results", stateDir, projectsDir, "some query that matches nothing",
+		"HOME="+home,
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if strings.Contains(out, "memoryweb relevant memories") {
+		t.Errorf("expected no recall section when search returns nothing; got:\n%s", out)
+	}
+}
+
+func TestUserPromptSubmitHook_BothNudgeAndRecall(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir() // no transcript → orient not found
+	home := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "both.db")
+
+	seedRealisticDB(t, dbPath)
+	writeConfig(t, home, map[string]interface{}{
+		"session_orient_enabled": true,
+		"auto_recall":            true,
+	})
+
+	out, code := runUPSHook(t, "ups-both", stateDir, projectsDir,
+		"WebGL renderer architecture decision",
+		"HOME="+home,
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected additionalContext; got:\n%s", out)
+	}
+	if !strings.Contains(out, "orient") {
+		t.Errorf("expected orient nudge in additionalContext; got:\n%s", out)
+	}
+	if !strings.Contains(out, "memoryweb relevant memories") {
+		t.Errorf("expected recall section in additionalContext; got:\n%s", out)
+	}
+}
+
+// ── SubagentStart hook tests ──────────────────────────────────────────────────
+
+func TestSubagentStartHook_NoMemoryweb(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	// Enable option so we exercise the binary check, not the early return.
+	writeConfig(t, home, map[string]interface{}{"subagent_orient_enabled": true})
+
+	out, code := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_subagent_start_hook.sh"),
+		"subagent-no-bin", stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true; got:\n%s", out)
+	}
+	if strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected no additionalContext when binary missing; got:\n%s", out)
+	}
+}
+
+func TestSubagentStartHook_WithDreamDigest(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "subagent.db")
+
+	seedRealisticDB(t, dbPath)
+	writeConfig(t, home, map[string]interface{}{"subagent_orient_enabled": true})
+
+	out, code := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_subagent_start_hook.sh"),
+		"subagent-with-dream", stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected additionalContext with dream digest; got:\n%s", out)
+	}
+	if !strings.Contains(out, "memoryweb") {
+		t.Errorf("expected 'memoryweb' in additionalContext; got:\n%s", out)
+	}
+}
+
+// ── SubagentStop hook tests ───────────────────────────────────────────────────
+
+func TestSubagentStopHook_FirstFire(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "subagent-stop-first"
+	writeConfig(t, home, map[string]interface{}{"subagent_audit_enabled": true})
+
+	out, _ := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_subagent_stop_hook.sh"),
+		sessionID, stateDir, projectsDir,
+		"HOME="+home,
+	)
+	if !strings.Contains(out, `"continue":false`) {
+		t.Errorf("expected continue:false on first fire; got:\n%s", out)
+	}
+	if !strings.Contains(out, "audit") {
+		t.Errorf("expected 'audit' in stopReason; got:\n%s", out)
+	}
+	if !strings.Contains(out, "orphans") {
+		t.Errorf("expected 'orphans' in stopReason; got:\n%s", out)
+	}
+	flagFile := filepath.Join(stateDir, sessionID+".subagent_stop")
+	if _, err := os.Stat(flagFile); err != nil {
+		t.Errorf("flag file should have been created: %v", err)
+	}
+}
+
+func TestSubagentStopHook_SecondFire(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "subagent-stop-second"
+	writeConfig(t, home, map[string]interface{}{"subagent_audit_enabled": true})
+
+	// First fire to create the flag.
+	runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_subagent_stop_hook.sh"),
+		sessionID, stateDir, projectsDir,
+		"HOME="+home,
+	)
+
+	// Second fire: flag exists → should clear it and return continue:true.
+	out, code := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_subagent_stop_hook.sh"),
+		sessionID, stateDir, projectsDir,
+		"HOME="+home,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d on second fire; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true on second fire; got:\n%s", out)
+	}
+	flagFile := filepath.Join(stateDir, sessionID+".subagent_stop")
+	if _, err := os.Stat(flagFile); err == nil {
+		t.Error("flag file should have been deleted on second fire")
+	}
+}
+
+func TestSubagentStopHook_NoSessionID(t *testing.T) {
+	stateDir := t.TempDir()
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"subagent_audit_enabled": true})
+
+	script := filepath.Join(hooksDir(t), "memoryweb_subagent_stop_hook.sh")
+	cmd := shellCmd(script)
+	cmd.Stdin = strings.NewReader(`{"no_session":"here"}`)
+	cmd.Env = append(os.Environ(),
+		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
+		"HOME="+home,
+	)
+	rawOut, _ := cmd.CombinedOutput()
+	out := string(rawOut)
+
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true when session_id missing; got:\n%s", out)
+	}
+	// No flag file should be created.
+	entries, _ := os.ReadDir(stateDir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".subagent_stop") {
+			t.Errorf("no flag file should be created without session_id; found: %s", e.Name())
+		}
+	}
+}
+
+// ── PostCompact hook tests ────────────────────────────────────────────────────
+
+func TestPostCompactHook_WithContextFile(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "postcompact-with-ctx"
+	writeConfig(t, home, map[string]interface{}{"reinject_on_compact": true})
+
+	// Write a context file as the UserPromptSubmit hook would.
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	if err := os.WriteFile(ctxFile, []byte(`{"domain":"deep-game"}`), 0644); err != nil {
+		t.Fatalf("write ctx file: %v", err)
+	}
+
+	out, code := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_postcompact_hook.sh"),
+		sessionID, stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected additionalContext; got:\n%s", out)
+	}
+	if !strings.Contains(out, "deep-game") {
+		t.Errorf("expected domain 'deep-game' in additionalContext; got:\n%s", out)
+	}
+	if !strings.Contains(out, "orient") {
+		t.Errorf("expected 'orient' in additionalContext; got:\n%s", out)
+	}
+}
+
+func TestPostCompactHook_NoContextFile(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"reinject_on_compact": true})
+
+	out, code := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_postcompact_hook.sh"),
+		"postcompact-no-ctx", stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected additionalContext even without ctx file; got:\n%s", out)
+	}
+	// Without a ctx file, orient hint should be generic orient().
+	if !strings.Contains(out, "orient()") {
+		t.Errorf("expected generic 'orient()' hint in additionalContext; got:\n%s", out)
+	}
+}
+
+func TestPostCompactHook_OptionDisabled(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir() // no config → reinject_on_compact defaults to false
+
+	out, code := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_postcompact_hook.sh"),
+		"postcompact-disabled", stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true when option disabled; got:\n%s", out)
+	}
+	if strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected no additionalContext when option disabled; got:\n%s", out)
+	}
+}
+
+func TestPostCompactHook_NoSessionID(t *testing.T) {
+	stateDir := t.TempDir()
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"reinject_on_compact": true})
+
+	script := filepath.Join(hooksDir(t), "memoryweb_postcompact_hook.sh")
+	cmd := shellCmd(script)
+	cmd.Stdin = strings.NewReader(`{"no_session":"here"}`)
+	cmd.Env = append(os.Environ(),
+		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	rawOut, _ := cmd.CombinedOutput()
+	out := string(rawOut)
+
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true when session_id missing; got:\n%s", out)
+	}
+	if strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected no additionalContext when session_id missing; got:\n%s", out)
+	}
+}

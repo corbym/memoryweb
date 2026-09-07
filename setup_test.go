@@ -123,7 +123,14 @@ func TestSetupHomebrewLayout(t *testing.T) {
 	}
 
 	// Copy hook scripts from the repo's hooks directory.
-	for _, name := range []string{"memoryweb_save_hook.sh", "memoryweb_precompact_hook.sh"} {
+	for _, name := range []string{
+		"memoryweb_save_hook.sh",
+		"memoryweb_precompact_hook.sh",
+		"memoryweb_userpromptsubmit_hook.sh",
+		"memoryweb_subagent_start_hook.sh",
+		"memoryweb_subagent_stop_hook.sh",
+		"memoryweb_postcompact_hook.sh",
+	} {
 		src, err := os.ReadFile(filepath.Join(hooksDir(t), name))
 		if err != nil {
 			t.Fatalf("read hook %s: %v", name, err)
