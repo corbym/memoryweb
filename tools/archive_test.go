@@ -1560,3 +1560,55 @@ func TestAudit_Stale_RaiseLimitReturnsMore(t *testing.T) {
 		t.Errorf("raising limit should return more stale candidates: low=%d high=%d", len(low.Candidates), len(high.Candidates))
 	}
 }
+
+func TestAuditStale_IncludesPlaceholders(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "ph-tool-test"
+	idPH := addNode(t, h, "TBD: decide on caching strategy", domain, nil)
+	idOther := addNode(t, h, "cache layer", domain, nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": idOther, "to_memory": idPH, "relationship": "depends_on", "narrative": "blocked",
+	}))
+
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": domain})
+	mustNotError(t, tr)
+	var resp struct {
+		Placeholders []struct {
+			ID string `json:"id"`
+		} `json:"placeholders"`
+		PlaceholdersTruncated bool `json:"placeholders_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, p := range resp.Placeholders {
+		if p.ID == idPH {
+			return
+		}
+	}
+	t.Errorf("expected TBD placeholder node %q in placeholders; got %d entries", idPH, len(resp.Placeholders))
+}
+
+func TestAuditStale_PlaceholdersTruncated(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "ph-trunc"
+	anchor := addNode(t, h, "anchor node", domain, nil)
+	for i := 0; i < 3; i++ {
+		idPH := addNode(t, h, fmt.Sprintf("TODO: item %d", i), domain, nil)
+		mustNotError(t, call(t, h, "connect", map[string]any{
+			"from_memory": idPH, "to_memory": anchor, "relationship": "connects_to", "narrative": "rel",
+		}))
+	}
+
+	tr := call(t, h, "audit", map[string]any{"mode": "stale", "domain": domain, "limit": 2})
+	mustNotError(t, tr)
+	var resp struct {
+		PlaceholdersTruncated bool `json:"placeholders_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.PlaceholdersTruncated {
+		t.Error("expected placeholders_truncated=true when 3 placeholders exceed limit=2")
+	}
+}

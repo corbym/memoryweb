@@ -163,10 +163,15 @@ Two different operations move memories between domains; don't confuse them:
 ### Archiving & drift protocol
 
 - `audit(mode=stale)` surfaces contradictions, superseded labels,
-  duplicates, stale open questions, old transient memories. Contradiction
-  signals are recomputed from content each call — resolution must be
-  structural (a `resolved`/`resolved_by`/`supersedes` edge), not a label
-  edit.
+  duplicates, stale open questions, old transient memories. Response includes
+  both `candidates`/`results_truncated` (drift candidates) and a separate
+  `placeholders`/`placeholders_truncated` section: connected live memories
+  whose label or node_kind signals an unresolved placeholder (TBD, TODO,
+  FIXME, "open question", "decide", stale `node_kind=issue` with no
+  `occurred_at`, stale `node_kind=goal` with no resolution edge). Check
+  `placeholders_truncated` and raise `limit` when true. Contradiction signals
+  are recomputed from content each call — resolution must be structural (a
+  `resolved`/`resolved_by`/`supersedes` edge), not a label edit.
 - `audit(mode=orphans)` surfaces live, non-transient memories with zero
   connections. `audit(mode=archived)` lists archived memories — use it when
   `search` returns nothing but you expect content to exist.
@@ -228,7 +233,7 @@ complete.
 |---|---|
 | `history(order=effective)` | `{nodes, results_truncated}` — default; chronological by effective date |
 | `history(order=modified)` | `{nodes, results_truncated}` or `{groups, results_truncated}` when `group_by_domain=true` |
-| `audit(mode=stale)` | `{candidates, results_truncated}` — empty is `{candidates: [], results_truncated: false}` |
+| `audit(mode=stale)` | `{candidates, results_truncated, placeholders, placeholders_truncated}` — empty candidates: `[]`; empty placeholders: `[]`. Check both truncation flags. |
 | `audit(mode=orphans)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}` |
 | `audit(mode=archived)` | `{nodes, results_truncated}` — empty is `{nodes: [], results_truncated: false}`; **default cap 25**; raise `limit` to enumerate |
 | `audit(mode=conflicts)` | `{candidates, results_truncated}` — empty is `{candidates: [], results_truncated: false}` |

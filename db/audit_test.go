@@ -972,6 +972,232 @@ func TestFindKindCoverage_ResultsTruncated(t *testing.T) {
 	}
 }
 
+// ── FindPlaceholders tests ────────────────────────────────────────────────────
+
+func TestFindPlaceholders_TBDLabel(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "TBD: auth strategy", "ph-domain")
+	other := mustAddNode(t, s, "some other node", "ph-domain")
+	if _, err := s.AddEdge(n.ID, other.ID, "depends_on", "waiting"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	got, err := s.FindPlaceholders("ph-domain", 10, 30, 60)
+	if err != nil {
+		t.Fatalf("FindPlaceholders: %v", err)
+	}
+	for _, c := range got {
+		if c.Node.ID == n.ID {
+			return
+		}
+	}
+	t.Errorf("expected TBD-labelled node to appear in placeholders; got %d results", len(got))
+}
+
+func TestFindPlaceholders_OpenQuestion(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "open question: should we use gRPC", "ph-oq")
+	other := mustAddNode(t, s, "service layer", "ph-oq")
+	if _, err := s.AddEdge(other.ID, n.ID, "depends_on", "blocked"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	got, err := s.FindPlaceholders("ph-oq", 10, 30, 60)
+	if err != nil {
+		t.Fatalf("FindPlaceholders: %v", err)
+	}
+	for _, c := range got {
+		if c.Node.ID == n.ID {
+			return
+		}
+	}
+	t.Errorf("expected open-question node to appear in placeholders; got %d results", len(got))
+}
+
+func TestFindPlaceholders_StaleIssue(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	n, err := s.AddNode("auth flakiness", "desc", "why", "ph-issue", nil, "", "issue")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	other, err := s.AddNode("issue anchor", "desc", "why", "ph-issue", nil, "", "")
+	if err != nil {
+		t.Fatalf("AddNode anchor: %v", err)
+	}
+	if _, err := s.AddEdge(n.ID, other.ID, "connects_to", "related"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	old := time.Now().UTC().AddDate(0, 0, -31).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE id = ?`, old, n.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	got, err := s.FindPlaceholders("ph-issue", 10, 30, 60)
+	if err != nil {
+		t.Fatalf("FindPlaceholders: %v", err)
+	}
+	for _, c := range got {
+		if c.Node.ID == n.ID {
+			return
+		}
+	}
+	t.Errorf("expected stale issue node to appear in placeholders; got %d results", len(got))
+}
+
+func TestFindPlaceholders_StaleGoal_NoResolution(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	n, err := s.AddNode("reduce p99 latency", "desc", "why", "ph-goal", nil, "", "goal")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	other, err := s.AddNode("infra work", "desc", "why", "ph-goal", nil, "", "")
+	if err != nil {
+		t.Fatalf("AddNode anchor: %v", err)
+	}
+	if _, err := s.AddEdge(n.ID, other.ID, "connects_to", "related"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	old := time.Now().UTC().AddDate(0, 0, -61).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE id = ?`, old, n.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	got, err := s.FindPlaceholders("ph-goal", 10, 30, 60)
+	if err != nil {
+		t.Fatalf("FindPlaceholders: %v", err)
+	}
+	for _, c := range got {
+		if c.Node.ID == n.ID {
+			return
+		}
+	}
+	t.Errorf("expected stale goal to appear in placeholders; got %d results", len(got))
+}
+
+func TestFindPlaceholders_StaleGoal_WithResolution(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	n, err := s.AddNode("reduce p99 latency", "desc", "why", "ph-goal-res", nil, "", "goal")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	other, err := s.AddNode("infra shipped", "desc", "why", "ph-goal-res", nil, "", "")
+	if err != nil {
+		t.Fatalf("AddNode anchor: %v", err)
+	}
+	if _, err := s.AddEdge(n.ID, other.ID, "led_to", "completed"); err != nil {
+		t.Fatalf("AddEdge led_to: %v", err)
+	}
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	old := time.Now().UTC().AddDate(0, 0, -61).Format("2006-01-02T15:04:05Z")
+	if _, err := rawDB.Exec(`UPDATE nodes SET created_at = ? WHERE id = ?`, old, n.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	rawDB.Close()
+
+	got, err := s.FindPlaceholders("ph-goal-res", 10, 30, 60)
+	if err != nil {
+		t.Fatalf("FindPlaceholders: %v", err)
+	}
+	for _, c := range got {
+		if c.Node.ID == n.ID {
+			t.Errorf("goal with led_to resolution edge must not appear in placeholders")
+			return
+		}
+	}
+}
+
+func TestFindPlaceholders_Orphan(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "TBD: decide on infra", "ph-orphan")
+	_ = n
+	got, err := s.FindPlaceholders("ph-orphan", 10, 30, 60)
+	if err != nil {
+		t.Fatalf("FindPlaceholders: %v", err)
+	}
+	for _, c := range got {
+		if c.Node.ID == n.ID {
+			t.Errorf("orphan node (no edges) must not appear in placeholders; it belongs in orphans mode")
+			return
+		}
+	}
+}
+
+func TestFindPlaceholders_Archived(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "TODO: archived placeholder", "ph-archived")
+	other := mustAddNode(t, s, "other", "ph-archived")
+	if _, err := s.AddEdge(n.ID, other.ID, "connects_to", "rel"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	if err := s.ArchiveNode(n.ID, "test"); err != nil {
+		t.Fatalf("ArchiveNode: %v", err)
+	}
+	got, err := s.FindPlaceholders("ph-archived", 10, 30, 60)
+	if err != nil {
+		t.Fatalf("FindPlaceholders: %v", err)
+	}
+	for _, c := range got {
+		if c.Node.ID == n.ID {
+			t.Errorf("archived node must not appear in placeholders")
+			return
+		}
+	}
+}
+
+func TestFindPlaceholders_CleanLabel(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "use WAL mode for SQLite", "ph-clean")
+	other := mustAddNode(t, s, "storage layer", "ph-clean")
+	if _, err := s.AddEdge(n.ID, other.ID, "governs", "applies to"); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	got, err := s.FindPlaceholders("ph-clean", 10, 30, 60)
+	if err != nil {
+		t.Fatalf("FindPlaceholders: %v", err)
+	}
+	for _, c := range got {
+		if c.Node.ID == n.ID {
+			t.Errorf("node with clean label and normal kind must not appear in placeholders")
+			return
+		}
+	}
+}
+
 func TestFindKindCoverage_WhyMattersPattern(t *testing.T) {
 	s := newStore(t)
 	domain := "kind-cov-why"

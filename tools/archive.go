@@ -155,8 +155,10 @@ type ConflictCandidatesResult struct {
 }
 
 type auditStaleResult struct {
-	Candidates       []db.DriftCandidate `json:"candidates"`
-	ResultsTruncated bool                `json:"results_truncated"`
+	Candidates            []db.DriftCandidate       `json:"candidates"`
+	ResultsTruncated      bool                      `json:"results_truncated"`
+	Placeholders          []db.PlaceholderCandidate `json:"placeholders"`
+	PlaceholdersTruncated bool                      `json:"placeholders_truncated"`
 }
 
 type auditOrphansResult struct {
@@ -170,8 +172,10 @@ type auditArchivedResult struct {
 }
 
 type auditStaleDigestResult struct {
-	Lines            []string `json:"lines"`
-	ResultsTruncated bool     `json:"results_truncated"`
+	Lines                 []string `json:"lines"`
+	ResultsTruncated      bool     `json:"results_truncated"`
+	PlaceholderLines      []string `json:"placeholder_lines"`
+	PlaceholdersTruncated bool     `json:"placeholders_truncated"`
 }
 
 // findConflictCandidates handles mode=conflicts: returns semantically adjacent
@@ -228,33 +232,49 @@ func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(candidates) == 0 {
-		if a.Digest {
-			out := auditStaleDigestResult{Lines: []string{}, ResultsTruncated: false}
-			b, _ := json.MarshalIndent(out, "", "  ")
-			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
-		}
-		out := auditStaleResult{Candidates: []db.DriftCandidate{}, ResultsTruncated: false}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
-	}
 	resultsTruncated := len(candidates) > a.Limit
 	if resultsTruncated {
 		candidates = candidates[:a.Limit]
 	}
+	if candidates == nil {
+		candidates = []db.DriftCandidate{}
+	}
+
+	placeholders, err := h.store.FindPlaceholders(a.Domain, a.Limit+1, 30, 60)
+	if err != nil {
+		return nil, err
+	}
+	plTruncated := len(placeholders) > a.Limit
+	if plTruncated {
+		placeholders = placeholders[:a.Limit]
+	}
+	if placeholders == nil {
+		placeholders = []db.PlaceholderCandidate{}
+	}
+
 	if a.Digest {
 		lines, err := h.digestLinesFromDrift(candidates)
 		if err != nil {
 			return nil, err
 		}
+		if lines == nil {
+			lines = []string{}
+		}
 		out := auditStaleDigestResult{
-			Lines:            lines,
-			ResultsTruncated: resultsTruncated,
+			Lines:                 lines,
+			ResultsTruncated:      resultsTruncated,
+			PlaceholderLines:      digestLinesFromPlaceholders(placeholders),
+			PlaceholdersTruncated: plTruncated,
 		}
 		b, _ := json.MarshalIndent(out, "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
-	out := auditStaleResult{Candidates: candidates, ResultsTruncated: resultsTruncated}
+	out := auditStaleResult{
+		Candidates:            candidates,
+		ResultsTruncated:      resultsTruncated,
+		Placeholders:          placeholders,
+		PlaceholdersTruncated: plTruncated,
+	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }

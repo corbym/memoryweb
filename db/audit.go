@@ -658,6 +658,110 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	return out, nil
 }
 
+// PlaceholderCandidate is a connected live node whose label or node_kind signals
+// it is an unresolved placeholder (TBD, open question, stale issue/goal).
+type PlaceholderCandidate struct {
+	Node
+	AgeDays         int    `json:"age_days"`
+	ConnectionCount int    `json:"connection_count"`
+	Reason          string `json:"reason"`
+}
+
+// FindPlaceholders returns connected live nodes whose label or node_kind signals
+// they are unresolved placeholders, ordered by age descending.
+// staleIssueDays: issue node_kind with no occurred_at older than this many days.
+// staleGoalDays: goal node_kind with no resolution edge older than this many days.
+func (s *Store) FindPlaceholders(domain string, limit, staleIssueDays, staleGoalDays int) ([]PlaceholderCandidate, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	domain = s.ResolveAlias(domain)
+
+	q := `
+WITH edge_counts AS (
+    SELECT node_id, COUNT(*) AS cnt
+    FROM (
+        SELECT from_node AS node_id FROM edges
+        UNION ALL
+        SELECT to_node   AS node_id FROM edges
+    )
+    GROUP BY node_id
+)
+SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
+       ec.cnt AS connection_count,
+       CAST((julianday('now') - julianday(COALESCE(n.occurred_at, n.created_at))) AS INTEGER) AS age_days
+FROM nodes n
+JOIN edge_counts ec ON ec.node_id = n.id
+WHERE n.archived_at IS NULL
+  AND (? = '' OR n.domain = ?)
+  AND ec.cnt >= 1
+  AND (
+        LOWER(n.label) LIKE '%tbd%'
+     OR LOWER(n.label) LIKE '%todo%'
+     OR LOWER(n.label) LIKE '%fixme%'
+     OR LOWER(n.label) LIKE '%open question%'
+     OR LOWER(n.label) LIKE '%pending%'
+     OR LOWER(n.label) LIKE '%placeholder%'
+     OR LOWER(n.label) LIKE '%decide%'
+     OR (n.node_kind = 'issue' AND n.occurred_at IS NULL
+         AND CAST((julianday('now') - julianday(n.created_at)) AS INTEGER) > ?)
+     OR (n.node_kind = 'goal'
+         AND CAST((julianday('now') - julianday(COALESCE(n.occurred_at, n.created_at))) AS INTEGER) > ?
+         AND NOT EXISTS (
+             SELECT 1 FROM edges e
+             WHERE (e.from_node = n.id OR e.to_node = n.id)
+               AND e.relationship IN ('led_to', 'resolved', 'resolved_by')
+         ))
+  )
+ORDER BY age_days DESC
+LIMIT ?`
+
+	rows, err := s.db.Query(q, domain, domain, staleIssueDays, staleGoalDays, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PlaceholderCandidate
+	for rows.Next() {
+		var n Node
+		var oa, aa sql.NullTime
+		var connCount, ageDays int
+		if err := rows.Scan(
+			&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
+			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind,
+			&connCount, &ageDays,
+		); err != nil {
+			return nil, err
+		}
+		n.OccurredAt = nullTimeToPtr(oa)
+		n.ArchivedAt = nullTimeToPtr(aa)
+		reason := placeholderReason(n, ageDays, connCount)
+		out = append(out, PlaceholderCandidate{Node: n, AgeDays: ageDays, ConnectionCount: connCount, Reason: reason})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func placeholderReason(n Node, ageDays, connCount int) string {
+	label := strings.ToLower(n.Label)
+	for _, kw := range []string{"tbd", "todo", "fixme", "open question", "pending", "placeholder", "decide"} {
+		if strings.Contains(label, kw) {
+			return fmt.Sprintf("placeholder keyword %q in label, %d days old, %d connections", kw, ageDays, connCount)
+		}
+	}
+	if n.NodeKind == "issue" && n.OccurredAt == nil {
+		return fmt.Sprintf("stale issue (no occurred_at), %d days old, %d connections", ageDays, connCount)
+	}
+	if n.NodeKind == "goal" {
+		return fmt.Sprintf("unresolved goal, %d days old, %d connections", ageDays, connCount)
+	}
+	return fmt.Sprintf("placeholder pattern, %d days old, %d connections", ageDays, connCount)
+}
+
 // CountStaleDrift returns the number of live nodes that would be surfaced by
 // audit(mode=stale) — i.e. the union of all FindDrift rules. Used to populate
 // the stale_count field in the orient response.

@@ -323,3 +323,13 @@ func digestLineFromDrift(c db.DriftCandidate) string {
 	line := digestLineFromEntry(toLeanEntry(c.Node))
 	return fmt.Sprintf("%s (%s, edges: %d)", line, reason, c.EdgeCount)
 }
+
+func digestLineFromPlaceholder(c db.PlaceholderCandidate) string {
+	reason := sanitiseDigestField(c.Reason)
+	line := digestLineFromEntry(toLeanEntry(c.Node))
+	return fmt.Sprintf("%s (%s)", line, reason)
+}
+
+func digestLinesFromPlaceholders(cs []db.PlaceholderCandidate) []string {
+	return digestLines(cs, digestLineFromPlaceholder)
+}
