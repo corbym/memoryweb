@@ -653,6 +653,33 @@ func TestOptionsCmd_PrintDefaults(t *testing.T) {
 	}
 }
 
+func TestOptionsCmd_DBFlagAccepted(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	if err := runOptionsCmd(io.Discard, cfg, []string{"set", "auto_recall", "true"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := runOptionsCmd(&buf, cfg, []string{"--db", filepath.Join(t.TempDir(), "custom.db")}); err != nil {
+		t.Fatalf("print with --db: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "auto_recall") || !strings.Contains(out, "true") {
+		t.Errorf("expected auto_recall=true in output; got:\n%s", out)
+	}
+}
+
+func TestOptionsCmd_DBFlagBeforeSet(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	var buf bytes.Buffer
+	if err := runOptionsCmd(&buf, cfg, []string{"--db", filepath.Join(t.TempDir(), "custom.db"), "set", "sweep_interval_turns", "20"}); err != nil {
+		t.Fatalf("set after --db: %v", err)
+	}
+	data, _ := os.ReadFile(cfg)
+	if !strings.Contains(string(data), `"sweep_interval_turns": 20`) {
+		t.Errorf("expected sweep_interval_turns 20 in file; got: %s", data)
+	}
+}
+
 func TestOptionsCmd_SetBool(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")

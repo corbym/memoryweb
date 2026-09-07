@@ -932,6 +932,14 @@ func optionsCmd() {
 }
 
 func runOptionsCmd(out io.Writer, cfgPath string, args []string) error {
+	flags := flag.NewFlagSet("options", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.String("db", "", "database path (ignored; options are stored in config.json, not the database)")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("usage: memoryweb options [set <key> <value>]")
+	}
+	args = flags.Args()
+
 	if len(args) == 0 {
 		return optionsPrint(cfgPath, out)
 	}
