@@ -177,3 +177,30 @@ func (h *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
 	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Edge %q removed.", a.ID)}}}, nil
 }
+
+// disconnectAll hard-deletes multiple edges in a single atomic transaction.
+func (h *Handler) disconnectAll(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Items []struct {
+			EdgeID string `json:"edge_id"`
+		} `json:"items"`
+	}
+	if err := decodeParams(args, &a, "disconnect_all"); err != nil {
+		return nil, err
+	}
+	if len(a.Items) == 0 {
+		return errorResult("items is required and must not be empty"), nil
+	}
+	ids := make([]string, len(a.Items))
+	for i, item := range a.Items {
+		if item.EdgeID == "" {
+			return errorResult(fmt.Sprintf("item %d is missing edge_id", i)), nil
+		}
+		ids[i] = item.EdgeID
+	}
+	if err := h.store.DeleteEdgesBatch(ids); err != nil {
+		return errorResult(err.Error()), nil
+	}
+	b, _ := json.Marshal(map[string]any{"disconnected": len(ids)})
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}

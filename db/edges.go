@@ -160,6 +160,28 @@ func (s *Store) DeleteEdge(id string) error {
 	return nil
 }
 
+// DeleteEdgesBatch hard-deletes multiple edges in a single transaction.
+// If any edge ID is not found, the whole transaction is rolled back.
+func (s *Store) DeleteEdgesBatch(ids []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, id := range ids {
+		res, err := tx.Exec(`DELETE FROM edges WHERE id = ?`, id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("edge not found: %s", id)
+		}
+	}
+	return tx.Commit()
+}
+
 // collectEdges returns edges whose both endpoints appear in nodes.
 func collectEdges(db *sql.DB, nodes []Node) []Edge {
 	if len(nodes) <= 1 {

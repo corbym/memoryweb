@@ -42,11 +42,12 @@ var toolKinds = map[string]toolKind{
 	"revise": kindWrite, "revise_all": kindWrite,
 	"forget": kindWrite, "restore": kindWrite, "merge": kindWrite,
 	"forget_all":          kindWrite,
+	"restore_all":         kindWrite,
 	"suggest_connections": kindMaint, "list_domains": kindMaint,
 	"alias_domain": kindMaint, "list_aliases": kindMaint,
 	"remove_alias": kindMaint, "resolve_domain": kindMaint,
 	"forgotten": kindMaint, "whats_stale": kindMaint,
-	"disconnect": kindMaint, "visualise": kindMaint,
+	"disconnect": kindMaint, "disconnect_all": kindMaint, "visualise": kindMaint,
 	"audit": kindMaint, "rename_domain": kindMaint,
 	"alias": kindMaint, "domains": kindMaint,
 }

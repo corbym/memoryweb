@@ -1561,6 +1561,56 @@ func TestAudit_Stale_RaiseLimitReturnsMore(t *testing.T) {
 	}
 }
 
+func TestRestoreAll_UnArchivesAll(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "forgotten node alpha", "restore-all-test", nil)
+	idB := addNode(t, h, "forgotten node beta", "restore-all-test", nil)
+	mustNotError(t, call(t, h, "forget_all", map[string]any{
+		"items": []map[string]any{
+			{"id": idA, "reason": "stale"},
+			{"id": idB, "reason": "stale"},
+		},
+	}))
+	// Verify both are archived.
+	if call(t, h, "recall", map[string]any{"id": idA}).IsError == false {
+		t.Fatal("expected recall to fail for archived node")
+	}
+
+	tr := call(t, h, "restore_all", map[string]any{
+		"items": []map[string]any{{"id": idA}, {"id": idB}},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Restored int      `json:"restored"`
+		IDs      []string `json:"ids"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Restored != 2 {
+		t.Errorf("expected restored=2, got %d", resp.Restored)
+	}
+	// Both nodes should be live again.
+	mustNotError(t, call(t, h, "recall", map[string]any{"id": idA}))
+	mustNotError(t, call(t, h, "recall", map[string]any{"id": idB}))
+}
+
+func TestRestoreAll_RollsBackOnNotFound(t *testing.T) {
+	_, h := newEnv(t)
+	idA := addNode(t, h, "forgotten node gamma", "restore-all-rollback", nil)
+	mustNotError(t, call(t, h, "forget", map[string]any{"id": idA, "reason": "stale"}))
+
+	tr := call(t, h, "restore_all", map[string]any{
+		"items": []map[string]any{{"id": idA}, {"id": "nonexistent-id-abc123"}},
+	})
+	mustError(t, tr)
+	// idA should still be archived (rollback).
+	if call(t, h, "recall", map[string]any{"id": idA}).IsError == false {
+		t.Error("node should still be archived after rollback")
+	}
+}
+
 func TestAuditStale_IncludesPlaceholders(t *testing.T) {
 	_, h := newEnv(t)
 	domain := "ph-tool-test"

@@ -130,6 +130,10 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 		return errorResult("unknown tool: disconnected — use audit with mode=orphans"), nil
 	case "forget_all":
 		result, err = h.forgetAll(req.Arguments)
+	case "restore_all":
+		result, err = h.restoreAll(req.Arguments)
+	case "disconnect_all":
+		result, err = h.disconnectAll(req.Arguments)
 	case "trace":
 		return errorResult("unknown tool: trace — use why_connected for direct edges between two IDs, or recall for neighbourhood context"), nil
 	case "visualise":

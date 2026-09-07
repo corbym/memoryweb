@@ -184,11 +184,12 @@ Two different operations move memories between domains; don't confuse them:
   note they're un-archivable with `forget(restore=true)`. Use `forget_all`
   (one atomic transaction) once you have 2+ confirmed IDs rather than repeated
   `forget` calls.
-- `forget(id, restore=true)` un-archives — get the ID from
-  `audit(mode=archived)`.
+- `forget(id, restore=true)` un-archives a single node — get the ID from
+  `audit(mode=archived)`. Use `restore_all(items=[{id},{id},...])` to
+  un-archive 2+ nodes atomically (all-or-none).
 - `disconnect(id)` hard-deletes an edge (by edge ID, from `recall`'s `edges`
-  array) — no built-in confirmation protocol, but treat it like `forget`:
-  irreversible.
+  array) — irreversible. Use `disconnect_all(items=[{edge_id},{edge_id},...])` to
+  batch-delete 2+ edges atomically.
 - `significance(mode=trust)` ranks memories by computed epistemic trust
   (from `node_kind` and connected relationship types). A `contradicts` edge
   lowers trust; resolving it lifts the penalty automatically. Only

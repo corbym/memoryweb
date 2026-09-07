@@ -326,6 +326,79 @@ func TestDisconnect_NonExistentReturnsError(t *testing.T) {
 	}
 }
 
+func TestDisconnectAll_RemovesAll(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "batch from node", "da-test", nil)
+	to1 := addNode(t, h, "batch to node one", "da-test", nil)
+	to2 := addNode(t, h, "batch to node two", "da-test", nil)
+
+	var edge1, edge2 struct {
+		ID string `json:"id"`
+	}
+	tr1 := call(t, h, "connect", map[string]any{"from_memory": from, "to_memory": to1, "relationship": "led_to"})
+	mustNotError(t, tr1)
+	json.Unmarshal([]byte(text(t, tr1)), &edge1)
+	tr2 := call(t, h, "connect", map[string]any{"from_memory": from, "to_memory": to2, "relationship": "led_to"})
+	mustNotError(t, tr2)
+	json.Unmarshal([]byte(text(t, tr2)), &edge2)
+
+	trDA := call(t, h, "disconnect_all", map[string]any{
+		"items": []map[string]any{{"edge_id": edge1.ID}, {"edge_id": edge2.ID}},
+	})
+	mustNotError(t, trDA)
+
+	recallTr := call(t, h, "recall", map[string]any{"id": from})
+	mustNotError(t, recallTr)
+	var nwe struct {
+		Edges []struct {
+			ID string `json:"id"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, recallTr)), &nwe)
+	for _, e := range nwe.Edges {
+		if e.ID == edge1.ID || e.ID == edge2.ID {
+			t.Errorf("edge %q should be removed after disconnect_all", e.ID)
+		}
+	}
+}
+
+func TestDisconnectAll_RollsBackOnNotFound(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "rollback from node", "da-rollback", nil)
+	to := addNode(t, h, "rollback to node", "da-rollback", nil)
+
+	var edge struct {
+		ID string `json:"id"`
+	}
+	tr := call(t, h, "connect", map[string]any{"from_memory": from, "to_memory": to, "relationship": "connects_to"})
+	mustNotError(t, tr)
+	json.Unmarshal([]byte(text(t, tr)), &edge)
+
+	trDA := call(t, h, "disconnect_all", map[string]any{
+		"items": []map[string]any{{"edge_id": edge.ID}, {"edge_id": "nonexistent-edge-xyz"}},
+	})
+	mustError(t, trDA)
+
+	// edge should still exist (rollback).
+	recallTr := call(t, h, "recall", map[string]any{"id": from})
+	mustNotError(t, recallTr)
+	var nwe struct {
+		Edges []struct {
+			ID string `json:"id"`
+		} `json:"edges"`
+	}
+	json.Unmarshal([]byte(text(t, recallTr)), &nwe)
+	found := false
+	for _, e := range nwe.Edges {
+		if e.ID == edge.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("edge should still exist after disconnect_all rollback")
+	}
+}
+
 // ── recent_changes ────────────────────────────────────────────────────────────
 
 // TestSuggestEdges_OverlappingTags: two nodes sharing a tag should produce a

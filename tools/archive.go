@@ -125,6 +125,33 @@ func (h *Handler) forgetAll(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
 }
 
+// restoreAll un-archives multiple nodes in a single atomic transaction.
+func (h *Handler) restoreAll(args json.RawMessage) (*ToolResult, error) {
+	var a struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := decodeParams(args, &a, "restore_all"); err != nil {
+		return nil, err
+	}
+	if len(a.Items) == 0 {
+		return errorResult("items is required and must not be empty"), nil
+	}
+	ids := make([]string, len(a.Items))
+	for i, item := range a.Items {
+		if item.ID == "" {
+			return errorResult(fmt.Sprintf("item %d is missing id", i)), nil
+		}
+		ids[i] = item.ID
+	}
+	if err := h.store.RestoreNodesBatch(ids); err != nil {
+		return errorResult(err.Error()), nil
+	}
+	b, _ := json.Marshal(map[string]any{"restored": len(ids), "ids": ids})
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+}
+
 // auditTool dispatches mode=stale/orphans/archived/conflicts.
 func (h *Handler) auditTool(args json.RawMessage) (*ToolResult, error) {
 	var a auditArgs

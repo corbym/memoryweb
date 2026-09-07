@@ -77,10 +77,10 @@ func TestListTools_ReturnsExpectedTools(t *testing.T) {
 	want := []string{
 		"remember", "connect", "revise", "recall", "search",
 		"why_connected", "history", "significance",
-		"forget", "forget_all",
+		"forget", "forget_all", "restore_all",
 		"audit", "orient",
 		"suggest_connections",
-		"domains", "disconnect", "visualise",
+		"domains", "disconnect", "disconnect_all", "visualise",
 	}
 	got := map[string]bool{}
 	for _, td := range resp.Tools {

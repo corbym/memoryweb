@@ -567,6 +567,38 @@ func (s *Store) ArchiveNodesBatch(items []struct{ ID, Reason string }) error {
 	return tx.Commit()
 }
 
+// RestoreNodesBatch un-archives multiple nodes in a single transaction.
+// If any ID is not found, the whole transaction is rolled back.
+func (s *Store) RestoreNodesBatch(ids []string) error {
+	now := time.Now().UTC()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, id := range ids {
+		var label string
+		if err := tx.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("node not found: %s", id)
+			}
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE nodes SET archived_at = NULL WHERE id = ?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			"auditlog-"+shortID(), "restore", id, label, nil, now,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // RestoreNode clears archived_at on a node and records an audit_log entry.
 func (s *Store) RestoreNode(id string) error {
 	now := time.Now().UTC()

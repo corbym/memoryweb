@@ -21,6 +21,8 @@ var minimalArgs = map[string]map[string]any{
 	"forget":              {"id": "x", "reason": "test"},
 	"audit":               {"mode": "orphans"},
 	"forget_all":          {"items": []map[string]string{{"id": "x", "reason": "test"}}},
+	"restore_all":         {"items": []map[string]string{{"id": "x"}}},
+	"disconnect_all":      {"items": []map[string]string{{"edge_id": "x"}}},
 	"orient":              {},
 	"revise":              {"id": "x"},
 	"suggest_connections": {"id": "x"},
