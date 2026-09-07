@@ -282,12 +282,16 @@ func TestSaveHookAllowsOnReentry(t *testing.T) {
 
 func runPrecompactHook(t *testing.T, stateDir, sessionID string) (string, int) {
 	t.Helper()
+	// Enable the hook so tests exercise its core logic, not the option guard.
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"pre_compact_enabled": true})
 	script := filepath.Join(hooksDir(t), "memoryweb_precompact_hook.sh")
 	payload, _ := json.Marshal(map[string]string{"session_id": sessionID})
 	cmd := shellCmd(script)
 	cmd.Stdin = strings.NewReader(string(payload))
 	cmd.Env = append(os.Environ(),
 		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
+		"HOME="+home,
 		// Inhibit dream so basic tests don't depend on a real DB or binary.
 		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
 	)
@@ -605,10 +609,13 @@ func TestPrecompactHookEmbedsDreamDigest(t *testing.T) {
 	sessionID := "test-precompact-dream"
 
 	seedRealisticDB(t, dbPath)
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"pre_compact_enabled": true})
 
 	out, code := runHookExtra(t, precompactHook, sessionID, stateDir, t.TempDir(),
 		"MEMORYWEB_DB="+dbPath,
 		"MEMORYWEB_BIN="+dreamBin,
+		"HOME="+home,
 	)
 	if code != 0 {
 		t.Fatalf("hook exited %d; output:\n%s", code, out)
@@ -650,8 +657,12 @@ func TestPrecompactHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 	stateDir := t.TempDir()
 	sessionID := "test-precompact-no-dream"
 
+	home2 := t.TempDir()
+	writeConfig(t, home2, map[string]interface{}{"pre_compact_enabled": true})
+
 	out, code := runHookExtra(t, precompactHook, sessionID, stateDir, t.TempDir(),
 		"MEMORYWEB_BIN=/nonexistent/memoryweb-dream",
+		"HOME="+home2,
 	)
 	if code != 0 {
 		t.Fatalf("hook exited %d without dream binary; output:\n%s", code, out)
@@ -667,5 +678,109 @@ func TestPrecompactHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 	stopReason, _ := envelope["stopReason"].(string)
 	if !strings.Contains(stopReason, "remember with an items array") {
 		t.Errorf("stopReason should still contain filing instructions; got:\n%s", stopReason)
+	}
+}
+
+// ── option helper tests (hooks-options-cli story) ─────────────────────────────
+
+// writeConfig writes a flat JSON config to $home/.memoryweb/config.json.
+func writeConfig(t *testing.T, home string, data map[string]interface{}) {
+	t.Helper()
+	dir := filepath.Join(home, ".memoryweb")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("writeConfig mkdir: %v", err)
+	}
+	b, _ := json.Marshal(data)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), b, 0600); err != nil {
+		t.Fatalf("writeConfig write: %v", err)
+	}
+}
+
+// runLibTest executes a small bash snippet that sources memoryweb_lib.sh.
+func runLibTest(t *testing.T, home, snippet string) string {
+	t.Helper()
+	lib := filepath.Join(hooksDir(t), "memoryweb_lib.sh")
+	script := filepath.Join(t.TempDir(), "lib_test.sh")
+	libArg := lib
+	if runtime.GOOS == "windows" {
+		libArg = winToMSYS2(lib)
+	}
+	content := fmt.Sprintf("#!/usr/bin/env bash\nsource %q\n%s\n", libArg, snippet)
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatalf("runLibTest write: %v", err)
+	}
+	homeArg := home
+	if runtime.GOOS == "windows" {
+		homeArg = winToMSYS2(home)
+	}
+	cmd := shellCmd(script)
+	cmd.Env = append(os.Environ(), "HOME="+homeArg)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); !ok {
+			t.Fatalf("runLibTest exec: %v", err)
+		}
+	}
+	return string(out)
+}
+
+func TestReadOption_FileAbsent(t *testing.T) {
+	home := t.TempDir()
+	out := runLibTest(t, home,
+		`memoryweb_read_option "sweep_interval_turns" "15"; printf '%s\n' "${_opt}"`)
+	if strings.TrimSpace(out) != "15" {
+		t.Errorf("expected default '15' when file absent; got %q", out)
+	}
+}
+
+func TestReadOption_FilePresent(t *testing.T) {
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": false})
+	out := runLibTest(t, home,
+		`memoryweb_read_option "session_orient_enabled" "true"; printf '%s\n' "${_opt}"`)
+	if strings.TrimSpace(out) != "false" {
+		t.Errorf("expected 'false' from config; got %q", out)
+	}
+}
+
+func TestSaveHook_SweepZeroDisabled(t *testing.T) {
+	saveHook := filepath.Join(hooksDir(t), "memoryweb_save_hook.sh")
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"sweep_interval_turns": 0})
+	out, code := runHookExtra(t, saveHook, "sweep-zero-session", stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_SAVE_INTERVAL=",
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true when sweep_interval_turns=0; got:\n%s", out)
+	}
+	if strings.Contains(out, "stopReason") {
+		t.Errorf("expected no stopReason when disabled; got:\n%s", out)
+	}
+}
+
+func TestPreCompactHook_OptionDisabled(t *testing.T) {
+	precompactHook := filepath.Join(hooksDir(t), "memoryweb_precompact_hook.sh")
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir() // no config → pre_compact_enabled defaults to false
+	out, code := runHookExtra(t, precompactHook, "precompact-disabled-session", stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true when pre_compact_enabled=false; got:\n%s", out)
+	}
+	if strings.Contains(out, "stopReason") {
+		t.Errorf("expected no stopReason when disabled; got:\n%s", out)
 	}
 }

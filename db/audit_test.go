@@ -981,7 +981,7 @@ func TestFindPlaceholders_TBDLabel(t *testing.T) {
 	if _, err := s.AddEdge(n.ID, other.ID, "depends_on", "waiting"); err != nil {
 		t.Fatalf("AddEdge: %v", err)
 	}
-	got, err := s.FindPlaceholders("ph-domain", 10, 30, 60)
+	got, err := s.FindPlaceholders("ph-domain", 10, 30, 60, nil)
 	if err != nil {
 		t.Fatalf("FindPlaceholders: %v", err)
 	}
@@ -1000,7 +1000,7 @@ func TestFindPlaceholders_OpenQuestion(t *testing.T) {
 	if _, err := s.AddEdge(other.ID, n.ID, "depends_on", "blocked"); err != nil {
 		t.Fatalf("AddEdge: %v", err)
 	}
-	got, err := s.FindPlaceholders("ph-oq", 10, 30, 60)
+	got, err := s.FindPlaceholders("ph-oq", 10, 30, 60, nil)
 	if err != nil {
 		t.Fatalf("FindPlaceholders: %v", err)
 	}
@@ -1043,7 +1043,7 @@ func TestFindPlaceholders_StaleIssue(t *testing.T) {
 	}
 	rawDB.Close()
 
-	got, err := s.FindPlaceholders("ph-issue", 10, 30, 60)
+	got, err := s.FindPlaceholders("ph-issue", 10, 30, 60, nil)
 	if err != nil {
 		t.Fatalf("FindPlaceholders: %v", err)
 	}
@@ -1086,7 +1086,7 @@ func TestFindPlaceholders_StaleGoal_NoResolution(t *testing.T) {
 	}
 	rawDB.Close()
 
-	got, err := s.FindPlaceholders("ph-goal", 10, 30, 60)
+	got, err := s.FindPlaceholders("ph-goal", 10, 30, 60, nil)
 	if err != nil {
 		t.Fatalf("FindPlaceholders: %v", err)
 	}
@@ -1129,7 +1129,7 @@ func TestFindPlaceholders_StaleGoal_WithResolution(t *testing.T) {
 	}
 	rawDB.Close()
 
-	got, err := s.FindPlaceholders("ph-goal-res", 10, 30, 60)
+	got, err := s.FindPlaceholders("ph-goal-res", 10, 30, 60, nil)
 	if err != nil {
 		t.Fatalf("FindPlaceholders: %v", err)
 	}
@@ -1145,7 +1145,7 @@ func TestFindPlaceholders_Orphan(t *testing.T) {
 	s := newStore(t)
 	n := mustAddNode(t, s, "TBD: decide on infra", "ph-orphan")
 	_ = n
-	got, err := s.FindPlaceholders("ph-orphan", 10, 30, 60)
+	got, err := s.FindPlaceholders("ph-orphan", 10, 30, 60, nil)
 	if err != nil {
 		t.Fatalf("FindPlaceholders: %v", err)
 	}
@@ -1167,7 +1167,7 @@ func TestFindPlaceholders_Archived(t *testing.T) {
 	if err := s.ArchiveNode(n.ID, "test"); err != nil {
 		t.Fatalf("ArchiveNode: %v", err)
 	}
-	got, err := s.FindPlaceholders("ph-archived", 10, 30, 60)
+	got, err := s.FindPlaceholders("ph-archived", 10, 30, 60, nil)
 	if err != nil {
 		t.Fatalf("FindPlaceholders: %v", err)
 	}
@@ -1186,7 +1186,7 @@ func TestFindPlaceholders_CleanLabel(t *testing.T) {
 	if _, err := s.AddEdge(n.ID, other.ID, "governs", "applies to"); err != nil {
 		t.Fatalf("AddEdge: %v", err)
 	}
-	got, err := s.FindPlaceholders("ph-clean", 10, 30, 60)
+	got, err := s.FindPlaceholders("ph-clean", 10, 30, 60, nil)
 	if err != nil {
 		t.Fatalf("FindPlaceholders: %v", err)
 	}

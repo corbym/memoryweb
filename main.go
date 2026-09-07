@@ -14,6 +14,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -65,6 +67,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "")
 			fmt.Fprintln(os.Stdout, "Subcommands:")
 			fmt.Fprintln(os.Stdout, "  setup          Install Claude Code hooks and configure desktop MCP clients")
+			fmt.Fprintln(os.Stdout, "  options        View or set hook behaviour options")
 			fmt.Fprintln(os.Stdout, "  doctor         Run diagnostic checks on the installation")
 			fmt.Fprintln(os.Stdout, "  dream          Print a digest of recent nodes and drift candidates")
 			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one")
@@ -87,6 +90,9 @@ func main() {
 		case "setup":
 			setupCmd()
 			return
+		case "options":
+			optionsCmd()
+			return
 		case "doctor":
 			doctorCmd()
 			return
@@ -101,7 +107,7 @@ func main() {
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "memoryweb: unknown subcommand %q\n\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "Subcommands: setup, doctor, dream, backfill, merge-domains, backup, purge, version")
+			fmt.Fprintln(os.Stderr, "Subcommands: setup, options, doctor, dream, backfill, merge-domains, backup, purge, version")
 			fmt.Fprintln(os.Stderr, "Run 'memoryweb --help' for usage.")
 			os.Exit(1)
 		}
@@ -445,7 +451,7 @@ func setupCmd() {
 	hooksDirFlag := flags.String("hooks-dir", "", "directory containing hook scripts (default: hooks/ next to binary)")
 	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
 
-	if err := runSetup(os.Stdout, os.Stdin, *dryRun, *dbFlag, *hooksDirFlag); err != nil {
+	if err := runSetup(os.Stdout, os.Stdin, *dryRun, *dbFlag, *hooksDirFlag, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
@@ -455,10 +461,16 @@ func setupCmd() {
 // detects desktop MCP clients (Claude Desktop, ChatGPT Desktop) and offers to
 // configure each one, then optionally sets up Ollama for semantic search.
 // Separated from setupCmd so tests can inject writers and readers.
-func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("cannot determine home directory: %w", err)
+func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOverride string) error {
+	var home string
+	if homeOverride != "" {
+		home = homeOverride
+	} else {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot determine home directory: %w", err)
+		}
 	}
 
 	// Wrap in with a bufio.Reader once so that all y/N prompts share the same
@@ -755,6 +767,132 @@ func setupContainsCommand(entries []interface{}, cmd string) bool {
 		}
 	}
 	return false
+}
+
+// ── options subcommand ────────────────────────────────────────────────────────
+
+type optionSpec struct {
+	key    string
+	defVal interface{} // bool or int
+	desc   string
+}
+
+var optionSpecs = []optionSpec{
+	{"session_orient_enabled", false, "orient() nudge when orient not yet called (UserPromptSubmit hook)"},
+	{"auto_recall", false, "inject relevant memories on each prompt (UserPromptSubmit hook)"},
+	{"pre_compact_enabled", false, "file before compaction (PreCompact hook)"},
+	{"reinject_on_compact", false, "reinject orient context after compaction (PostCompact hook)"},
+	{"sweep_interval_turns", 15, "turns between filing prompts; 0 disables (Stop hook)"},
+	{"subagent_orient_enabled", false, "inject digest at sub-agent start (SubagentStart hook)"},
+	{"subagent_audit_enabled", false, "orphan audit on sub-agent stop (SubagentStop hook)"},
+}
+
+func optionsCmd() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot determine home directory: %v\n", err)
+		os.Exit(1)
+	}
+	cfgPath := filepath.Join(home, ".memoryweb", "config.json")
+	if err := runOptionsCmd(os.Stdout, cfgPath, os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runOptionsCmd(out io.Writer, cfgPath string, args []string) error {
+	if len(args) == 0 {
+		return optionsPrint(cfgPath, out)
+	}
+	if args[0] == "set" {
+		if len(args) < 3 {
+			return fmt.Errorf("'options set' requires a key and value\nUsage: memoryweb options set <key> <value>")
+		}
+		return optionsSet(cfgPath, args[1], args[2], out)
+	}
+	return fmt.Errorf("unknown options subcommand %q\nUsage: memoryweb options [set <key> <value>]", args[0])
+}
+
+func optionsPrint(cfgPath string, out io.Writer) error {
+	cfg := readConfig(cfgPath)
+	for _, s := range optionSpecs {
+		fmt.Fprintf(out, "%-30s %-5v  %s\n", s.key, cfg[s.key], s.desc)
+	}
+	return nil
+}
+
+// readConfig reads ~/.memoryweb/config.json, applying defaults for missing keys.
+func readConfig(cfgPath string) map[string]interface{} {
+	result := make(map[string]interface{})
+	for _, s := range optionSpecs {
+		result[s.key] = s.defVal
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return result
+	}
+	var raw map[string]interface{}
+	if json.Unmarshal(data, &raw) == nil {
+		for k, v := range raw {
+			result[k] = v
+		}
+	}
+	return result
+}
+
+func optionsSet(cfgPath, key, value string, out io.Writer) error {
+	var spec *optionSpec
+	for i := range optionSpecs {
+		if optionSpecs[i].key == key {
+			spec = &optionSpecs[i]
+			break
+		}
+	}
+	if spec == nil {
+		keys := make([]string, len(optionSpecs))
+		for i, s := range optionSpecs {
+			keys[i] = s.key
+		}
+		sort.Strings(keys)
+		return fmt.Errorf("unknown option %q; valid keys: %s", key, strings.Join(keys, ", "))
+	}
+
+	var parsed interface{}
+	switch spec.defVal.(type) {
+	case bool:
+		switch strings.ToLower(value) {
+		case "true", "1", "on":
+			parsed = true
+		case "false", "0", "off":
+			parsed = false
+		default:
+			return fmt.Errorf("invalid value %q for %s: expected true/false/on/off/1/0", value, key)
+		}
+	case int:
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return fmt.Errorf("invalid value %q for %s: expected a non-negative integer", value, key)
+		}
+		parsed = n
+	default:
+		return fmt.Errorf("unsupported option type for %s", key)
+	}
+
+	cfg := readConfig(cfgPath)
+	cfg[key] = parsed
+
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(cfgPath, append(data, '\n'), 0600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	fmt.Fprintf(out, "set %s = %v\n", key, parsed)
+	return nil
 }
 
 // ── doctor subcommand ─────────────────────────────────────────────────────────

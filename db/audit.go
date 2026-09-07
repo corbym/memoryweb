@@ -722,7 +722,7 @@ type PlaceholderCandidate struct {
 // they are unresolved placeholders, ordered by age descending.
 // staleIssueDays: issue node_kind with no occurred_at older than this many days.
 // staleGoalDays: goal node_kind with no resolution edge older than this many days.
-func (s *Store) FindPlaceholders(domain string, limit, staleIssueDays, staleGoalDays int) ([]PlaceholderCandidate, error) {
+func (s *Store) FindPlaceholders(domain string, limit, staleIssueDays, staleGoalDays int, tags []string) ([]PlaceholderCandidate, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -793,6 +793,9 @@ LIMIT ?`
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if len(tags) > 0 {
+		out = filter(out, func(c PlaceholderCandidate) bool { return nodeMatchesTags(c.Node.Tags, tags) })
 	}
 	return out, nil
 }

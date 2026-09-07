@@ -294,3 +294,14 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 Purge (hard delete of archived nodes) is **CLI-only** — `memoryweb purge`. It
 will never be an MCP tool. Use `forget` to soft-archive; use the CLI purge
 command to permanently remove archived nodes after deliberate review.
+
+## Recordari (agent memory)
+
+Use the `recordari` MCP server to persist decisions, findings, and standing rules across sessions.
+Full contract: `.claude/skills/recordari/SKILL.md`.
+
+**Session start:** call `orient()` before working.
+**Store:** `remember` / `revise` — decisions, findings, standing rules.
+**Retrieve:** `recall` / `search`.
+**Connect:** `connect` with typed relationships.
+Never file credentials, connection strings, or API keys.

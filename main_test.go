@@ -325,3 +325,219 @@ func TestRunDoctor_UpdateCheck_DevBuild(t *testing.T) {
 		t.Errorf("expected 'dev build' in update check line; got:\n%s", out)
 	}
 }
+
+// ── setupUpsertCommand unit tests (setup-idempotency story) ──────────────────
+
+func makeTestEntry(cmd string) map[string]interface{} {
+	return map[string]interface{}{
+		"hooks": []interface{}{
+			map[string]interface{}{
+				"type":    "command",
+				"command": cmd,
+			},
+		},
+	}
+}
+
+func TestSetupUpsertCommand_AppendsWhenEmpty(t *testing.T) {
+	cmd := "/hooks/memoryweb_save_hook.sh"
+	result := setupUpsertCommand(nil, cmd, makeTestEntry(cmd))
+	if len(result) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(result))
+	}
+}
+
+func TestSetupUpsertCommand_IdempotentSamePath(t *testing.T) {
+	cmd := "/hooks/memoryweb_save_hook.sh"
+	entry := makeTestEntry(cmd)
+	first := setupUpsertCommand(nil, cmd, entry)
+	second := setupUpsertCommand(first, cmd, makeTestEntry(cmd))
+	if len(second) != 1 {
+		t.Fatalf("want 1 entry after second call, got %d", len(second))
+	}
+}
+
+func TestSetupUpsertCommand_ReplacesOnPathChange(t *testing.T) {
+	oldCmd := "/old/path/memoryweb_save_hook.sh"
+	newCmd := "/new/path/memoryweb_save_hook.sh"
+	entries := setupUpsertCommand(nil, oldCmd, makeTestEntry(oldCmd))
+	result := setupUpsertCommand(entries, newCmd, makeTestEntry(newCmd))
+	if len(result) != 1 {
+		t.Fatalf("want 1 entry after path change, got %d", len(result))
+	}
+	entry, _ := result[0].(map[string]interface{})
+	hs, _ := entry["hooks"].([]interface{})
+	h, _ := hs[0].(map[string]interface{})
+	if h["command"] != newCmd {
+		t.Errorf("want command %q, got %q", newCmd, h["command"])
+	}
+}
+
+func TestSetupUpsertCommand_DoesNotTouchOtherEntries(t *testing.T) {
+	cmd1 := "/hooks/memoryweb_save_hook.sh"
+	cmd2 := "/hooks/memoryweb_precompact_hook.sh"
+	entries := setupUpsertCommand(nil, cmd1, makeTestEntry(cmd1))
+	entries = append(entries, makeTestEntry(cmd2))
+	result := setupUpsertCommand(entries, cmd1, makeTestEntry(cmd1))
+	if len(result) != 2 {
+		t.Fatalf("want 2 entries, got %d", len(result))
+	}
+}
+
+func TestRunSetup_IdempotentHookEntries(t *testing.T) {
+	home := t.TempDir()
+	hooksDir := t.TempDir()
+	// On Windows the executable-bit check is skipped, so empty files are fine.
+	for _, name := range []string{"memoryweb_save_hook.sh", "memoryweb_precompact_hook.sh"} {
+		p := filepath.Join(hooksDir, name)
+		if err := os.WriteFile(p, []byte("#!/usr/bin/env bash\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Redirect APPDATA so detectDesktopAgents finds nothing on Windows.
+	t.Setenv("APPDATA", home)
+
+	// Run setup twice; answer every interactive prompt with "n".
+	for i := 0; i < 2; i++ {
+		var buf bytes.Buffer
+		if err := runSetup(&buf, strings.NewReader("n\nn\nn\nn\n"), false, "", hooksDir, home); err != nil {
+			t.Fatalf("runSetup run %d: %v", i+1, err)
+		}
+	}
+
+	settingsPath := filepath.Join(home, ".claude", "settings.local.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings: %v", err)
+	}
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	for _, hookName := range []string{"Stop", "PreCompact"} {
+		entries := setupToSlice(hooks[hookName])
+		if len(entries) != 1 {
+			t.Errorf("%s: want 1 entry after two setup runs, got %d", hookName, len(entries))
+		}
+	}
+}
+
+// ── options subcommand tests (hooks-options-cli story) ────────────────────────
+
+func TestOptionsCmd_PrintDefaults(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	var buf bytes.Buffer
+	if err := runOptionsCmd(&buf, cfg, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	for _, key := range []string{
+		"session_orient_enabled", "auto_recall", "pre_compact_enabled",
+		"reinject_on_compact", "sweep_interval_turns",
+		"subagent_orient_enabled", "subagent_audit_enabled",
+	} {
+		if !strings.Contains(out, key) {
+			t.Errorf("expected key %q in output; got:\n%s", key, out)
+		}
+	}
+	if !strings.Contains(out, "false") {
+		t.Errorf("expected 'false' for bool defaults in output; got:\n%s", out)
+	}
+	if !strings.Contains(out, "15") {
+		t.Errorf("expected '15' for sweep_interval_turns default; got:\n%s", out)
+	}
+}
+
+func TestOptionsCmd_SetBool(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	var buf bytes.Buffer
+	if err := runOptionsCmd(&buf, cfg, []string{"set", "session_orient_enabled", "true"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	// Print and verify
+	buf.Reset()
+	if err := runOptionsCmd(&buf, cfg, nil); err != nil {
+		t.Fatalf("print: %v", err)
+	}
+	if !strings.Contains(buf.String(), "session_orient_enabled") {
+		t.Error("key missing from output after set")
+	}
+	// Read the file directly to confirm the stored value
+	data, _ := os.ReadFile(cfg)
+	if !strings.Contains(string(data), `"session_orient_enabled": true`) {
+		t.Errorf("config file should contain true; got: %s", data)
+	}
+}
+
+func TestOptionsCmd_SetInt(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	var buf bytes.Buffer
+	if err := runOptionsCmd(&buf, cfg, []string{"set", "sweep_interval_turns", "30"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	data, _ := os.ReadFile(cfg)
+	if !strings.Contains(string(data), `"sweep_interval_turns": 30`) {
+		t.Errorf("expected sweep_interval_turns 30 in file; got: %s", data)
+	}
+}
+
+func TestOptionsCmd_SetInt_Zero(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	var buf bytes.Buffer
+	if err := runOptionsCmd(&buf, cfg, []string{"set", "sweep_interval_turns", "0"}); err != nil {
+		t.Fatalf("set zero: %v", err)
+	}
+	data, _ := os.ReadFile(cfg)
+	if !strings.Contains(string(data), `"sweep_interval_turns": 0`) {
+		t.Errorf("expected sweep_interval_turns 0 in file; got: %s", data)
+	}
+}
+
+func TestOptionsCmd_UnknownKey(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	err := runOptionsCmd(io.Discard, cfg, []string{"set", "no_such_option", "true"})
+	if err == nil {
+		t.Fatal("expected error for unknown key")
+	}
+	if !strings.Contains(err.Error(), "unknown option") {
+		t.Errorf("expected 'unknown option' in error; got: %v", err)
+	}
+}
+
+func TestOptionsCmd_BadBool(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	err := runOptionsCmd(io.Discard, cfg, []string{"set", "auto_recall", "maybe"})
+	if err == nil {
+		t.Fatal("expected error for bad bool value")
+	}
+}
+
+func TestOptionsCmd_BadInt(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	err := runOptionsCmd(io.Discard, cfg, []string{"set", "sweep_interval_turns", "-5"})
+	if err == nil {
+		t.Fatal("expected error for negative integer")
+	}
+}
+
+func TestOptionsCmd_Idempotent(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	// Set one key.
+	if err := runOptionsCmd(io.Discard, cfg, []string{"set", "auto_recall", "true"}); err != nil {
+		t.Fatalf("first set: %v", err)
+	}
+	// Set a different key; auto_recall should be unchanged.
+	if err := runOptionsCmd(io.Discard, cfg, []string{"set", "sweep_interval_turns", "20"}); err != nil {
+		t.Fatalf("second set: %v", err)
+	}
+	data, _ := os.ReadFile(cfg)
+	s := string(data)
+	if !strings.Contains(s, `"auto_recall": true`) {
+		t.Errorf("auto_recall should still be true; got: %s", s)
+	}
+	if !strings.Contains(s, `"sweep_interval_turns": 20`) {
+		t.Errorf("sweep_interval_turns should be 20; got: %s", s)
+	}
+}

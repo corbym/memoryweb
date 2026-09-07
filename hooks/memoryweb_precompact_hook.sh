@@ -9,6 +9,11 @@ MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb.db}"
 # shellcheck source=memoryweb_lib.sh
 source "$(dirname "$0")/memoryweb_lib.sh"
 
+if ! memoryweb_option_enabled "pre_compact_enabled" "false"; then
+  printf '{"continue":true}\n'
+  exit 0
+fi
+
 STATE_DIR="${MEMORYWEB_HOOK_STATE_DIR:-${HOME}/.memoryweb/hook_state}"
 
 mkdir -p "${STATE_DIR}"

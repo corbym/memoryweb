@@ -267,7 +267,7 @@ func (h *Handler) drift(a auditArgs) (*ToolResult, error) {
 		candidates = []db.DriftCandidate{}
 	}
 
-	placeholders, err := h.store.FindPlaceholders(a.Domain, a.Limit+1, 30, 60)
+	placeholders, err := h.store.FindPlaceholders(a.Domain, a.Limit+1, 30, 60, tags)
 	if err != nil {
 		return nil, err
 	}

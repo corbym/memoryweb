@@ -6,7 +6,18 @@ set -euo pipefail
 # shellcheck source=memoryweb_lib.sh
 source "$(dirname "$0")/memoryweb_lib.sh"
 
-SAVE_INTERVAL="${MEMORYWEB_SAVE_INTERVAL:-15}"
+memoryweb_read_option "sweep_interval_turns" "15"
+SAVE_INTERVAL="${MEMORYWEB_SAVE_INTERVAL:-${_opt}}"
+
+# Guard: treat any non-integer value as the default (15) to avoid bash arithmetic errors.
+case "${SAVE_INTERVAL}" in
+  ''|*[!0-9]*) SAVE_INTERVAL=15 ;;
+esac
+
+if [ "${SAVE_INTERVAL}" -eq 0 ]; then
+  printf '{"continue":true}\n'
+  exit 0
+fi
 STATE_DIR="${MEMORYWEB_HOOK_STATE_DIR:-${HOME}/.memoryweb/hook_state}"
 PROJECTS_DIR="${MEMORYWEB_PROJECTS_DIR:-${HOME}/.claude/projects}"
 MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb.db}"
