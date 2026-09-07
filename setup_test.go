@@ -486,3 +486,46 @@ func TestSetupMCPServerConfigIdempotent(t *testing.T) {
 		t.Errorf("memoryweb entry should appear exactly once; found %d; config:\n%s", count, data)
 	}
 }
+
+// TestSetupResolvesRelativeDBInMCPServerConfig: a relative --db path must be
+// stored as an absolute path in the desktop MCP server env, since Claude
+// Desktop launches the server from a different working directory.
+func TestSetupResolvesRelativeDBInMCPServerConfig(t *testing.T) {
+	tmpHome := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
+
+	claudeDir := filepath.Join(agentSupportPath(tmpHome), "Claude")
+	os.MkdirAll(claudeDir, 0755)
+
+	relDB := filepath.Join("deeper", "nested", "x.db")
+	want, err := filepath.Abs(relDB)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+
+	args := []string{"--hooks-dir", hooksDir(t), "--db", relDB}
+	if _, code := runSetupCmdWithStdin(t, tmpHome, "y\nn\n", args...); code != 0 {
+		t.Fatal("setup run failed")
+	}
+
+	configPath := filepath.Join(claudeDir, "claude_desktop_config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("claude_desktop_config.json not written: %v", err)
+	}
+	var cfg struct {
+		MCPServers map[string]struct {
+			Env map[string]string `json:"env"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("claude_desktop_config.json invalid JSON: %v\n%s", err, data)
+	}
+	got := cfg.MCPServers["memoryweb"].Env["MEMORYWEB_DB"]
+	if got != want {
+		t.Errorf("MEMORYWEB_DB = %q, want resolved absolute path %q", got, want)
+	}
+	if strings.Contains(string(data), relDB) {
+		t.Errorf("raw relative path %q must not appear verbatim; config:\n%s", relDB, data)
+	}
+}

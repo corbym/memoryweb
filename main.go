@@ -605,6 +605,11 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 
 	if dbPath == "" {
 		dbPath = filepath.Join(home, ".memoryweb.db")
+	} else if abs, err := filepath.Abs(dbPath); err == nil {
+		// Resolve relative paths (e.g. --db ./x.db) against the current
+		// working directory so the value embedded in hook and MCP client
+		// configs is stable regardless of the client's runtime CWD.
+		dbPath = abs
 	}
 
 	// ── Claude Code hooks ─────────────────────────────────────────────────────
@@ -824,12 +829,16 @@ func setupToSlice(v interface{}) []interface{} {
 // replaced (handles install-path changes across releases). Otherwise appended.
 func setupUpsertCommand(entries []interface{}, cmd string, newEntry interface{}) []interface{} {
 	base := filepath.Base(cmd)
-	for i, e := range entries {
+	out := make([]interface{}, 0, len(entries)+1)
+	replaced := false
+	for _, e := range entries {
 		entry, ok := e.(map[string]interface{})
 		if !ok {
+			out = append(out, e)
 			continue
 		}
 		hs, _ := entry["hooks"].([]interface{})
+		match := false
 		for _, h := range hs {
 			hm, ok := h.(map[string]interface{})
 			if !ok {
@@ -837,17 +846,39 @@ func setupUpsertCommand(entries []interface{}, cmd string, newEntry interface{})
 			}
 			existing, _ := hm["command"].(string)
 			if filepath.Base(existing) == base {
-				if existing == cmd {
-					return entries
-				}
-				out := make([]interface{}, len(entries))
-				copy(out, entries)
-				out[i] = newEntry
-				return out
+				match = true
+				break
 			}
 		}
+		if match {
+			// Collapses every stale entry for this hook (old install paths or
+			// a previous --db) into a single fresh entry carrying the current
+			// env — so re-running setup never leaves old hooks firing with a
+			// stale MEMORYWEB_DB. Only the fields setup owns (type, command,
+			// env) are refreshed; any user-added keys on the kept entry survive.
+			if !replaced {
+				if fresh, ok := newEntry.(map[string]interface{}); ok {
+					merged := make(map[string]interface{}, len(entry)+len(fresh))
+					for k, v := range entry {
+						merged[k] = v
+					}
+					for k, v := range fresh {
+						merged[k] = v
+					}
+					out = append(out, merged)
+				} else {
+					out = append(out, newEntry)
+				}
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, e)
 	}
-	return append(entries, newEntry)
+	if !replaced {
+		out = append(out, newEntry)
+	}
+	return out
 }
 
 // setupContainsCommand reports whether any entry in the slice contains the

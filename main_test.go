@@ -385,6 +385,122 @@ func TestSetupUpsertCommand_DoesNotTouchOtherEntries(t *testing.T) {
 	}
 }
 
+// makeTestEntryWithEnv returns a hook entry carrying the given MEMORYWEB_DB env.
+func makeTestEntryWithEnv(cmd, db string) map[string]interface{} {
+	return map[string]interface{}{
+		"hooks": []interface{}{
+			map[string]interface{}{
+				"type":    "command",
+				"command": cmd,
+				"env":     map[string]interface{}{"MEMORYWEB_DB": db},
+			},
+		},
+	}
+}
+
+// testEntryEnv extracts the MEMORYWEB_DB env value from a hook entry.
+func testEntryEnv(t *testing.T, e interface{}) string {
+	t.Helper()
+	entry, ok := e.(map[string]interface{})
+	if !ok {
+		t.Fatalf("entry is %T, want map", e)
+	}
+	hs, ok := entry["hooks"].([]interface{})
+	if !ok || len(hs) == 0 {
+		t.Fatalf("hooks array missing: %v", entry)
+	}
+	h, ok := hs[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("hook is %T, want map", hs[0])
+	}
+	env, _ := h["env"].(map[string]interface{})
+	db, _ := env["MEMORYWEB_DB"].(string)
+	return db
+}
+
+// TestSetupUpsertCommand_RefreshesEnvOnSamePath: re-running setup with the same
+// hook command path but a new DB path must update the existing entry's env —
+// otherwise a stale relative --db survives forever in settings.local.json.
+func TestSetupUpsertCommand_RefreshesEnvOnSamePath(t *testing.T) {
+	cmd := "/hooks/memoryweb_save_hook.sh"
+	staleDB := "./.memoryweb.db"
+	absDB := "/Users/x/.memoryweb/.memoryweb.db"
+
+	first := setupUpsertCommand(nil, cmd, makeTestEntryWithEnv(cmd, staleDB))
+	result := setupUpsertCommand(first, cmd, makeTestEntryWithEnv(cmd, absDB))
+	if len(result) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(result))
+	}
+	if got := testEntryEnv(t, result[0]); got != absDB {
+		t.Errorf("env MEMORYWEB_DB = %q, want refreshed %q", got, absDB)
+	}
+}
+
+// TestSetupUpsertCommand_PreservesExtraFieldsOnRefresh: refreshing the env on
+// a same-path entry must not strip user-added keys (e.g. timeout, matcher).
+func TestSetupUpsertCommand_PreservesExtraFieldsOnRefresh(t *testing.T) {
+	cmd := "/hooks/memoryweb_save_hook.sh"
+	customized := makeTestEntryWithEnv(cmd, "./.memoryweb.db")
+	customized["timeout"] = float64(40)
+	customized["stops"] = []interface{}{"idle"}
+
+	first := setupUpsertCommand(nil, cmd, customized)
+	result := setupUpsertCommand(first, cmd, makeTestEntryWithEnv(cmd, "/abs/x.db"))
+	if len(result) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(result))
+	}
+	entry := result[0].(map[string]interface{})
+	if _, ok := entry["timeout"]; !ok {
+		t.Errorf("user-added timeout key was stripped: %v", entry)
+	}
+	if _, ok := entry["stops"]; !ok {
+		t.Errorf("user-added stops key was stripped: %v", entry)
+	}
+	if got := testEntryEnv(t, result[0]); got != "/abs/x.db" {
+		t.Errorf("env MEMORYWEB_DB = %q, want refreshed %q", got, "/abs/x.db")
+	}
+}
+
+// TestSetupUpsertCommand_DedupesOldSameNameEntries: entries from previous
+// installs at different paths but the same hook basename must be replaced, not
+// left alongside the new entry — otherwise old Stop/PreCompact hooks keep firing.
+func TestSetupUpsertCommand_DedupesOldSameNameEntries(t *testing.T) {
+	oldA := "/old/install/hooks/memoryweb_save_hook.sh"
+	oldB := "/older/install/hooks/memoryweb_save_hook.sh"
+	newCmd := "/hooks/memoryweb_save_hook.sh"
+	precompact := "/hooks/memoryweb_precompact_hook.sh"
+
+	entries := []interface{}{
+		makeTestEntry(oldA),
+		makeTestEntry(oldB),
+		makeTestEntry(precompact),
+	}
+	result := setupUpsertCommand(entries, newCmd, makeTestEntry(newCmd))
+	if len(result) != 2 {
+		t.Fatalf("want 2 entries (fresh save + untouched precompact), got %d", len(result))
+	}
+	count := 0
+	var got string
+	for _, e := range result {
+		if _, ok := e.(map[string]interface{}); !ok {
+			continue
+		}
+		hs := e.(map[string]interface{})["hooks"].([]interface{})
+		if len(hs) == 0 {
+			continue
+		}
+		h := hs[0].(map[string]interface{})
+		existing, _ := h["command"].(string)
+		if filepath.Base(existing) == "memoryweb_save_hook.sh" {
+			count++
+			got = existing
+		}
+	}
+	if count != 1 || got != newCmd {
+		t.Errorf("want exactly one new save entry %q, got count=%d command=%q", newCmd, count, got)
+	}
+}
+
 func TestRunSetup_IdempotentHookEntries(t *testing.T) {
 	home := t.TempDir()
 	hooksDir := t.TempDir()
@@ -664,6 +780,25 @@ func writeHookSettings(t *testing.T, home string, hookScripts map[string]string)
 	}
 }
 
+// writeHookSettingsWith writes a settings.local.json given a raw event→entries
+// map, mirroring whatever polluted state an install may have left behind.
+func writeHookSettingsWith(t *testing.T, home string, eventEntries map[string]interface{}) {
+	t.Helper()
+	settings := map[string]interface{}{"hooks": eventEntries}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	settingsPath := filepath.Join(dir, "settings.local.json")
+	if err := os.WriteFile(settingsPath, data, 0600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+}
+
 // writeHookScript creates the named hook script in dir with the given mode.
 func writeHookScript(t *testing.T, dir, name string, mode os.FileMode) string {
 	t.Helper()
@@ -791,4 +926,131 @@ func TestDoctorCheckHooks_NotExecutable(t *testing.T) {
 	if !strings.Contains(message, "Stop hook not executable") {
 		t.Errorf("expected not-executable report for Stop; got: %s", message)
 	}
+}
+
+// TestSetupResolvesRelativeDBPath: `memoryweb setup --db ./x.db` must store the
+// resolved absolute path in the hook env (and desktop MCP configs), not the
+// raw relative string — otherwise the DB resolves against the client's CWD.
+func TestSetupResolvesRelativeDBPath(t *testing.T) {
+	home := t.TempDir()
+	hooks := t.TempDir()
+	dbPath := filepath.Join("..", "relative", "x.db")
+	want, err := filepath.Abs(dbPath)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+
+	for _, script := range [6]string{
+		"memoryweb_save_hook.sh",
+		"memoryweb_precompact_hook.sh",
+		"memoryweb_userpromptsubmit_hook.sh",
+		"memoryweb_subagent_start_hook.sh",
+		"memoryweb_subagent_stop_hook.sh",
+		"memoryweb_postcompact_hook.sh",
+	} {
+		writeHookScript(t, hooks, script, 0755)
+	}
+
+	var out bytes.Buffer
+	if err := runSetup(&out, strings.NewReader("n\n"), false, dbPath, hooks, home); err != nil {
+		t.Fatalf("runSetup: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.local.json"))
+	if err != nil {
+		t.Fatalf("settings.local.json not written: %v", err)
+	}
+	var settings struct {
+		Hooks map[string]interface{} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("settings.local.json invalid JSON: %v\n%s", err, data)
+	}
+	stopEntry, ok := settings.Hooks["Stop"].([]interface{})
+	if !ok || len(stopEntry) == 0 {
+		t.Fatalf("Stop hook entry missing: %s", data)
+	}
+	env, ok := stopEntry[0].(map[string]interface{})["hooks"].([]interface{})[0].(map[string]interface{})["env"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Stop hook env missing: %s", data)
+	}
+	got := env["MEMORYWEB_DB"]
+	if got != want {
+		t.Errorf("MEMORYWEB_DB = %v, want resolved absolute path %v", got, want)
+	}
+	if strings.Contains(string(data), dbPath) {
+		t.Errorf("raw relative path %q must never appear verbatim in settings; got: %s", dbPath, data)
+	}
+}
+
+// TestSetupRunRemovesStaleHookEntries: re-running setup over a settings file
+// polluted by earlier installs (stale hook paths + stale relative env) must
+// yield exactly one fresh entry per hook — old Stop/PreCompact entries are
+// removed and the env carries the resolved absolute DB path.
+func TestSetupRunRemovesStaleHookEntries(t *testing.T) {
+	home := t.TempDir()
+	hooks := t.TempDir()
+	for _, script := range [6]string{
+		"memoryweb_save_hook.sh",
+		"memoryweb_precompact_hook.sh",
+		"memoryweb_userpromptsubmit_hook.sh",
+		"memoryweb_subagent_start_hook.sh",
+		"memoryweb_subagent_stop_hook.sh",
+		"memoryweb_postcompact_hook.sh",
+	} {
+		writeHookScript(t, hooks, script, 0755)
+	}
+
+	// Simulate the pre-fix state: two old Stop installs at different paths each
+	// carrying a stale relative --db, plus an old PreCompact entry.
+	stale := []interface{}{
+		makeTestEntryWithEnv("/oldA/hooks/memoryweb_save_hook.sh", "./.memoryweb.db"),
+		makeTestEntryWithEnv("/oldB/hooks/memoryweb_save_hook.sh", "~/stale/other.db"),
+		makeTestEntryWithEnv("/oldA/hooks/memoryweb_precompact_hook.sh", "./.memoryweb.db"),
+	}
+	writeHookSettingsWith(t, home, map[string]interface{}{
+		"Stop":       stale[:2],
+		"PreCompact": stale[2:],
+	})
+
+	dbPath := "nested/custom.db"
+	want, err := filepath.Abs(dbPath)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runSetup(&out, strings.NewReader("n\n"), false, dbPath, hooks, home); err != nil {
+		t.Fatalf("runSetup: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.local.json"))
+	if err != nil {
+		t.Fatalf("settings.local.json not written: %v", err)
+	}
+	var settings struct {
+		Hooks map[string]interface{} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("settings.local.json invalid JSON: %v\n%s", err, data)
+	}
+
+	assertHookEntries := func(event, scriptName string) {
+		t.Helper()
+		entries, _ := settings.Hooks[event].([]interface{})
+		if len(entries) != 1 {
+			t.Fatalf("%s: want 1 entry, got %d; settings:\n%s", event, len(entries), data)
+		}
+		h := entries[0].(map[string]interface{})["hooks"].([]interface{})[0].(map[string]interface{})
+		cmd, _ := h["command"].(string)
+		if wantCmd := filepath.Join(hooks, scriptName); cmd != wantCmd {
+			t.Errorf("%s: command = %q, want %q", event, cmd, wantCmd)
+		}
+		envEnv, _ := h["env"].(map[string]interface{})
+		if db, _ := envEnv["MEMORYWEB_DB"].(string); db != want {
+			t.Errorf("%s: MEMORYWEB_DB = %q, want resolved %q", event, db, want)
+		}
+	}
+	assertHookEntries("Stop", "memoryweb_save_hook.sh")
+	assertHookEntries("PreCompact", "memoryweb_precompact_hook.sh")
 }
