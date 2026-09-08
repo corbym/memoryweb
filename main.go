@@ -192,8 +192,8 @@ func main() {
 }
 
 func resolveDBPath() string {
-	if p := os.Getenv("MEMORYWEB_DB"); p != "" {
-		return p
+	if dbPath := os.Getenv("MEMORYWEB_DB"); dbPath != "" {
+		return dbPath
 	}
 	home, _ := os.UserHomeDir()
 	return home + "/.memoryweb.db"
@@ -230,8 +230,8 @@ func runDream(store *db.Store, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "Recent nodes (%d):\n", len(recent))
-	for _, n := range recent {
-		fmt.Fprintf(out, "  [%s] %s\n", n.Domain, n.Label)
+	for _, node := range recent {
+		fmt.Fprintf(out, "  [%s] %s\n", node.Domain, node.Label)
 	}
 	if len(recent) == 0 {
 		fmt.Fprintln(out, "  (none)")
@@ -245,8 +245,8 @@ func runDream(store *db.Store, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "Drift candidates (%d):\n", len(drift))
-	for _, d := range drift {
-		fmt.Fprintf(out, "  %s: %s\n", d.Node.Label, d.Reason)
+	for _, drift := range drift {
+		fmt.Fprintf(out, "  %s: %s\n", drift.Node.Label, drift.Reason)
 	}
 	if len(drift) == 0 {
 		fmt.Fprintln(out, "  (none)")
@@ -260,8 +260,8 @@ func runDream(store *db.Store, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "Disconnected nodes (%d):\n", len(disconnected))
-	for _, n := range disconnected {
-		fmt.Fprintf(out, "  [%s] %s\n", n.Domain, n.Label)
+	for _, node := range disconnected {
+		fmt.Fprintf(out, "  [%s] %s\n", node.Domain, node.Label)
 	}
 	if len(disconnected) == 0 {
 		fmt.Fprintln(out, "  (none)")
@@ -567,7 +567,7 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 
 	// Wrap in with a bufio.Reader once so that all y/N prompts share the same
 	// buffered reader and successive calls do not lose unconsumed bytes.
-	br := bufio.NewReader(in)
+	reader := bufio.NewReader(in)
 
 	// Locate hooks directory.
 	if hooksDir == "" {
@@ -699,7 +699,7 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 			}
 
 			fmt.Fprintf(out, "Detected %s. Configure it? [y/N] ", agent.Name)
-			if setupReadYN(br) {
+			if setupReadYN(reader) {
 				if err := setupWriteMCPServerConfig(agent.ConfigPath, exePath, dbPath); err != nil {
 					fmt.Fprintf(out, "Warning: could not configure %s: %v\n", agent.Name, err)
 				} else {
@@ -712,7 +712,7 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 
 	// ── Ollama ────────────────────────────────────────────────────────────────
 
-	setupOllama(out, br, dryRun)
+	setupOllama(out, reader, dryRun)
 	return nil
 }
 
@@ -831,20 +831,20 @@ func setupUpsertCommand(entries []interface{}, cmd string, newEntry interface{})
 	base := filepath.Base(cmd)
 	out := make([]interface{}, 0, len(entries)+1)
 	replaced := false
-	for _, e := range entries {
-		entry, ok := e.(map[string]interface{})
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]interface{})
 		if !ok {
-			out = append(out, e)
+			out = append(out, entry)
 			continue
 		}
-		hs, _ := entry["hooks"].([]interface{})
+		hookEntries, _ := entryMap["hooks"].([]interface{})
 		match := false
-		for _, h := range hs {
-			hm, ok := h.(map[string]interface{})
+		for _, hookEntry := range hookEntries {
+			hookMap, ok := hookEntry.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			existing, _ := hm["command"].(string)
+			existing, _ := hookMap["command"].(string)
 			if filepath.Base(existing) == base {
 				match = true
 				break
@@ -858,8 +858,8 @@ func setupUpsertCommand(entries []interface{}, cmd string, newEntry interface{})
 			// env) are refreshed; any user-added keys on the kept entry survive.
 			if !replaced {
 				if fresh, ok := newEntry.(map[string]interface{}); ok {
-					merged := make(map[string]interface{}, len(entry)+len(fresh))
-					for k, v := range entry {
+					merged := make(map[string]interface{}, len(entryMap)+len(fresh))
+					for k, v := range entryMap {
 						merged[k] = v
 					}
 					for k, v := range fresh {
@@ -873,7 +873,7 @@ func setupUpsertCommand(entries []interface{}, cmd string, newEntry interface{})
 			}
 			continue
 		}
-		out = append(out, e)
+		out = append(out, entry)
 	}
 	if !replaced {
 		out = append(out, newEntry)
@@ -884,15 +884,15 @@ func setupUpsertCommand(entries []interface{}, cmd string, newEntry interface{})
 // setupContainsCommand reports whether any entry in the slice contains the
 // given command path in its nested "hooks" array.
 func setupContainsCommand(entries []interface{}, cmd string) bool {
-	for _, e := range entries {
-		entry, ok := e.(map[string]interface{})
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		hs, _ := entry["hooks"].([]interface{})
-		for _, h := range hs {
-			hm, ok := h.(map[string]interface{})
-			if ok && hm["command"] == cmd {
+		hookEntries, _ := entryMap["hooks"].([]interface{})
+		for _, hookEntry := range hookEntries {
+			hookMap, ok := hookEntry.(map[string]interface{})
+			if ok && hookMap["command"] == cmd {
 				return true
 			}
 		}
@@ -954,8 +954,8 @@ func runOptionsCmd(out io.Writer, cfgPath string, args []string) error {
 
 func optionsPrint(cfgPath string, out io.Writer) error {
 	cfg := readConfig(cfgPath)
-	for _, s := range optionSpecs {
-		fmt.Fprintf(out, "%-30s %-5v  %s\n", s.key, cfg[s.key], s.desc)
+	for _, spec := range optionSpecs {
+		fmt.Fprintf(out, "%-30s %-5v  %s\n", spec.key, cfg[spec.key], spec.desc)
 	}
 	return nil
 }
@@ -963,8 +963,8 @@ func optionsPrint(cfgPath string, out io.Writer) error {
 // readConfig reads ~/.memoryweb/config.json, applying defaults for missing keys.
 func readConfig(cfgPath string) map[string]interface{} {
 	result := make(map[string]interface{})
-	for _, s := range optionSpecs {
-		result[s.key] = s.defVal
+	for _, spec := range optionSpecs {
+		result[spec.key] = spec.defVal
 	}
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
@@ -989,8 +989,8 @@ func optionsSet(cfgPath, key, value string, out io.Writer) error {
 	}
 	if spec == nil {
 		keys := make([]string, len(optionSpecs))
-		for i, s := range optionSpecs {
-			keys[i] = s.key
+		for i, spec := range optionSpecs {
+			keys[i] = spec.key
 		}
 		sort.Strings(keys)
 		return fmt.Errorf("unknown option %q; valid keys: %s", key, strings.Join(keys, ", "))
@@ -1172,19 +1172,19 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 		add("Drift", "info", "no candidates")
 	} else {
 		cats := map[string]int{}
-		for _, d := range drift {
+		for _, drift := range drift {
 			switch {
-			case strings.HasPrefix(d.Reason, "explicitly marked"):
+			case strings.HasPrefix(drift.Reason, "explicitly marked"):
 				cats["contradicts"]++
-			case strings.HasPrefix(d.Reason, "label suggests"):
+			case strings.HasPrefix(drift.Reason, "label suggests"):
 				cats["stale labels"]++
-			case strings.HasPrefix(d.Reason, "open question"):
+			case strings.HasPrefix(drift.Reason, "open question"):
 				cats["old open questions"]++
-			case strings.HasPrefix(d.Reason, "possible duplicate"):
+			case strings.HasPrefix(drift.Reason, "possible duplicate"):
 				cats["duplicates"]++
-			case strings.HasPrefix(d.Reason, "standing rule"):
+			case strings.HasPrefix(drift.Reason, "standing rule"):
 				cats["low-connection standing rules"]++
-			case strings.HasPrefix(d.Reason, "connected placeholder"):
+			case strings.HasPrefix(drift.Reason, "connected placeholder"):
 				cats["resolved placeholders"]++
 			default:
 				cats["transient"]++
@@ -1192,8 +1192,8 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 		}
 		var parts []string
 		for _, key := range []string{"contradicts", "stale labels", "old open questions", "duplicates", "low-connection standing rules", "resolved placeholders", "transient"} {
-			if n := cats[key]; n > 0 {
-				parts = append(parts, fmt.Sprintf("%d %s", n, key))
+			if count := cats[key]; count > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", count, key))
 			}
 		}
 		add("Drift", "info", fmt.Sprintf("%d candidate(s): %s", len(drift), strings.Join(parts, ", ")))
@@ -1318,18 +1318,18 @@ func doctorCheckHooks(home string) (message, status string) {
 // doctorFindHookCommand scans a hooks slice for the first command path that
 // ends with the given suffix (e.g. "memoryweb_save_hook.sh").
 func doctorFindHookCommand(entries []interface{}, suffix string) string {
-	for _, e := range entries {
-		entry, ok := e.(map[string]interface{})
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		hs, _ := entry["hooks"].([]interface{})
-		for _, h := range hs {
-			hm, ok := h.(map[string]interface{})
+		hookEntries, _ := entryMap["hooks"].([]interface{})
+		for _, hookEntry := range hookEntries {
+			hookMap, ok := hookEntry.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			cmd, _ := hm["command"].(string)
+			cmd, _ := hookMap["command"].(string)
 			if strings.HasSuffix(cmd, suffix) {
 				return cmd
 			}
@@ -1502,12 +1502,12 @@ func purgeCmd() {
 	if *dryRun {
 		fmt.Printf("DRY RUN — no changes will be made.\n")
 		fmt.Printf("%d node(s) would be purged:\n", len(result.Nodes))
-		for _, n := range result.Nodes {
+		for _, node := range result.Nodes {
 			archived := "live"
-			if n.ArchivedAt != nil {
-				archived = n.ArchivedAt.UTC().Format(time.RFC3339)
+			if node.ArchivedAt != nil {
+				archived = node.ArchivedAt.UTC().Format(time.RFC3339)
 			}
-			fmt.Printf("  - %s (id: %s, archived: %s)\n", n.Label, n.ID, archived)
+			fmt.Printf("  - %s (id: %s, archived: %s)\n", node.Label, node.ID, archived)
 		}
 		printLiveRemaining(result, *domainFlag, *includeLive)
 		return
@@ -1547,17 +1547,17 @@ func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, 
 		}
 		// Record the call for stats if enabled.
 		if rec != nil {
-			if tr, ok := result.(*tools.ToolResult); ok {
+			if toolResult, ok := result.(*tools.ToolResult); ok {
 				text := ""
-				if len(tr.Content) > 0 {
-					text = tr.Content[0].Text
+				if len(toolResult.Content) > 0 {
+					text = toolResult.Content[0].Text
 				}
 				var callReq struct {
 					Name      string          `json:"name"`
 					Arguments json.RawMessage `json:"arguments"`
 				}
 				json.Unmarshal(req.Params, &callReq)
-				rec.Record(callReq.Name, callReq.Arguments, text, tr.IsError)
+				rec.Record(callReq.Name, callReq.Arguments, text, toolResult.IsError)
 			}
 		}
 		return result, nil
