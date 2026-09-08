@@ -33,17 +33,25 @@ if [ -z "${session_id}" ]; then
   exit 0
 fi
 
-# Read domain from context file written by the UserPromptSubmit hook.
+# Read domain and topic from context file written by the UserPromptSubmit hook.
 ctx_file="${STATE_DIR}/mw_orient_ctx_${session_id}.json"
 domain=""
+topic=""
 if [ -f "${ctx_file}" ]; then
   domain=$(grep -o '"domain"[[:space:]]*:[[:space:]]*"[^"]*"' "${ctx_file}" 2>/dev/null \
     | grep -o '"[^"]*"$' | tr -d '"' || true)
+  topic=$(grep -o '"topic"[[:space:]]*:[[:space:]]*"[^"]*"' "${ctx_file}" 2>/dev/null \
+    | grep -o '"[^"]*"$' | tr -d '"' || true)
 fi
 
-# Build orient call hint.
+# Build orient call hint from the last domain the session oriented to, plus its
+# topic when captured. Fall back to bare orient().
 orient_hint="orient()"
-[ -n "${domain}" ] && orient_hint="orient(domain=\"${domain}\")"
+if [ -n "${domain}" ]; then
+  orient_hint="orient(domain=\"${domain}\""
+  [ -n "${topic}" ] && orient_hint="${orient_hint}, topic=\"${topic}\""
+  orient_hint="${orient_hint})"
+fi
 
 # Capture dream digest for context (best-effort).
 dream_digest=""

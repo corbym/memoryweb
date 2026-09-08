@@ -312,13 +312,13 @@ Blocks compaction once and asks the model to file everything important that hasn
 If the agent has not oriented this session, it is nudged to run `orient`. With the `session_orient_enabled` and `auto_recall` options (see `memoryweb options`), it also injects relevant prior memories into the prompt context.
 
 **`hooks/memoryweb_subagent_start_hook.sh`** (SubagentStart hook — fires when a sub-agent starts)  
-Injects a `memoryweb dream` digest into the sub-agent's starting context so nested agents do not start cold.
+Tells the sub-agent to orient into the parent session's domain and topic (captured from the parent's last `orient` call), and injects a `memoryweb dream` digest so nested agents do not start cold. Opt-in via the `subagent_orient_enabled` option.
 
 **`hooks/memoryweb_subagent_stop_hook.sh`** (SubagentStop hook — fires when a sub-agent exits)  
 Prompts the sub-agent to connect any orphaned nodes it filed before it finishes.
 
 **`hooks/memoryweb_postcompact_hook.sh`** (PostCompact hook — fires after context compaction)  
-Reinjects orient context after the conversation is compacted so the agent regains its bearings. Configurable via the `reinject_on_compact` option.
+Reinjects orient context — including the last oriented domain and its topic — after the conversation is compacted so the agent regains its bearings. Configurable via the `reinject_on_compact` option.
 
 ### Install (Claude Code)
 

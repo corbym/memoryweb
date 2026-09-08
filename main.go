@@ -912,9 +912,9 @@ var optionSpecs = []optionSpec{
 	{"session_orient_enabled", false, "orient() nudge when orient not yet called (UserPromptSubmit hook)"},
 	{"auto_recall", false, "inject relevant memories on each prompt (UserPromptSubmit hook)"},
 	{"pre_compact_enabled", false, "file before compaction (PreCompact hook)"},
-	{"reinject_on_compact", false, "reinject orient context after compaction (PostCompact hook)"},
+	{"reinject_on_compact", false, "reinject orient (domain+topic) after compaction (PostCompact hook)"},
 	{"sweep_interval_turns", 15, "turns between filing prompts; 0 disables (Stop hook)"},
-	{"subagent_orient_enabled", false, "inject digest at sub-agent start (SubagentStart hook)"},
+	{"subagent_orient_enabled", false, "orient sub-agents into parent scope + inject digest (SubagentStart hook)"},
 	{"subagent_audit_enabled", false, "orphan audit on sub-agent stop (SubagentStop hook)"},
 }
 

@@ -191,6 +191,35 @@ func runHookExtra(t *testing.T, script, sessionID, stateDir, projectsDir string,
 	return string(out), code
 }
 
+// runSubagentStartHook runs the SubagentStart hook with a payload carrying the
+// subagent's own session_id plus a transcript_path pointing at the parent
+// (main) session's transcript — the real-session shape Claude Code sends.
+func runSubagentStartHook(t *testing.T, script, subagentSession, parentTranscriptPath, stateDir, projectsDir string, extraEnv ...string) (string, int) {
+	t.Helper()
+	payload, _ := json.Marshal(map[string]string{
+		"session_id":      subagentSession,
+		"transcript_path": parentTranscriptPath,
+	})
+	cmd := shellCmd(script)
+	cmd.Stdin = strings.NewReader(string(payload))
+	env := append(os.Environ(),
+		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
+		"MEMORYWEB_PROJECTS_DIR="+projectsDir,
+	)
+	env = append(env, extraEnv...)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			t.Fatalf("exec SubagentStart hook %s: %v", script, err)
+		}
+	}
+	return string(out), code
+}
+
 // ── save hook tests ───────────────────────────────────────────────────────────
 
 func TestSaveHookAllowsBelowThreshold(t *testing.T) {
@@ -829,6 +858,16 @@ func orientAssistantLine(id, domain string) string {
 	return fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"%s","name":"mcp__memoryweb__orient","input":{"domain":%q}}]}}`, id, domain)
 }
 
+// orientAssistantLineTopic builds an orient tool_use line carrying both a
+// domain and a topic — the shape the UserPromptSubmit hook persists to the
+// session context file for PostCompact and SubagentStart to reuse.
+func orientAssistantLineTopic(id, domain, topic string) string {
+	if topic == "" {
+		return orientAssistantLine(id, domain)
+	}
+	return fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"%s","name":"mcp__memoryweb__orient","input":{"domain":%q,"topic":%q}}]}}`, id, domain, topic)
+}
+
 // orientAttachmentLine builds an attachment record that mentions the orient
 // tool name verbatim (so it matches the name regex) but carries no domain
 // field — the real-session shape that made a naive tail -1 extraction land on
@@ -1035,6 +1074,42 @@ func TestUserPromptSubmitHook_OrientDomain_IgnoresNonDomainTrailingRecords(t *te
 	}
 	if !strings.Contains(string(data), `"domain":"deep-game"`) {
 		t.Errorf("ctx file should carry the last domain-carrying orient, not an empty domain; got: %s", data)
+	}
+	if strings.Contains(string(data), `"topic"`) {
+		t.Errorf("ctx file should omit topic when the orient call carried none; got: %s", data)
+	}
+}
+
+func TestUserPromptSubmitHook_OrientDomainTopic_WritesBoth(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "ups-orient-topic"
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+
+	appendTranscriptLines(t, projectsDir, sessionID,
+		orientAssistantLine("toolu_plain", "deep-game"),
+		orientAssistantLineTopic("toolu_topic", "deep-game", "schema migration"),
+	)
+
+	out, code := runUPSHook(t, sessionID, stateDir, projectsDir, "continue",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	data, err := os.ReadFile(ctxFile)
+	if err != nil {
+		t.Fatalf("expected context file: %v", err)
+	}
+	if !strings.Contains(string(data), `"domain":"deep-game"`) {
+		t.Errorf("ctx file should carry the oriented domain; got: %s", data)
+	}
+	if !strings.Contains(string(data), `"topic":"schema migration"`) {
+		t.Errorf("ctx file should carry the topic from the last domain-carrying orient; got: %s", data)
 	}
 }
 
@@ -1281,6 +1356,143 @@ func TestSubagentStartHook_WithDreamDigest(t *testing.T) {
 	}
 }
 
+func TestSubagentStartHook_OrientHintFromParentSession(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "subagent.db")
+
+	seedRealisticDB(t, dbPath)
+	writeConfig(t, home, map[string]interface{}{"subagent_orient_enabled": true})
+
+	// The parent session oriented in the transcript; its UPS hook left a ctx
+	// file keyed by the parent session id. The SubagentStart payload carries
+	// the parent's transcript_path, whose basename is that id.
+	parentSessionID := "parent-orient-ctx"
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+parentSessionID+".json")
+	if err := os.WriteFile(ctxFile, []byte(`{"domain":"deep-game","topic":"schema migration"}`), 0644); err != nil {
+		t.Fatalf("write ctx file: %v", err)
+	}
+	parentTranscript := filepath.Join(projectsDir, "test-project", parentSessionID+".jsonl")
+
+	out, code := runSubagentStartHook(t,
+		filepath.Join(hooksDir(t), "memoryweb_subagent_start_hook.sh"),
+		"subagent-session-1", parentTranscript, stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	wantHookSpecificOutput(t, out, "SubagentStart")
+	// The subagent must be told to orient into the parent's domain+topic.
+	if !strings.Contains(out, `orient(domain=\"deep-game\", topic=\"schema migration\")`) {
+		t.Errorf("expected parent domain+topic orient hint; got:\n%s", out)
+	}
+	// The dream digest is retained alongside the hint.
+	if !strings.Contains(out, "memoryweb context for this sub-agent session") {
+		t.Errorf("expected dream digest alongside the orient hint; got:\n%s", out)
+	}
+}
+
+func TestSubagentStartHook_HonoursParentSessionIdField(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"subagent_orient_enabled": true})
+
+	// Future-proofing: if Claude Code starts sending parent_session_id, prefer
+	// it over transcript_path basename.
+	parentSessionID := "parent-session-field"
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+parentSessionID+".json")
+	if err := os.WriteFile(ctxFile, []byte(`{"domain":"deep-game"}`), 0644); err != nil {
+		t.Fatalf("write ctx file: %v", err)
+	}
+	// transcript_path points at an unrelated session id on purpose.
+	unrelatedTranscript := filepath.Join(projectsDir, "test-project", "some-other-session"+".jsonl")
+
+	payload := fmt.Sprintf(`{"session_id":"subagent-session-2","parent_session_id":%q,"transcript_path":%q}`, parentSessionID, unrelatedTranscript)
+	cmd := shellCmd(filepath.Join(hooksDir(t), "memoryweb_subagent_start_hook.sh"))
+	cmd.Stdin = strings.NewReader(payload)
+	cmd.Env = append(os.Environ(),
+		"MEMORYWEB_HOOK_STATE_DIR="+stateDir,
+		"MEMORYWEB_PROJECTS_DIR="+projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("exec SubagentStart hook: %v", err)
+	}
+	if !strings.Contains(string(out), `orient(domain=\"deep-game\")`) {
+		t.Errorf("expected orient hint from parent_session_id; got:\n%s", out)
+	}
+}
+
+func TestSubagentStartHook_NoParentCtx_DigestOnly(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "subagent.db")
+
+	seedRealisticDB(t, dbPath)
+	writeConfig(t, home, map[string]interface{}{"subagent_orient_enabled": true})
+
+	// transcript_path basename points at a parent id with no ctx file (e.g.
+	// the parent never oriented). Behaviour must fall back to digest-only.
+	parentTranscript := filepath.Join(projectsDir, "test-project", "parent-no-orient"+".jsonl")
+
+	out, code := runSubagentStartHook(t,
+		filepath.Join(hooksDir(t), "memoryweb_subagent_start_hook.sh"),
+		"subagent-session-3", parentTranscript, stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	wantHookSpecificOutput(t, out, "SubagentStart")
+	if !strings.Contains(out, "memoryweb context for this sub-agent session") {
+		t.Errorf("expected dream digest fallback; got:\n%s", out)
+	}
+	if strings.Contains(out, `orient(domain=`) {
+		t.Errorf("expected no orient hint when the parent never oriented; got:\n%s", out)
+	}
+}
+
+func TestSubagentStartHook_OptionDisabledWithParentCtx(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir() // no config → subagent_orient_enabled defaults to false
+
+	parentSessionID := "parent-disabled"
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+parentSessionID+".json")
+	if err := os.WriteFile(ctxFile, []byte(`{"domain":"deep-game"}`), 0644); err != nil {
+		t.Fatalf("write ctx file: %v", err)
+	}
+	parentTranscript := filepath.Join(projectsDir, "test-project", parentSessionID+".jsonl")
+
+	out, code := runSubagentStartHook(t,
+		filepath.Join(hooksDir(t), "memoryweb_subagent_start_hook.sh"),
+		"subagent-session-4", parentTranscript, stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"continue":true`) {
+		t.Errorf("expected continue:true when option disabled; got:\n%s", out)
+	}
+	if strings.Contains(out, `"additionalContext"`) {
+		t.Errorf("expected no additionalContext when option disabled; got:\n%s", out)
+	}
+}
+
 // ── SubagentStop hook tests ───────────────────────────────────────────────────
 
 func TestSubagentStopHook_FirstFire(t *testing.T) {
@@ -1423,10 +1635,37 @@ func TestPostCompactHook_NoContextFile(t *testing.T) {
 	if !strings.Contains(out, `"additionalContext"`) {
 		t.Errorf("expected additionalContext even without ctx file; got:\n%s", out)
 	}
-	wantHookSpecificOutput(t, out, "PostCompact")
 	// Without a ctx file, orient hint should be generic orient().
 	if !strings.Contains(out, "orient()") {
 		t.Errorf("expected generic 'orient()' hint in additionalContext; got:\n%s", out)
+	}
+}
+
+func TestPostCompactHook_TopicHint(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "postcompact-topic"
+	writeConfig(t, home, map[string]interface{}{"reinject_on_compact": true})
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	if err := os.WriteFile(ctxFile, []byte(`{"domain":"deep-game","topic":"schema migration"}`), 0644); err != nil {
+		t.Fatalf("write ctx file: %v", err)
+	}
+
+	out, code := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_postcompact_hook.sh"),
+		sessionID, stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	wantHookSpecificOutput(t, out, "PostCompact")
+	// The hint must carry the topic, not stop at domain.
+	if !strings.Contains(out, `orient(domain=\"deep-game\", topic=\"schema migration\")`) {
+		t.Errorf("expected orient(domain, topic) hint; got:\n%s", out)
 	}
 }
 

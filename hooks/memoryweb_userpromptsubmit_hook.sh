@@ -31,6 +31,7 @@ if memoryweb_option_enabled "session_orient_enabled" "false" && [ -n "${session_
 
   orient_found=false
   domain_seen=""
+  topic_seen=""
   transcript=$(find "${PROJECTS_DIR}" -name "${session_id}.jsonl" 2>/dev/null | head -1)
   if [ -n "${transcript}" ] && [ -f "${transcript}" ]; then
   # MCP tools are serialised in the transcript with an mcp__<server>__ prefix,
@@ -40,22 +41,32 @@ if memoryweb_option_enabled "session_orient_enabled" "false" && [ -n "${session_
   if grep -Eq "${name_re}" "${transcript}" 2>/dev/null; then
     orient_found=true
     # Records other than the orient call itself (attachments, tool results) can
-    # mention the tool name without carrying a domain. Extract the domain from
-    # the LAST orient line that actually has a non-empty domain field — "the
-    # last domain the session oriented to".
-    domain_seen=$(grep -E "${name_re}" "${transcript}" 2>/dev/null \
+    # mention the tool name without carrying a domain. Anchor on the LAST
+    # orient line that actually has a non-empty domain field — "the last
+    # domain the session oriented to" — and take its topic if present.
+    orient_line=$(grep -E "${name_re}" "${transcript}" 2>/dev/null \
       | grep -E '"domain"[[:space:]]*:[[:space:]]*"[^"]+"' \
-      | tail -1 \
-      | grep -o '"domain"[[:space:]]*:[[:space:]]*"[^"]*"' \
-      | grep -o '"[^"]*"$' | tr -d '"' || true)
+      | tail -1 || true)
+    if [ -n "${orient_line}" ]; then
+      domain_seen=$(printf '%s' "${orient_line}" \
+        | grep -o '"domain"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | grep -o '"[^"]*"$' | tr -d '"' || true)
+      topic_seen=$(printf '%s' "${orient_line}" \
+        | grep -o '"topic"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | head -1 | grep -o '"[^"]*"$' | tr -d '"' || true)
+    fi
   fi
   fi
 
   # Write (or refresh) the context file whenever a domain-carrying orient is
-  # detected, so PostCompact re-orients into the domain the session currently
-  # works in. Never persist an empty domain.
+  # detected, so PostCompact and SubagentStart re-orient into the domain and
+  # topic the session currently works in. Never persist an empty domain.
   if "${orient_found}" && [ -n "${domain_seen}" ]; then
-    printf '{"domain":"%s"}\n' "${domain_seen}" > "${ctx_file}"
+    if [ -n "${topic_seen}" ]; then
+      printf '{"domain":"%s","topic":"%s"}\n' "${domain_seen}" "${topic_seen}" > "${ctx_file}"
+    else
+      printf '{"domain":"%s"}\n' "${domain_seen}" > "${ctx_file}"
+    fi
   fi
 
   if ! "${orient_found}"; then
