@@ -81,7 +81,9 @@ if [ -f "${saving_flag}" ]; then
   exit 0
 fi
 
-# Threshold reached: block and request filing.
+# Threshold reached: block the stop and feed the filing instruction back to the model.
+# Stop hooks must use decision:block — continue:false halts the session and its
+# stopReason is shown to the user, never to the model.
 touch "${saving_flag}"
 
 # Capture dream digest for context (best-effort; skipped silently if unavailable).
@@ -93,8 +95,8 @@ fi
 memoryweb_json_escape "${dream_digest}"
 
 if [ -n "${_esc}" ]; then
-  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now.\\n\\n%s\\n\\nCall remember with an items array for any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n' "${_esc}"
+  printf '{"decision":"block","reason":"File significant findings from this session to memoryweb now.\\n\\n%s\\n\\nCall remember with an items array for any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, stop again."}\n' "${_esc}"
 else
-  printf '{"continue":false,"stopReason":"File significant findings from this session to memoryweb now. Call remember with an items array for any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, continue."}\n'
+  printf '{"decision":"block","reason":"File significant findings from this session to memoryweb now. Call remember with an items array for any decisions made, bugs found or fixed, design choices, or open questions. Connect related memories. Use domain appropriate to the work. Focus on why_matters \xe2\x80\x94 skip anything you cannot explain the significance of. When done, stop again."}\n'
 fi
 

@@ -43,4 +43,4 @@ fi
 
 touch "${subagent_stop_flag}"
 
-printf '{"continue":false,"stopReason":"Before ending: call audit(mode=orphans) and connect any nodes that have no edges yet. Orphaned nodes filed during this sub-agent session are invisible to search and significance -- connecting them is required before you exit. When done, continue."}\n'
+printf '{"decision":"block","reason":"Before ending: call audit(mode=orphans) and connect any nodes that have no edges yet. Orphaned nodes filed during this sub-agent session are invisible to search and significance -- connecting them is required before you exit. When done, stop again."}\n'

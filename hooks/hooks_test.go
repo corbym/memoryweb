@@ -272,8 +272,21 @@ func TestSaveHookBlocksAtThreshold(t *testing.T) {
 	out, _ := runHookExtra(t, saveHook, sessionID, stateDir, projectsDir,
 		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
 	)
-	if !strings.Contains(out, `"continue":false`) {
-		t.Errorf("expected continue:false for 15 messages at threshold; got:\n%s", out)
+	if !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("expected decision:block for 15 messages at threshold; got:\n%s", out)
+	}
+	if strings.Contains(out, `"continue":false`) {
+		t.Errorf("should not contain continue:false (halts session instead of blocking); got:\n%s", out)
+	}
+	if strings.Contains(out, `"stopReason"`) {
+		t.Errorf("should not contain stopReason (shown to user, not model); got:\n%s", out)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &envelope); err != nil {
+		t.Errorf("hook output is not valid JSON: %v\ngot:\n%s", err, out)
+	}
+	if reason, _ := envelope["reason"].(string); reason == "" {
+		t.Errorf("reason field is empty or missing in:\n%s", out)
 	}
 	savingFlag := filepath.Join(stateDir, sessionID+".saving")
 	if _, err := os.Stat(savingFlag); err != nil {
@@ -509,7 +522,7 @@ func seedRealisticDB(t *testing.T, dbPath string) {
 
 // TestSaveHookEmbedsDreamDigest verifies that when the save hook fires at
 // threshold, it runs the dream binary and embeds its output — including recent
-// node labels and drift candidates — in the stopReason so Claude can act on it.
+// node labels and drift candidates — in the reason so Claude can act on it.
 func TestSaveHookEmbedsDreamDigest(t *testing.T) {
 	saveHook := filepath.Join(hooksDir(t), "memoryweb_save_hook.sh")
 	stateDir := t.TempDir()
@@ -535,8 +548,11 @@ func TestSaveHookEmbedsDreamDigest(t *testing.T) {
 	// ── structural assertions ─────────────────────────────────────────────────
 
 	// Hook must block at threshold.
-	if !strings.Contains(out, `"continue":false`) {
-		t.Errorf("expected continue:false at threshold; got:\n%s", out)
+	if !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("expected decision:block at threshold; got:\n%s", out)
+	}
+	if strings.Contains(out, `"continue":false`) {
+		t.Errorf("should not contain continue:false; got:\n%s", out)
 	}
 
 	// Output must be a single-line JSON object (no literal newlines inside the
@@ -550,52 +566,52 @@ func TestSaveHookEmbedsDreamDigest(t *testing.T) {
 		t.Errorf("hook output is not valid JSON: %v\ngot:\n%s", err, out)
 	}
 
-	stopReason, _ := envelope["stopReason"].(string)
-	if stopReason == "" {
-		t.Fatalf("stopReason is empty or missing in:\n%s", out)
+	reason, _ := envelope["reason"].(string)
+	if reason == "" {
+		t.Fatalf("reason is empty or missing in:\n%s", out)
 	}
 
 	// ── dream header ──────────────────────────────────────────────────────────
 
-	if !strings.Contains(stopReason, "memoryweb dream") {
-		t.Errorf("stopReason should contain the dream header 'memoryweb dream'; got:\n%s", stopReason)
+	if !strings.Contains(reason, "memoryweb dream") {
+		t.Errorf("reason should contain the dream header 'memoryweb dream'; got:\n%s", reason)
 	}
 
 	// ── recent nodes ──────────────────────────────────────────────────────────
 	// At least two recently filed node labels must appear so Claude knows what
 	// context already exists.
 
-	if !strings.Contains(stopReason, "WebGL Renderer Architecture Decision") {
-		t.Errorf("stopReason should contain recent node 'WebGL Renderer Architecture Decision'; got:\n%s", stopReason)
+	if !strings.Contains(reason, "WebGL Renderer Architecture Decision") {
+		t.Errorf("reason should contain recent node 'WebGL Renderer Architecture Decision'; got:\n%s", reason)
 	}
-	if !strings.Contains(stopReason, "Dream Tool for Session Orientation") {
-		t.Errorf("stopReason should contain recent node 'Dream Tool for Session Orientation'; got:\n%s", stopReason)
+	if !strings.Contains(reason, "Dream Tool for Session Orientation") {
+		t.Errorf("reason should contain recent node 'Dream Tool for Session Orientation'; got:\n%s", reason)
 	}
 
 	// ── drift candidates ──────────────────────────────────────────────────────
 	// The superseded-label node and the contradicting pair must surface so Claude
 	// knows which nodes need organising.
 
-	if !strings.Contains(stopReason, "Old Canvas-Based Renderer") {
-		t.Errorf("stopReason should surface drift candidate 'Old Canvas-Based Renderer'; got:\n%s", stopReason)
+	if !strings.Contains(reason, "Old Canvas-Based Renderer") {
+		t.Errorf("reason should surface drift candidate 'Old Canvas-Based Renderer'; got:\n%s", reason)
 	}
-	if !strings.Contains(stopReason, "CSS Transform Animation Approach") {
-		t.Errorf("stopReason should surface the contradicting node 'CSS Transform Animation Approach'; got:\n%s", stopReason)
+	if !strings.Contains(reason, "CSS Transform Animation Approach") {
+		t.Errorf("reason should surface the contradicting node 'CSS Transform Animation Approach'; got:\n%s", reason)
 	}
 
 	// ── actionable guidance ───────────────────────────────────────────────────
 	// The filing instructions must follow the digest so Claude knows what to do.
 
-	if !strings.Contains(stopReason, "remember with an items array") {
-		t.Errorf("stopReason should contain 'remember with an items array' filing instruction; got:\n%s", stopReason)
+	if !strings.Contains(reason, "remember with an items array") {
+		t.Errorf("reason should contain 'remember with an items array' filing instruction; got:\n%s", reason)
 	}
-	if !strings.Contains(stopReason, "why_matters") {
-		t.Errorf("stopReason should contain 'why_matters' guidance; got:\n%s", stopReason)
+	if !strings.Contains(reason, "why_matters") {
+		t.Errorf("reason should contain 'why_matters' guidance; got:\n%s", reason)
 	}
 }
 
 // TestSaveHookBlocksGracefullyWithoutDreamBin verifies that the hook still
-// blocks correctly and produces a valid stopReason when the dream binary is
+// blocks correctly and produces a valid reason when the dream binary is
 // not present — ensuring the digest is genuinely optional.
 func TestSaveHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 	saveHook := filepath.Join(hooksDir(t), "memoryweb_save_hook.sh")
@@ -612,17 +628,20 @@ func TestSaveHookBlocksGracefullyWithoutDreamBin(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hook exited %d without dream binary; output:\n%s", code, out)
 	}
-	if !strings.Contains(out, `"continue":false`) {
-		t.Errorf("expected continue:false even without dream binary; got:\n%s", out)
+	if !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("expected decision:block even without dream binary; got:\n%s", out)
+	}
+	if strings.Contains(out, `"continue":false`) {
+		t.Errorf("should not contain continue:false; got:\n%s", out)
 	}
 	line := strings.TrimSpace(out)
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(line), &envelope); err != nil {
 		t.Errorf("hook output is not valid JSON without dream binary: %v\ngot:\n%s", err, out)
 	}
-	stopReason, _ := envelope["stopReason"].(string)
-	if !strings.Contains(stopReason, "remember with an items array") {
-		t.Errorf("stopReason should still contain filing instructions; got:\n%s", stopReason)
+	reason, _ := envelope["reason"].(string)
+	if !strings.Contains(reason, "remember with an items array") {
+		t.Errorf("reason should still contain filing instructions; got:\n%s", reason)
 	}
 }
 
@@ -1563,14 +1582,20 @@ func TestSubagentStopHook_FirstFire(t *testing.T) {
 		sessionID, stateDir, projectsDir,
 		"HOME="+home,
 	)
-	if !strings.Contains(out, `"continue":false`) {
-		t.Errorf("expected continue:false on first fire; got:\n%s", out)
+	if !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("expected decision:block on first fire; got:\n%s", out)
+	}
+	if strings.Contains(out, `"continue":false`) {
+		t.Errorf("should not contain continue:false; got:\n%s", out)
+	}
+	if strings.Contains(out, `"stopReason"`) {
+		t.Errorf("should not contain stopReason; got:\n%s", out)
 	}
 	if !strings.Contains(out, "audit") {
-		t.Errorf("expected 'audit' in stopReason; got:\n%s", out)
+		t.Errorf("expected 'audit' in reason; got:\n%s", out)
 	}
 	if !strings.Contains(out, "orphans") {
-		t.Errorf("expected 'orphans' in stopReason; got:\n%s", out)
+		t.Errorf("expected 'orphans' in reason; got:\n%s", out)
 	}
 	flagFile := filepath.Join(stateDir, sessionID+".subagent_stop")
 	if _, err := os.Stat(flagFile); err != nil {
