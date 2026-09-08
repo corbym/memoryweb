@@ -2,8 +2,8 @@ package tools
 
 import "encoding/json"
 
-func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
+func (hnd *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
+	var params struct {
 		Query    string `json:"query"`
 		Domain   string `json:"domain"`
 		Limit    int    `json:"limit"`
@@ -12,23 +12,23 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		NodeKind string `json:"node_kind"`
 		Digest   bool   `json:"digest"`
 	}
-	if err := decodeParams(args, &a, "search"); err != nil {
+	if err := decodeParams(args, &params, "search"); err != nil {
 		return nil, err
 	}
-	nodeKinds := splitNodeKinds(a.NodeKind)
-	if a.Query == "" && len(nodeKinds) == 0 {
-		if err := requireNonEmpty(map[string]string{"query": a.Query}); err != nil {
+	nodeKinds := splitNodeKinds(params.NodeKind)
+	if params.Query == "" && len(nodeKinds) == 0 {
+		if err := requireNonEmpty(map[string]string{"query": params.Query}); err != nil {
 			return nil, err
 		}
 	}
-	if a.Limit <= 0 {
-		a.Limit = 10
+	if params.Limit <= 0 {
+		params.Limit = 10
 	}
-	if a.Limit > 500 {
-		a.Limit = 500
+	if params.Limit > 500 {
+		params.Limit = 500
 	}
-	if a.Exact {
-		result, err := h.store.SearchNodesExact(a.Query, a.Domain, a.Limit, a.MemoryID, nodeKinds)
+	if params.Exact {
+		result, err := hnd.store.SearchNodesExact(params.Query, params.Domain, params.Limit, params.MemoryID, nodeKinds)
 		if err != nil {
 			return nil, err
 		}
@@ -36,20 +36,20 @@ func (h *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 
-	result, err := h.store.SearchNodes(a.Query, a.Domain, a.Limit, a.MemoryID, nodeKinds)
+	result, err := hnd.store.SearchNodes(params.Query, params.Domain, params.Limit, params.MemoryID, nodeKinds)
 	if err != nil {
 		return nil, err
 	}
 	var b []byte
 	var err2 error
-	if a.Digest {
-		digest, err := h.digestSearchResult(result)
+	if params.Digest {
+		digest, err := hnd.digestSearchResult(result)
 		if err != nil {
 			return nil, err
 		}
 		b, err2 = json.MarshalIndent(digest, "", "  ")
 	} else {
-		lean, err := h.leanSearchResult(result)
+		lean, err := hnd.leanSearchResult(result)
 		if err != nil {
 			return nil, err
 		}

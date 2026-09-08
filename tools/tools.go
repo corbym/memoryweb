@@ -64,7 +64,7 @@ type ContentBlock struct {
 	Text string `json:"text"`
 }
 
-func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
+func (hnd *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	var req CallToolRequest
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -75,19 +75,19 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 
 	switch req.Name {
 	case "remember":
-		result, err = h.addNode(req.Arguments)
+		result, err = hnd.addNode(req.Arguments)
 	case "connect":
-		result, err = h.addEdge(req.Arguments)
+		result, err = hnd.addEdge(req.Arguments)
 	case "recall":
-		result, err = h.getNode(req.Arguments)
+		result, err = hnd.getNode(req.Arguments)
 	case "search":
-		result, err = h.searchNodes(req.Arguments)
+		result, err = hnd.searchNodes(req.Arguments)
 	case "recent":
 		return errorResult("unknown tool: recent — use history with order=modified"), nil
 	case "why_connected":
-		result, err = h.findConnections(req.Arguments)
+		result, err = hnd.findConnections(req.Arguments)
 	case "history":
-		result, err = h.timeline(req.Arguments)
+		result, err = hnd.timeline(req.Arguments)
 	case "alias_domain":
 		return errorResult("unknown tool: alias_domain — use domains with action=add_alias"), nil
 	case "list_aliases":
@@ -97,51 +97,51 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	case "resolve_domain":
 		return errorResult("unknown tool: resolve_domain — use domains with action=resolve"), nil
 	case "forget":
-		result, err = h.forgetNode(req.Arguments)
+		result, err = hnd.forgetNode(req.Arguments)
 	case "restore":
 		return errorResult("unknown tool: restore — use forget with restore=true"), nil
 	case "forgotten":
 		return errorResult("unknown tool: forgotten — use audit with mode=archived"), nil
 	case "audit":
-		result, err = h.auditTool(req.Arguments)
+		result, err = hnd.auditTool(req.Arguments)
 	case "whats_stale":
 		return errorResult("unknown tool: whats_stale — use audit with mode=stale"), nil
 	case "orient":
-		result, err = h.summariseDomain(req.Arguments)
+		result, err = hnd.summariseDomain(req.Arguments)
 	case "remember_all":
 		return errorResult("unknown tool: remember_all — use remember with an items array for batch filing"), nil
 	case "connect_all":
 		return errorResult("unknown tool: connect_all — use connect with an items array for batch connections"), nil
 	case "revise":
-		result, err = h.updateNode(req.Arguments)
+		result, err = hnd.updateNode(req.Arguments)
 	case "revise_all":
 		return errorResult("unknown tool: revise_all — use revise with an items array for batch updates"), nil
 	case "suggest_connections":
-		result, err = h.suggestEdges(req.Arguments)
+		result, err = hnd.suggestEdges(req.Arguments)
 	case "domains":
-		result, err = h.domainsTool(req.Arguments)
+		result, err = hnd.domainsTool(req.Arguments)
 	case "list_domains":
 		return errorResult("unknown tool: list_domains — use domains"), nil
 	case "alias":
 		return errorResult("unknown tool: alias — use domains with action=add_alias, remove_alias, or resolve"), nil
 	case "disconnect":
-		result, err = h.disconnect(req.Arguments)
+		result, err = hnd.disconnect(req.Arguments)
 	case "disconnected":
 		return errorResult("unknown tool: disconnected — use audit with mode=orphans"), nil
 	case "forget_all":
-		result, err = h.forgetAll(req.Arguments)
+		result, err = hnd.forgetAll(req.Arguments)
 	case "restore_all":
-		result, err = h.restoreAll(req.Arguments)
+		result, err = hnd.restoreAll(req.Arguments)
 	case "disconnect_all":
-		result, err = h.disconnectAll(req.Arguments)
+		result, err = hnd.disconnectAll(req.Arguments)
 	case "trace":
 		return errorResult("unknown tool: trace — use why_connected for direct edges between two IDs, or recall for neighbourhood context"), nil
 	case "visualise":
-		result, err = h.visualise(req.Arguments)
+		result, err = hnd.visualise(req.Arguments)
 	case "rename_domain":
 		return errorResult("unknown tool: rename_domain — use domains with action=rename"), nil
 	case "significance":
-		result, err = h.handleSignificance(req.Arguments)
+		result, err = hnd.handleSignificance(req.Arguments)
 	case "check_for_updates":
 		return errorResult("unknown tool: check_for_updates — use the CLI: memoryweb check-for-updates"), nil
 	default:
@@ -154,17 +154,17 @@ func (h *Handler) CallTool(params json.RawMessage) (interface{}, error) {
 	return result, nil
 }
 
-func (h *Handler) getNode(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
+func (hnd *Handler) getNode(args json.RawMessage) (*ToolResult, error) {
+	var params struct {
 		ID string `json:"id"`
 	}
-	if err := decodeParams(args, &a, "recall"); err != nil {
+	if err := decodeParams(args, &params, "recall"); err != nil {
 		return nil, err
 	}
-	if err := requireNonEmpty(map[string]string{"id": a.ID}); err != nil {
+	if err := requireNonEmpty(map[string]string{"id": params.ID}); err != nil {
 		return nil, err
 	}
-	nwe, err := h.store.GetNode(a.ID)
+	nwe, err := hnd.store.GetNode(params.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -206,29 +206,29 @@ func splitNodeKinds(s string) []string {
 	return splitTrimmed(strings.Fields(s))
 }
 
-func (h *Handler) checkForUpdates(_ json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) checkForUpdates(_ json.RawMessage) (*ToolResult, error) {
 	info := func(msg string) *ToolResult {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}
 	}
 
-	if h.checkUpdate == nil {
+	if hnd.checkUpdate == nil {
 		return info("update check not available"), nil
 	}
-	if h.version == "dev" {
+	if hnd.version == "dev" {
 		return info("running dev build — skipping update check"), nil
 	}
-	latest, err := h.checkUpdate()
+	latest, err := hnd.checkUpdate()
 	if err != nil {
 		return info(fmt.Sprintf("could not reach update server: %v", err)), nil
 	}
-	if latest == h.version {
-		return info(fmt.Sprintf("memoryweb is up to date (%s)", h.version)), nil
+	if latest == hnd.version {
+		return info(fmt.Sprintf("memoryweb is up to date (%s)", hnd.version)), nil
 	}
 	return info(fmt.Sprintf(
 		"memoryweb %s is available (you are running %s). "+
 			"To update, download the binary for your platform from "+
 			"https://github.com/corbym/memoryweb/releases/latest and replace "+
 			"the existing binary, then restart your MCP client.",
-		latest, h.version,
+		latest, hnd.version,
 	)), nil
 }

@@ -5,9 +5,9 @@ import (
 	"fmt"
 )
 
-func (h *Handler) domainsTool(args json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) domainsTool(args json.RawMessage) (*ToolResult, error) {
 	args = argsOrEmptyObject(args)
-	var a struct {
+	var params struct {
 		Action    string `json:"action"`
 		Alias     string `json:"alias"`
 		Domain    string `json:"domain"`
@@ -15,44 +15,44 @@ func (h *Handler) domainsTool(args json.RawMessage) (*ToolResult, error) {
 		OldDomain string `json:"old_domain"`
 		NewDomain string `json:"new_domain"`
 	}
-	if err := decodeParams(args, &a, "domains"); err != nil {
+	if err := decodeParams(args, &params, "domains"); err != nil {
 		return nil, err
 	}
-	action := a.Action
+	action := params.Action
 	if action == "" {
 		action = "list"
 	}
 	switch action {
 	case "list":
-		return h.domainsList()
+		return hnd.domainsList()
 	case "add_alias":
-		if a.Alias == "" || a.Domain == "" {
+		if params.Alias == "" || params.Domain == "" {
 			return errorResult("alias and domain are required for action=add_alias"), nil
 		}
-		if err := h.store.AddAlias(a.Alias, a.Domain); err != nil {
+		if err := hnd.store.AddAlias(params.Alias, params.Domain); err != nil {
 			return nil, err
 		}
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q → %q registered", a.Alias, a.Domain)}}}, nil
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q → %q registered", params.Alias, params.Domain)}}}, nil
 	case "remove_alias":
-		if a.Alias == "" {
+		if params.Alias == "" {
 			return errorResult("alias is required for action=remove_alias"), nil
 		}
-		if err := h.store.RemoveAlias(a.Alias); err != nil {
+		if err := hnd.store.RemoveAlias(params.Alias); err != nil {
 			return nil, err
 		}
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q removed", a.Alias)}}}, nil
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("alias %q removed", params.Alias)}}}, nil
 	case "resolve":
-		if a.Name == "" {
+		if params.Name == "" {
 			return errorResult("name is required for action=resolve"), nil
 		}
-		canonical := h.store.ResolveAlias(a.Name)
-		msg := fmt.Sprintf("%q resolves to %q", a.Name, canonical)
+		canonical := hnd.store.ResolveAlias(params.Name)
+		msg := fmt.Sprintf("%q resolves to %q", params.Name, canonical)
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}, nil
 	case "rename":
-		if a.OldDomain == "" || a.NewDomain == "" {
+		if params.OldDomain == "" || params.NewDomain == "" {
 			return errorResult("old_domain and new_domain are required for action=rename"), nil
 		}
-		result, err := h.store.RenameDomain(a.OldDomain, a.NewDomain)
+		result, err := hnd.store.RenameDomain(params.OldDomain, params.NewDomain)
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
@@ -63,16 +63,16 @@ func (h *Handler) domainsTool(args json.RawMessage) (*ToolResult, error) {
 		b, _ := json.MarshalIndent(out, "", "  ")
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	default:
-		return errorResult(fmt.Sprintf("unknown domains action %q — use list, add_alias, remove_alias, resolve, or rename", a.Action)), nil
+		return errorResult(fmt.Sprintf("unknown domains action %q — use list, add_alias, remove_alias, resolve, or rename", params.Action)), nil
 	}
 }
 
-func (h *Handler) domainsList() (*ToolResult, error) {
-	domains, err := h.store.ListDomains()
+func (hnd *Handler) domainsList() (*ToolResult, error) {
+	domains, err := hnd.store.ListDomains()
 	if err != nil {
 		return nil, err
 	}
-	aliases, err := h.store.ListAliases()
+	aliases, err := hnd.store.ListAliases()
 	if err != nil {
 		return nil, err
 	}

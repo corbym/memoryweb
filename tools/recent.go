@@ -6,9 +6,9 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
-func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 	args = argsOrEmptyObject(args)
-	var a struct {
+	var params struct {
 		Domain        string `json:"domain"`
 		Limit         int    `json:"limit"`
 		GroupByDomain bool   `json:"group_by_domain"`
@@ -18,72 +18,72 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		Depth         int    `json:"depth"`
 		Digest        bool   `json:"digest"`
 	}
-	if err := decodeParams(args, &a, "recent"); err != nil {
+	if err := decodeParams(args, &params, "recent"); err != nil {
 		return nil, err
 	}
 
-	if a.Limit <= 0 {
-		a.Limit = 10
+	if params.Limit <= 0 {
+		params.Limit = 10
 	}
-	if a.Limit > 500 {
-		a.Limit = 500
+	if params.Limit > 500 {
+		params.Limit = 500
 	}
-	if a.Depth <= 0 {
-		a.Depth = 2
+	if params.Depth <= 0 {
+		params.Depth = 2
 	}
 
-	tags := splitTags(a.Tags)
-	nodeKinds := splitNodeKinds(a.NodeKind)
+	tags := splitTags(params.Tags)
+	nodeKinds := splitNodeKinds(params.NodeKind)
 
-	if a.GroupByDomain && len(nodeKinds) > 0 {
+	if params.GroupByDomain && len(nodeKinds) > 0 {
 		return errorResult("group_by_domain and node_kind cannot be used together"), nil
 	}
 
-	if a.MemoryID != "" {
-		nodes, err := h.store.RecentChangesScoped(a.MemoryID, a.Depth, "", tags, nodeKinds, a.Limit+1)
+	if params.MemoryID != "" {
+		nodes, err := hnd.store.RecentChangesScoped(params.MemoryID, params.Depth, "", tags, nodeKinds, params.Limit+1)
 		if err != nil {
 			return nil, err
 		}
-		nodes, truncated := trimWithTruncation(nodes, a.Limit)
-		return h.marshalRecentFromNodes(nodes, truncated, a.Digest)
+		nodes, truncated := trimWithTruncation(nodes, params.Limit)
+		return hnd.marshalRecentFromNodes(nodes, truncated, params.Digest)
 	}
 
 	if len(tags) > 0 || len(nodeKinds) > 0 {
-		nodes, err := h.store.RecentChangesScoped("", a.Depth, a.Domain, tags, nodeKinds, a.Limit+1)
+		nodes, err := hnd.store.RecentChangesScoped("", params.Depth, params.Domain, tags, nodeKinds, params.Limit+1)
 		if err != nil {
 			return nil, err
 		}
-		nodes, truncated := trimWithTruncation(nodes, a.Limit)
-		return h.marshalRecentFromNodes(nodes, truncated, a.Digest)
+		nodes, truncated := trimWithTruncation(nodes, params.Limit)
+		return hnd.marshalRecentFromNodes(nodes, truncated, params.Digest)
 	}
 
-	if a.GroupByDomain && a.Domain == "" {
-		perDomain := a.Limit
-		all, err := h.store.RecentChanges("", 1000, nil)
+	if params.GroupByDomain && params.Domain == "" {
+		perDomain := params.Limit
+		all, err := hnd.store.RecentChanges("", 1000, nil)
 		if err != nil {
 			return nil, err
 		}
 		grouped := make(map[string][]db.Node)
 		domainOrder := []string{}
 		resultsTruncated := false
-		for _, n := range all {
-			if _, seen := grouped[n.Domain]; !seen {
-				domainOrder = append(domainOrder, n.Domain)
+		for _, node := range all {
+			if _, seen := grouped[node.Domain]; !seen {
+				domainOrder = append(domainOrder, node.Domain)
 			}
-			if len(grouped[n.Domain]) >= perDomain {
+			if len(grouped[node.Domain]) >= perDomain {
 				resultsTruncated = true
 				continue
 			}
-			grouped[n.Domain] = append(grouped[n.Domain], n)
+			grouped[node.Domain] = append(grouped[node.Domain], node)
 		}
-		if a.Digest {
+		if params.Digest {
 			groups := make([]digestGroupedRecent, 0, len(domainOrder))
-			for _, d := range domainOrder {
-				lines, err := h.digestLinesFromNodes(grouped[d])
+			for _, domain := range domainOrder {
+				lines, err := hnd.digestLinesFromNodes(grouped[domain])
 				if err != nil {
 					return nil, err
 				}
-				groups = append(groups, digestGroupedRecent{Domain: d, Lines: lines})
+				groups = append(groups, digestGroupedRecent{Domain: domain, Lines: lines})
 			}
 			out := struct {
 				Groups           []digestGroupedRecent `json:"groups"`
@@ -97,12 +97,12 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 			Nodes  []leanEntry `json:"nodes"`
 		}
 		groups := make([]groupedResult, 0, len(domainOrder))
-		for _, d := range domainOrder {
-			entries, err := h.leanEntriesFromNodes(grouped[d])
+		for _, domain := range domainOrder {
+			entries, err := hnd.leanEntriesFromNodes(grouped[domain])
 			if err != nil {
 				return nil, err
 			}
-			groups = append(groups, groupedResult{Domain: d, Nodes: entries})
+			groups = append(groups, groupedResult{Domain: domain, Nodes: entries})
 		}
 		out := struct {
 			Groups           []groupedResult `json:"groups"`
@@ -112,12 +112,12 @@ func (h *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 	}
 
-	nodes, err := h.store.RecentChanges(a.Domain, a.Limit+1, nodeKinds)
+	nodes, err := hnd.store.RecentChanges(params.Domain, params.Limit+1, nodeKinds)
 	if err != nil {
 		return nil, err
 	}
-	nodes, truncated := trimWithTruncation(nodes, a.Limit)
-	return h.marshalRecentFromNodes(nodes, truncated, a.Digest)
+	nodes, truncated := trimWithTruncation(nodes, params.Limit)
+	return hnd.marshalRecentFromNodes(nodes, truncated, params.Digest)
 }
 
 func marshalRecentList(entries []leanEntry, resultsTruncated bool, digest bool) (*ToolResult, error) {

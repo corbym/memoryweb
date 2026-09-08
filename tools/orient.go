@@ -35,31 +35,31 @@ type crossDomainRecentEntry struct {
 	LifecycleState string `json:"lifecycle_state,omitempty"`
 }
 
-func (h *Handler) crossDomainRecentEntries(nodes []db.Node) ([]crossDomainRecentEntry, error) {
+func (hnd *Handler) crossDomainRecentEntries(nodes []db.Node) ([]crossDomainRecentEntry, error) {
 	if len(nodes) == 0 {
 		return nil, nil
 	}
 	ids := make([]string, len(nodes))
-	for i, n := range nodes {
-		ids[i] = n.ID
+	for i, node := range nodes {
+		ids[i] = node.ID
 	}
-	states, err := h.store.LifecycleStates(ids)
+	states, err := hnd.store.LifecycleStates(ids)
 	if err != nil {
 		return nil, err
 	}
 	entries := make([]crossDomainRecentEntry, len(nodes))
-	for i, n := range nodes {
+	for i, node := range nodes {
 		entries[i] = crossDomainRecentEntry{
-			ID:             n.ID,
-			Label:          n.Label,
-			UpdatedAt:      n.UpdatedAt.Format(time.RFC3339),
-			LifecycleState: string(states[n.ID]),
+			ID:             node.ID,
+			Label:          node.Label,
+			UpdatedAt:      node.UpdatedAt.Format(time.RFC3339),
+			LifecycleState: string(states[node.ID]),
 		}
 	}
 	return entries, nil
 }
 
-func (h *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, error) {
+func (hnd *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, error) {
 	if limit <= 0 {
 		limit = orientRecentCap
 	}
@@ -68,7 +68,7 @@ func (h *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, error)
 	}
 	// Fetch a broad slice of recent nodes across all domains then group,
 	// reusing the same logic as recentChanges(group_by_domain=true).
-	all, err := h.store.RecentChanges("", 1000, nil)
+	all, err := hnd.store.RecentChanges("", 1000, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -77,16 +77,16 @@ func (h *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, error)
 	domainTruncated := make(map[string]bool)
 	domainOrder := []string{}
 	resultsTruncated := false
-	for _, n := range all {
-		if _, seen := grouped[n.Domain]; !seen {
-			domainOrder = append(domainOrder, n.Domain)
+	for _, node := range all {
+		if _, seen := grouped[node.Domain]; !seen {
+			domainOrder = append(domainOrder, node.Domain)
 		}
-		if len(grouped[n.Domain]) >= limit {
-			domainTruncated[n.Domain] = true
+		if len(grouped[node.Domain]) >= limit {
+			domainTruncated[node.Domain] = true
 			resultsTruncated = true
 			continue
 		}
-		grouped[n.Domain] = append(grouped[n.Domain], n)
+		grouped[node.Domain] = append(grouped[node.Domain], node)
 	}
 
 	if digest {
@@ -96,22 +96,22 @@ func (h *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, error)
 			RecentResultsTruncated bool     `json:"recent_results_truncated"`
 		}
 		domains := make([]digestDomainEntry, 0, len(domainOrder))
-		for _, d := range domainOrder {
-			entries, err := h.crossDomainRecentEntries(grouped[d])
+		for _, domain := range domainOrder {
+			entries, err := hnd.crossDomainRecentEntries(grouped[domain])
 			if err != nil {
 				return nil, err
 			}
-			lines := digestLines(entries, func(e crossDomainRecentEntry) string {
-				line := fmt.Sprintf("[%s] %s (%s)", e.ID, e.Label, e.UpdatedAt)
-				if e.LifecycleState != "" {
-					line += fmt.Sprintf(" (%s)", e.LifecycleState)
+			lines := digestLines(entries, func(entry crossDomainRecentEntry) string {
+				line := fmt.Sprintf("[%s] %s (%s)", entry.ID, entry.Label, entry.UpdatedAt)
+				if entry.LifecycleState != "" {
+					line += fmt.Sprintf(" (%s)", entry.LifecycleState)
 				}
 				return line
 			})
 			domains = append(domains, digestDomainEntry{
-				Domain:                 d,
+				Domain:                 domain,
 				Recent:                 lines,
-				RecentResultsTruncated: domainTruncated[d],
+				RecentResultsTruncated: domainTruncated[domain],
 			})
 		}
 		resp := struct {
@@ -133,15 +133,15 @@ func (h *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, error)
 		RecentResultsTruncated bool                     `json:"recent_results_truncated"`
 	}
 	domains := make([]domainEntry, 0, len(domainOrder))
-	for _, d := range domainOrder {
-		recent, err := h.crossDomainRecentEntries(grouped[d])
+	for _, domain := range domainOrder {
+		recent, err := hnd.crossDomainRecentEntries(grouped[domain])
 		if err != nil {
 			return nil, err
 		}
 		domains = append(domains, domainEntry{
-			Domain:                 d,
+			Domain:                 domain,
 			Recent:                 recent,
-			RecentResultsTruncated: domainTruncated[d],
+			RecentResultsTruncated: domainTruncated[domain],
 		})
 	}
 
@@ -158,18 +158,18 @@ func (h *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, error)
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResult, error) {
-	liveNodes, err := h.store.CountNodes(domain)
+func (hnd *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResult, error) {
+	liveNodes, err := hnd.store.CountNodes(domain)
 	if err != nil {
 		return nil, err
 	}
-	archivedNodes, err := h.store.CountArchived(domain)
+	archivedNodes, err := hnd.store.CountArchived(domain)
 	if err != nil {
 		return nil, err
 	}
-	staleCount, _ := h.store.CountStaleDrift(domain)
+	staleCount, _ := hnd.store.CountStaleDrift(domain)
 
-	result, err := h.store.SearchNodes(topic, domain, orientRelevantCap+1, "", nil)
+	result, err := hnd.store.SearchNodes(topic, domain, orientRelevantCap+1, "", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -178,43 +178,43 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 		result.Nodes = result.Nodes[:orientRelevantCap]
 	}
 	relevantNodes := make([]db.Node, len(result.Nodes))
-	for i, nr := range result.Nodes {
-		relevantNodes[i] = nr.Node
+	for i, nodeResult := range result.Nodes {
+		relevantNodes[i] = nodeResult.Node
 	}
 
-	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, orientSpineCap+1)
+	spineNodes, err := hnd.store.Timeline(domain, true, nil, nil, nil, nil, orientSpineCap+1)
 	if err != nil {
 		return nil, err
 	}
 	spineNodes, spineTrunc := cappedNodes(spineNodes, orientSpineCap)
 
-	recentRaw, err := h.store.RecentChanges(domain, orientRecentCap+1, nil)
+	recentRaw, err := hnd.store.RecentChanges(domain, orientRecentCap+1, nil)
 	if err != nil {
 		return nil, err
 	}
 	recentRaw, recentTrunc := cappedNodes(recentRaw, orientRecentCap)
 
-	rulesNodes, rulesTrunc, err := h.store.GetStandingNodes(domain, orientRulesCap)
+	rulesNodes, rulesTrunc, err := hnd.store.GetStandingNodes(domain, orientRulesCap)
 	if err != nil {
 		return nil, err
 	}
 
 	var rulesField interface{}
 	if len(rulesNodes) > 0 {
-		rulesField, err = h.orientLeanSection(rulesNodes, digest)
+		rulesField, err = hnd.orientLeanSection(rulesNodes, digest)
 		if err != nil {
 			return nil, err
 		}
 	}
-	spineField, err := h.orientLeanSection(spineNodes, digest)
+	spineField, err := hnd.orientLeanSection(spineNodes, digest)
 	if err != nil {
 		return nil, err
 	}
-	relevantField, err := h.orientLeanSection(relevantNodes, digest)
+	relevantField, err := hnd.orientLeanSection(relevantNodes, digest)
 	if err != nil {
 		return nil, err
 	}
-	recentField, err := h.orientLeanSection(recentRaw, digest)
+	recentField, err := hnd.orientLeanSection(recentRaw, digest)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func (h *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResul
 		orientSectionTruncation
 	}{
 		SummaryHint:         "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. relevant lists memories most similar to the supplied topic. declared_spine lists key decisions chronologically. rules lists the standing constraints and durable decisions that govern this domain. recent shows where work was last happening. Plain prose, no bullet points.",
-		ServerVersion:       h.version,
+		ServerVersion:       hnd.version,
 		LiveNodes:           liveNodes,
 		ArchivedNodes:       archivedNodes,
 		StaleCount:          staleCount,
@@ -273,47 +273,47 @@ type orientDomainEntry struct {
 // buildDomainEntry builds lean orient data for a single domain (no top-level
 // wrapper). topic and digest mirror the single-domain orient options. On an
 // unknown/empty domain the sections are empty slices rather than errors.
-func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDomainEntry, error) {
-	liveNodes, err := h.store.CountNodes(domain)
+func (hnd *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDomainEntry, error) {
+	liveNodes, err := hnd.store.CountNodes(domain)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
-	archivedNodes, err := h.store.CountArchived(domain)
+	archivedNodes, err := hnd.store.CountArchived(domain)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
-	staleCount, _ := h.store.CountStaleDrift(domain)
+	staleCount, _ := hnd.store.CountStaleDrift(domain)
 
 	// Standing rules.
-	rulesNodes, rulesTrunc, err := h.store.GetStandingNodes(domain, orientRulesCap)
+	rulesNodes, rulesTrunc, err := hnd.store.GetStandingNodes(domain, orientRulesCap)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
 	var rulesField interface{}
 	if len(rulesNodes) > 0 {
-		rulesField, err = h.orientLeanSection(rulesNodes, digest)
+		rulesField, err = hnd.orientLeanSection(rulesNodes, digest)
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
 	}
 
-	spineNodes, err := h.store.Timeline(domain, true, nil, nil, nil, nil, orientSpineCap+1)
+	spineNodes, err := hnd.store.Timeline(domain, true, nil, nil, nil, nil, orientSpineCap+1)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
 	spineNodes, spineTrunc := cappedNodes(spineNodes, orientSpineCap)
 
-	recentRaw, err := h.store.RecentChanges(domain, orientRecentCap+1, nil)
+	recentRaw, err := hnd.store.RecentChanges(domain, orientRecentCap+1, nil)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
 	recentRaw, recentTrunc := cappedNodes(recentRaw, orientRecentCap)
 
-	spineField, err := h.orientLeanSection(spineNodes, digest)
+	spineField, err := hnd.orientLeanSection(spineNodes, digest)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
-	recentField, err := h.orientLeanSection(recentRaw, digest)
+	recentField, err := hnd.orientLeanSection(recentRaw, digest)
 	if err != nil {
 		return orientDomainEntry{}, err
 	}
@@ -334,7 +334,7 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 	}
 
 	if topic != "" {
-		result, err := h.store.SearchNodes(topic, domain, orientRelevantCap+1, "", nil)
+		result, err := hnd.store.SearchNodes(topic, domain, orientRelevantCap+1, "", nil)
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
@@ -343,39 +343,39 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 			result.Nodes = result.Nodes[:orientRelevantCap]
 		}
 		relevantNodes := make([]db.Node, len(result.Nodes))
-		for i, nr := range result.Nodes {
-			relevantNodes[i] = nr.Node
+		for i, nodeResult := range result.Nodes {
+			relevantNodes[i] = nodeResult.Node
 		}
-		entry.Relevant, err = h.orientLeanSection(relevantNodes, digest)
+		entry.Relevant, err = hnd.orientLeanSection(relevantNodes, digest)
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
 		entry.RelevantResultsTruncated = relevantTrunc
 	} else {
-		sigResult, err := h.store.GetSignificance(domain, orientSignificantCap, 90, nil, nil, 0)
+		sigResult, err := hnd.store.GetSignificance(domain, orientSignificantCap, 90, nil, nil, 0)
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
 		sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
-		for i, sn := range sigResult.Structural {
+		for i, scoredNode := range sigResult.Structural {
 			sigEntries[i] = scoredLeanEntry{
-				leanEntry:       toLeanEntry(sn.Node),
-				ImportanceScore: sn.ImportanceScore,
+				leanEntry:       toLeanEntry(scoredNode.Node),
+				ImportanceScore: scoredNode.ImportanceScore,
 			}
 		}
-		sigEntries, err = h.annotateSignificantTrust(sigEntries)
+		sigEntries, err = hnd.annotateSignificantTrust(sigEntries)
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
 		if digest {
-			sigEntries = h.annotateTrustDeltas(sigEntries, 3)
+			sigEntries = hnd.annotateTrustDeltas(sigEntries, 3)
 		}
-		for _, e := range sigEntries {
-			if e.Trust != "" {
+		for _, sigEntry := range sigEntries {
+			if sigEntry.Trust != "" {
 				entry.LoadBearingLowTrust++
 			}
 		}
-		entry.Significant, err = h.orientScoredSection(sigEntries, digest)
+		entry.Significant, err = hnd.orientScoredSection(sigEntries, digest)
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
@@ -385,135 +385,135 @@ func (h *Handler) buildDomainEntry(domain, topic string, digest bool) (orientDom
 	return entry, nil
 }
 
-func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	if argsEmpty(args) {
-		return h.orientCrossDomain(0, false)
+		return hnd.orientCrossDomain(0, false)
 	}
-	var a struct {
+	var params struct {
 		Domain  string   `json:"domain"`
 		Domains []string `json:"domains"`
 		Topic   string   `json:"topic"`
 		Digest  bool     `json:"digest"`
 		Limit   int      `json:"limit"`
 	}
-	if err := decodeParams(args, &a, "orient"); err != nil {
+	if err := decodeParams(args, &params, "orient"); err != nil {
 		return nil, err
 	}
 
 	// domains field present with empty array → validation error.
-	if a.Domains != nil && len(a.Domains) == 0 {
+	if params.Domains != nil && len(params.Domains) == 0 {
 		return nil, fmt.Errorf("domains must not be empty — provide 1–5 domain names")
 	}
 
 	// No domain and no domains → cross-domain bootstrap.
-	if a.Domain == "" && len(a.Domains) == 0 {
-		return h.orientCrossDomain(a.Limit, a.Digest)
+	if params.Domain == "" && len(params.Domains) == 0 {
+		return hnd.orientCrossDomain(params.Limit, params.Digest)
 	}
 
 	// Mutual exclusion: domain + domains together is an error.
-	if a.Domain != "" && len(a.Domains) > 0 {
+	if params.Domain != "" && len(params.Domains) > 0 {
 		return nil, fmt.Errorf("domain and domains are mutually exclusive — provide one or the other, not both")
 	}
 
 	// domains array validation.
-	if len(a.Domains) > 0 {
-		if len(a.Domains) > 5 {
-			return nil, fmt.Errorf("domains accepts at most 5 items (got %d) — maximum is 5", len(a.Domains))
+	if len(params.Domains) > 0 {
+		if len(params.Domains) > 5 {
+			return nil, fmt.Errorf("domains accepts at most 5 items (got %d) — maximum is 5", len(params.Domains))
 		}
 		// Length 1: behave identically to orient(domain="X").
-		if len(a.Domains) == 1 {
-			a.Domain = a.Domains[0]
-			a.Domains = nil
+		if len(params.Domains) == 1 {
+			params.Domain = params.Domains[0]
+			params.Domains = nil
 			// Fall through to single-domain path below.
 		} else {
 			// Multi-domain path: build each entry in input order.
-			return h.orientMultiDomain(a.Domains, a.Topic, a.Digest)
+			return hnd.orientMultiDomain(params.Domains, params.Topic, params.Digest)
 		}
 	}
 
 	// Single-domain path (domain is set, domains is empty).
-	if a.Topic != "" {
-		return h.orientWithTopic(a.Domain, a.Topic, a.Digest)
+	if params.Topic != "" {
+		return hnd.orientWithTopic(params.Domain, params.Topic, params.Digest)
 	}
 
 	// Step 1: count live and archived nodes for the domain.
-	liveNodes, err := h.store.CountNodes(a.Domain)
+	liveNodes, err := hnd.store.CountNodes(params.Domain)
 	if err != nil {
 		return nil, err
 	}
 	if liveNodes == 0 {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "Nothing has been filed for this domain yet."}}}, nil
 	}
-	archivedNodes, err := h.store.CountArchived(a.Domain)
+	archivedNodes, err := hnd.store.CountArchived(params.Domain)
 	if err != nil {
 		return nil, err
 	}
-	staleCount, _ := h.store.CountStaleDrift(a.Domain)
+	staleCount, _ := hnd.store.CountStaleDrift(params.Domain)
 
 	// Step 2: fetch significant nodes (structurally load-bearing, recency-weighted inbound degree).
-	sigResult, err := h.store.GetSignificance(a.Domain, orientSignificantCap, 90, nil, nil, 0)
+	sigResult, err := hnd.store.GetSignificance(params.Domain, orientSignificantCap, 90, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 3: fetch recent changes — capped at orientRecentCap.
-	recentRaw, err := h.store.RecentChanges(a.Domain, orientRecentCap+1, nil)
+	recentRaw, err := hnd.store.RecentChanges(params.Domain, orientRecentCap+1, nil)
 	if err != nil {
 		return nil, err
 	}
 	recentRaw, recentTrunc := cappedNodes(recentRaw, orientRecentCap)
 
 	// Step 4: fetch declared decision spine (nodes with occurred_at set, chronological).
-	spineNodes, err := h.store.Timeline(a.Domain, true, nil, nil, nil, nil, orientSpineCap+1)
+	spineNodes, err := hnd.store.Timeline(params.Domain, true, nil, nil, nil, nil, orientSpineCap+1)
 	if err != nil {
 		return nil, err
 	}
 	spineNodes, spineTrunc := cappedNodes(spineNodes, orientSpineCap)
 
 	// Step 4b: fetch standing nodes (rules)
-	rulesNodes, rulesTrunc, err := h.store.GetStandingNodes(a.Domain, orientRulesCap)
+	rulesNodes, rulesTrunc, err := hnd.store.GetStandingNodes(params.Domain, orientRulesCap)
 	if err != nil {
 		return nil, err
 	}
 
 	sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
-	for i, sn := range sigResult.Structural {
+	for i, scoredNode := range sigResult.Structural {
 		sigEntries[i] = scoredLeanEntry{
-			leanEntry:       toLeanEntry(sn.Node),
-			ImportanceScore: sn.ImportanceScore,
+			leanEntry:       toLeanEntry(scoredNode.Node),
+			ImportanceScore: scoredNode.ImportanceScore,
 		}
 	}
-	sigEntries, err = h.annotateSignificantTrust(sigEntries)
+	sigEntries, err = hnd.annotateSignificantTrust(sigEntries)
 	if err != nil {
 		return nil, err
 	}
-	if a.Digest {
-		sigEntries = h.annotateTrustDeltas(sigEntries, 3)
+	if params.Digest {
+		sigEntries = hnd.annotateTrustDeltas(sigEntries, 3)
 	}
 
 	lowTrustCount := 0
-	for _, e := range sigEntries {
-		if e.Trust != "" {
+	for _, sigEntry := range sigEntries {
+		if sigEntry.Trust != "" {
 			lowTrustCount++
 		}
 	}
 
 	var rulesField interface{}
 	if len(rulesNodes) > 0 {
-		rulesField, err = h.orientLeanSection(rulesNodes, a.Digest)
+		rulesField, err = hnd.orientLeanSection(rulesNodes, params.Digest)
 		if err != nil {
 			return nil, err
 		}
 	}
-	spineField, err := h.orientLeanSection(spineNodes, a.Digest)
+	spineField, err := hnd.orientLeanSection(spineNodes, params.Digest)
 	if err != nil {
 		return nil, err
 	}
-	significantField, err := h.orientScoredSection(sigEntries, a.Digest)
+	significantField, err := hnd.orientScoredSection(sigEntries, params.Digest)
 	if err != nil {
 		return nil, err
 	}
-	recentField, err := h.orientLeanSection(recentRaw, a.Digest)
+	recentField, err := hnd.orientLeanSection(recentRaw, params.Digest)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +532,7 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		orientSectionTruncation
 	}{
 		SummaryHint:         "Synthesise the following into a narrative paragraph (max 300 words) covering: current state, known blockers, recent decisions, and open questions. The declared_spine lists the key decisions that shaped this domain, in chronological order — weigh these heavily when summarising. rules lists the standing constraints and durable decisions that govern this domain. significant lists structurally load-bearing memories right now. recent shows where work was last happening. When load_bearing_low_trust > 0, inspect significant entries with a trust annotation and consider whether they warrant review. Plain prose, no bullet points.",
-		ServerVersion:       h.version,
+		ServerVersion:       hnd.version,
 		LiveNodes:           liveNodes,
 		ArchivedNodes:       archivedNodes,
 		StaleCount:          staleCount,
@@ -554,10 +554,10 @@ func (h *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 }
 
 // orientMultiDomain handles orient(domains=[2..5 items], topic?, digest?).
-func (h *Handler) orientMultiDomain(domains []string, topic string, digest bool) (*ToolResult, error) {
+func (hnd *Handler) orientMultiDomain(domains []string, topic string, digest bool) (*ToolResult, error) {
 	entries := make([]orientDomainEntry, len(domains))
-	for i, d := range domains {
-		entry, err := h.buildDomainEntry(d, topic, digest)
+	for i, domain := range domains {
+		entry, err := hnd.buildDomainEntry(domain, topic, digest)
 		if err != nil {
 			return nil, err
 		}
@@ -571,7 +571,7 @@ func (h *Handler) orientMultiDomain(domains []string, topic string, digest bool)
 	}{
 		SummaryHint:   "Synthesise each domain's section into its own narrative paragraph (max 300 words), covering: current state, known blockers, recent decisions, and open questions. declared_spine lists key decisions chronologically. rules lists standing constraints. significant/relevant lists load-bearing or topic-matched memories. recent shows where work was last happening. Plain prose per domain, no bullet points.",
 		Orientations:  entries,
-		ServerVersion: h.version,
+		ServerVersion: hnd.version,
 	}
 	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil

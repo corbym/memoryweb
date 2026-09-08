@@ -17,8 +17,8 @@ func validateConnectVerdict(verdict string) error {
 	if verdict == "supersedes" {
 		return fmt.Errorf(`invalid verdict %q — use "superseded" (verdict enum is past tense; relationship type is "supersedes")`, verdict)
 	}
-	for _, v := range connectVerdictValues {
-		if verdict == v {
+	for _, value := range connectVerdictValues {
+		if verdict == value {
 			return nil
 		}
 	}
@@ -32,36 +32,36 @@ func connectVerdictForRelationship(relationship, verdict string) string {
 	return ""
 }
 
-func (h *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
-	return dispatchBatch(args, "connect", h.addEdgeSingle, h.addEdgesBatch)
+func (hnd *Handler) addEdge(args json.RawMessage) (*ToolResult, error) {
+	return dispatchBatch(args, "connect", hnd.addEdgeSingle, hnd.addEdgesBatch)
 }
 
-func (h *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
 	// Detect retired parameter names before unmarshalling.
 	if msg := detectLegacyEdgeKeys(args); msg != "" {
 		return errorResult(msg), nil
 	}
 
-	var a struct {
+	var params struct {
 		FromMemory   string `json:"from_memory"`
 		ToMemory     string `json:"to_memory"`
 		Relationship string `json:"relationship"`
 		Narrative    string `json:"narrative"`
 		Verdict      string `json:"verdict"`
 	}
-	if err := decodeParams(args, &a, "connect"); err != nil {
+	if err := decodeParams(args, &params, "connect"); err != nil {
 		return nil, err
 	}
 	if err := requireNonEmpty(map[string]string{
-		"from_memory": a.FromMemory,
-		"to_memory":   a.ToMemory,
+		"from_memory": params.FromMemory,
+		"to_memory":   params.ToMemory,
 	}); err != nil {
 		return nil, err
 	}
-	if err := validateConnectVerdict(a.Verdict); err != nil {
+	if err := validateConnectVerdict(params.Verdict); err != nil {
 		return errorResult(err.Error()), nil
 	}
-	edge, err := h.store.AddEdge(a.FromMemory, a.ToMemory, a.Relationship, a.Narrative, connectVerdictForRelationship(a.Relationship, a.Verdict))
+	edge, err := hnd.store.AddEdge(params.FromMemory, params.ToMemory, params.Relationship, params.Narrative, connectVerdictForRelationship(params.Relationship, params.Verdict))
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func detectLegacyEdgeKeys(raw json.RawMessage) string {
 }
 
 // addEdgesBatch handles the batch mode of connect: items is the raw JSON array of edge objects.
-func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	type edgeItem struct {
 		FromMemory   string `json:"from_memory"`
 		ToMemory     string `json:"to_memory"`
@@ -117,19 +117,19 @@ func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	inputs := make([]db.EdgeInput, len(edgeList))
-	for i, e := range edgeList {
-		if err := validateConnectVerdict(e.Verdict); err != nil {
+	for i, edge := range edgeList {
+		if err := validateConnectVerdict(edge.Verdict); err != nil {
 			return errorResult(fmt.Sprintf("item %d: %s", i, err.Error())), nil
 		}
 		inputs[i] = db.EdgeInput{
-			FromNode:     e.FromMemory,
-			ToNode:       e.ToMemory,
-			Relationship: e.Relationship,
-			Narrative:    e.Narrative,
-			Verdict:      connectVerdictForRelationship(e.Relationship, e.Verdict),
+			FromNode:     edge.FromMemory,
+			ToNode:       edge.ToMemory,
+			Relationship: edge.Relationship,
+			Narrative:    edge.Narrative,
+			Verdict:      connectVerdictForRelationship(edge.Relationship, edge.Verdict),
 		}
 	}
-	edges, err := h.store.AddEdgesBatch(inputs)
+	edges, err := hnd.store.AddEdgesBatch(inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -137,21 +137,21 @@ func (h *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
+func (hnd *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
+	var params struct {
 		ID    string `json:"id"`
 		Limit int    `json:"limit"`
 	}
-	if err := decodeParams(args, &a, "suggest_connections"); err != nil {
+	if err := decodeParams(args, &params, "suggest_connections"); err != nil {
 		return nil, err
 	}
-	if a.ID == "" {
+	if params.ID == "" {
 		return nil, fmt.Errorf("id is required")
 	}
-	if a.Limit <= 0 {
-		a.Limit = 5
+	if params.Limit <= 0 {
+		params.Limit = 5
 	}
-	suggestions, err := h.store.SuggestEdges(a.ID, a.Limit)
+	suggestions, err := hnd.store.SuggestEdges(params.ID, params.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -162,43 +162,43 @@ func (h *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
-func (h *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
+func (hnd *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
+	var params struct {
 		ID string `json:"id"`
 	}
-	if err := decodeParams(args, &a, "disconnect"); err != nil {
+	if err := decodeParams(args, &params, "disconnect"); err != nil {
 		return nil, err
 	}
-	if a.ID == "" {
+	if params.ID == "" {
 		return nil, fmt.Errorf("id is required")
 	}
-	if err := h.store.DeleteEdge(a.ID); err != nil {
+	if err := hnd.store.DeleteEdge(params.ID); err != nil {
 		return errorResult(err.Error()), nil
 	}
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Edge %q removed.", a.ID)}}}, nil
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Edge %q removed.", params.ID)}}}, nil
 }
 
 // disconnectAll hard-deletes multiple edges in a single atomic transaction.
-func (h *Handler) disconnectAll(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
+func (hnd *Handler) disconnectAll(args json.RawMessage) (*ToolResult, error) {
+	var params struct {
 		Items []struct {
 			EdgeID string `json:"edge_id"`
 		} `json:"items"`
 	}
-	if err := decodeParams(args, &a, "disconnect_all"); err != nil {
+	if err := decodeParams(args, &params, "disconnect_all"); err != nil {
 		return nil, err
 	}
-	if len(a.Items) == 0 {
+	if len(params.Items) == 0 {
 		return errorResult("items is required and must not be empty"), nil
 	}
-	ids := make([]string, len(a.Items))
-	for i, item := range a.Items {
+	ids := make([]string, len(params.Items))
+	for i, item := range params.Items {
 		if item.EdgeID == "" {
 			return errorResult(fmt.Sprintf("item %d is missing edge_id", i)), nil
 		}
 		ids[i] = item.EdgeID
 	}
-	if err := h.store.DeleteEdgesBatch(ids); err != nil {
+	if err := hnd.store.DeleteEdgesBatch(ids); err != nil {
 		return errorResult(err.Error()), nil
 	}
 	b, _ := json.Marshal(map[string]any{"removed": len(ids)})

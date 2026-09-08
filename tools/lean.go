@@ -32,17 +32,17 @@ type leanSearchResult struct {
 
 func toLeanSearchResult(r *db.SearchResult) leanSearchResult {
 	nodes := make([]leanSearchNode, len(r.Nodes))
-	for i, nr := range r.Nodes {
+	for i, nodeResult := range r.Nodes {
 		nodes[i] = leanSearchNode{
-			leanEntry:        toLeanEntry(nr.Node),
-			Domain:           nr.Node.Domain,
-			NodeKind:         nr.Node.NodeKind,
-			SemanticDistance: nr.SemanticDistance,
+			leanEntry:        toLeanEntry(nodeResult.Node),
+			Domain:           nodeResult.Node.Domain,
+			NodeKind:         nodeResult.Node.NodeKind,
+			SemanticDistance: nodeResult.SemanticDistance,
 		}
 	}
 	edges := make([]leanEdge, len(r.Edges))
-	for i, e := range r.Edges {
-		edges[i] = leanEdge{FromNode: e.FromNode, ToNode: e.ToNode, Relationship: e.Relationship}
+	for i, edge := range r.Edges {
+		edges[i] = leanEdge{FromNode: edge.FromNode, ToNode: edge.ToNode, Relationship: edge.Relationship}
 	}
 	return leanSearchResult{Nodes: nodes, Edges: edges, Truncated: r.Truncated}
 }
@@ -82,20 +82,20 @@ type leanEntry struct {
 	LifecycleState string  `json:"lifecycle_state,omitempty"`
 }
 
-func toLeanEntry(n db.Node) leanEntry {
-	why, truncated := truncateWhy(n.WhyMatters)
-	e := leanEntry{ID: n.ID, Label: n.Label, WhyMatters: why, Truncated: truncated}
-	if n.OccurredAt != nil {
-		s := n.OccurredAt.Format("2006-01-02")
-		e.OccurredAt = &s
+func toLeanEntry(node db.Node) leanEntry {
+	why, truncated := truncateWhy(node.WhyMatters)
+	entry := leanEntry{ID: node.ID, Label: node.Label, WhyMatters: why, Truncated: truncated}
+	if node.OccurredAt != nil {
+		date := node.OccurredAt.Format("2006-01-02")
+		entry.OccurredAt = &date
 	}
-	return e
+	return entry
 }
 
 func toLeanEntries(nodes []db.Node) []leanEntry {
 	entries := make([]leanEntry, len(nodes))
-	for i, n := range nodes {
-		entries[i] = toLeanEntry(n)
+	for i, node := range nodes {
+		entries[i] = toLeanEntry(node)
 	}
 	return entries
 }
@@ -142,12 +142,12 @@ type leanTrustResult struct {
 
 func toLeanTrustResult(r db.TrustResult) leanTrustResult {
 	nodes := make([]leanTrustNode, len(r.Nodes))
-	for i, n := range r.Nodes {
+	for i, node := range r.Nodes {
 		nodes[i] = leanTrustNode{
-			leanEntry:  toLeanEntry(n.Node),
-			NodeKind:   n.NodeKind,
-			TrustScore: n.TrustScore,
-			TrustBasis: n.TrustBasis,
+			leanEntry:  toLeanEntry(node.Node),
+			NodeKind:   node.NodeKind,
+			TrustScore: node.TrustScore,
+			TrustBasis: node.TrustBasis,
 		}
 	}
 	return leanTrustResult{Nodes: nodes, CallID: r.CallID}
@@ -155,12 +155,12 @@ func toLeanTrustResult(r db.TrustResult) leanTrustResult {
 
 func toLeanSignificanceResult(r db.SignificanceResult) leanSignificanceResult {
 	structural := make([]scoredLeanEntry, len(r.Structural))
-	for i, sn := range r.Structural {
-		structural[i] = scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore}
+	for i, scoredNode := range r.Structural {
+		structural[i] = scoredLeanEntry{leanEntry: toLeanEntry(scoredNode.Node), ImportanceScore: scoredNode.ImportanceScore}
 	}
 	uncurated := make([]scoredLeanEntry, len(r.Uncurated))
-	for i, sn := range r.Uncurated {
-		uncurated[i] = scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore}
+	for i, scoredNode := range r.Uncurated {
+		uncurated[i] = scoredLeanEntry{leanEntry: toLeanEntry(scoredNode.Node), ImportanceScore: scoredNode.ImportanceScore}
 	}
 	return leanSignificanceResult{
 		Declared:                         toLeanEntries(r.Declared),
@@ -184,17 +184,17 @@ func sanitiseDigestField(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func digestLineFromEntry(e leanEntry) string {
-	label := sanitiseDigestField(e.Label)
-	line := fmt.Sprintf("[%s] %s", e.ID, label)
-	if e.WhyMatters != "" {
-		line += " — " + sanitiseDigestField(e.WhyMatters)
+func digestLineFromEntry(entry leanEntry) string {
+	label := sanitiseDigestField(entry.Label)
+	line := fmt.Sprintf("[%s] %s", entry.ID, label)
+	if entry.WhyMatters != "" {
+		line += " — " + sanitiseDigestField(entry.WhyMatters)
 	}
-	if e.OccurredAt != nil {
-		line += fmt.Sprintf(" (%s)", *e.OccurredAt)
+	if entry.OccurredAt != nil {
+		line += fmt.Sprintf(" (%s)", *entry.OccurredAt)
 	}
-	if e.LifecycleState != "" {
-		line += fmt.Sprintf(" (%s)", e.LifecycleState)
+	if entry.LifecycleState != "" {
+		line += fmt.Sprintf(" (%s)", entry.LifecycleState)
 	}
 	return line
 }
@@ -203,35 +203,35 @@ func digestLinesFromEntries(entries []leanEntry) []string {
 	return digestLines(entries, digestLineFromEntry)
 }
 
-func digestLineFromScored(e scoredLeanEntry) string {
-	line := fmt.Sprintf("%s (score: %.2f)", digestLineFromEntry(e.leanEntry), e.ImportanceScore)
-	if e.Trust != "" {
-		line += fmt.Sprintf(" (trust: %s)", sanitiseDigestField(e.Trust))
+func digestLineFromScored(entry scoredLeanEntry) string {
+	line := fmt.Sprintf("%s (score: %.2f)", digestLineFromEntry(entry.leanEntry), entry.ImportanceScore)
+	if entry.Trust != "" {
+		line += fmt.Sprintf(" (trust: %s)", sanitiseDigestField(entry.Trust))
 	}
 	return line
 }
 
-func digestLineFromSearchNode(n leanSearchNode) string {
-	label := sanitiseDigestField(n.Label)
+func digestLineFromSearchNode(node leanSearchNode) string {
+	label := sanitiseDigestField(node.Label)
 	var line string
-	if n.WhyMatters != "" {
-		excerpt := sanitiseDigestField(n.WhyMatters)
-		line = fmt.Sprintf("[%s] %s — %s (%s, %s)", n.ID, label, excerpt, n.Domain, n.NodeKind)
+	if node.WhyMatters != "" {
+		excerpt := sanitiseDigestField(node.WhyMatters)
+		line = fmt.Sprintf("[%s] %s — %s (%s, %s)", node.ID, label, excerpt, node.Domain, node.NodeKind)
 	} else {
-		line = fmt.Sprintf("[%s] %s (%s, %s)", n.ID, label, n.Domain, n.NodeKind)
+		line = fmt.Sprintf("[%s] %s (%s, %s)", node.ID, label, node.Domain, node.NodeKind)
 	}
-	if n.LifecycleState != "" {
-		line += fmt.Sprintf(" (%s)", n.LifecycleState)
+	if node.LifecycleState != "" {
+		line += fmt.Sprintf(" (%s)", node.LifecycleState)
 	}
-	if n.SemanticDistance != nil && *n.SemanticDistance > 0 {
-		line += fmt.Sprintf("  %.2f", *n.SemanticDistance)
+	if node.SemanticDistance != nil && *node.SemanticDistance > 0 {
+		line += fmt.Sprintf("  %.2f", *node.SemanticDistance)
 	}
 	return line
 }
 
-func digestLineFromTrust(n leanTrustNode) string {
-	basis := sanitiseDigestField(n.TrustBasis)
-	return fmt.Sprintf("%s (trust: %.2f) %s", digestLineFromEntry(n.leanEntry), n.TrustScore, basis)
+func digestLineFromTrust(node leanTrustNode) string {
+	basis := sanitiseDigestField(node.TrustBasis)
+	return fmt.Sprintf("%s (trust: %.2f) %s", digestLineFromEntry(node.leanEntry), node.TrustScore, basis)
 }
 
 type digestSearchResult struct {
@@ -242,12 +242,12 @@ type digestSearchResult struct {
 
 func toDigestSearchResult(r *db.SearchResult) digestSearchResult {
 	lines := make([]string, len(r.Nodes))
-	for i, nr := range r.Nodes {
-		lines[i] = digestLineFromSearchNode(leanSearchNode{leanEntry: toLeanEntry(nr.Node), SemanticDistance: nr.SemanticDistance})
+	for i, nodeResult := range r.Nodes {
+		lines[i] = digestLineFromSearchNode(leanSearchNode{leanEntry: toLeanEntry(nodeResult.Node), SemanticDistance: nodeResult.SemanticDistance})
 	}
 	edges := make([]leanEdge, len(r.Edges))
-	for i, e := range r.Edges {
-		edges[i] = leanEdge{FromNode: e.FromNode, ToNode: e.ToNode, Relationship: e.Relationship}
+	for i, edge := range r.Edges {
+		edges[i] = leanEdge{FromNode: edge.FromNode, ToNode: edge.ToNode, Relationship: edge.Relationship}
 	}
 	return digestSearchResult{Lines: lines, Edges: edges, Truncated: r.Truncated}
 }
@@ -266,12 +266,12 @@ type digestSignificanceResult struct {
 
 func toDigestSignificanceResult(r db.SignificanceResult) digestSignificanceResult {
 	structural := make([]string, len(r.Structural))
-	for i, sn := range r.Structural {
-		structural[i] = digestLineFromScored(scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore})
+	for i, scoredNode := range r.Structural {
+		structural[i] = digestLineFromScored(scoredLeanEntry{leanEntry: toLeanEntry(scoredNode.Node), ImportanceScore: scoredNode.ImportanceScore})
 	}
 	uncurated := make([]string, len(r.Uncurated))
-	for i, sn := range r.Uncurated {
-		uncurated[i] = digestLineFromScored(scoredLeanEntry{leanEntry: toLeanEntry(sn.Node), ImportanceScore: sn.ImportanceScore})
+	for i, scoredNode := range r.Uncurated {
+		uncurated[i] = digestLineFromScored(scoredLeanEntry{leanEntry: toLeanEntry(scoredNode.Node), ImportanceScore: scoredNode.ImportanceScore})
 	}
 	return digestSignificanceResult{
 		Declared:                         digestLinesFromEntries(toLeanEntries(r.Declared)),
@@ -293,12 +293,12 @@ type digestTrustResult struct {
 
 func toDigestTrustResult(r db.TrustResult) digestTrustResult {
 	lines := make([]string, len(r.Nodes))
-	for i, n := range r.Nodes {
+	for i, node := range r.Nodes {
 		lines[i] = digestLineFromTrust(leanTrustNode{
-			leanEntry:  toLeanEntry(n.Node),
-			NodeKind:   n.NodeKind,
-			TrustScore: n.TrustScore,
-			TrustBasis: n.TrustBasis,
+			leanEntry:  toLeanEntry(node.Node),
+			NodeKind:   node.NodeKind,
+			TrustScore: node.TrustScore,
+			TrustBasis: node.TrustBasis,
 		})
 	}
 	return digestTrustResult{Lines: lines, CallID: r.CallID}

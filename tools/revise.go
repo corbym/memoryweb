@@ -22,16 +22,16 @@ type reviseConnection struct {
 // annotating each peer with its label from the provided map.
 func buildReviseConnections(nwe *db.NodeWithEdges, labels map[string]string) []reviseConnection {
 	conns := make([]reviseConnection, 0, len(nwe.Edges))
-	for _, e := range nwe.Edges {
+	for _, edge := range nwe.Edges {
 		var dir, peerID string
-		if e.FromNode == nwe.Node.ID {
-			dir, peerID = "outbound", e.ToNode
+		if edge.FromNode == nwe.Node.ID {
+			dir, peerID = "outbound", edge.ToNode
 		} else {
-			dir, peerID = "inbound", e.FromNode
+			dir, peerID = "inbound", edge.FromNode
 		}
 		conns = append(conns, reviseConnection{
 			Direction:    dir,
-			Relationship: e.Relationship,
+			Relationship: edge.Relationship,
 			PeerID:       peerID,
 			PeerLabel:    labels[peerID],
 		})
@@ -42,11 +42,11 @@ func buildReviseConnections(nwe *db.NodeWithEdges, labels map[string]string) []r
 // peerIDsFromEdges collects the IDs of all peer nodes in an edge list.
 func peerIDsFromEdges(edges []db.Edge, nodeID string) []string {
 	ids := make([]string, 0, len(edges))
-	for _, e := range edges {
-		if e.FromNode == nodeID {
-			ids = append(ids, e.ToNode)
+	for _, edge := range edges {
+		if edge.FromNode == nodeID {
+			ids = append(ids, edge.ToNode)
 		} else {
-			ids = append(ids, e.FromNode)
+			ids = append(ids, edge.FromNode)
 		}
 	}
 	return ids
@@ -65,11 +65,11 @@ func detectLegacyNodeUpdateKeys(raw json.RawMessage) string {
 	return ""
 }
 
-func (h *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
-	return dispatchBatch(args, "revise", h.updateNodeSingle, h.updateNodesBatch)
+func (hnd *Handler) updateNode(args json.RawMessage) (*ToolResult, error) {
+	return dispatchBatch(args, "revise", hnd.updateNodeSingle, hnd.updateNodesBatch)
 }
 
-func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	// Detect the retired revise_all/updates wrapper format.
 	if msg := detectLegacyNodeUpdateKeys(args); msg != "" {
 		return errorResult(msg), nil
@@ -78,7 +78,7 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		return errorResult(msg), nil
 	}
 
-	var a struct {
+	var params struct {
 		ID          string  `json:"id"`
 		Label       *string `json:"label"`
 		Description *string `json:"description"`
@@ -90,82 +90,82 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		Domain      *string `json:"domain"`
 		Reason      *string `json:"reason"`
 	}
-	if err := decodeParams(args, &a, "revise"); err != nil {
+	if err := decodeParams(args, &params, "revise"); err != nil {
 		return nil, err
 	}
-	if a.ID == "" {
+	if params.ID == "" {
 		return nil, fmt.Errorf("id is required")
 	}
-	existingNwe, err := h.store.GetNode(a.ID)
+	existingNwe, err := hnd.store.GetNode(params.ID)
 	if err != nil {
 		return nil, err
 	}
-	contentTouched := reviseContentTouched(existingNwe.Node, a.Label, a.Description, a.WhyMatters, a.NodeKind)
+	contentTouched := reviseContentTouched(existingNwe.Node, params.Label, params.Description, params.WhyMatters, params.NodeKind)
 	var occurredAt *time.Time
-	if a.OccurredAt != nil {
-		t, err := time.Parse(time.RFC3339, *a.OccurredAt)
+	if params.OccurredAt != nil {
+		t, err := time.Parse(time.RFC3339, *params.OccurredAt)
 		if err != nil {
-			t, err = time.Parse("2006-01-02", *a.OccurredAt)
+			t, err = time.Parse("2006-01-02", *params.OccurredAt)
 			if err != nil {
-				return nil, fmt.Errorf("invalid occurred_at format, expected ISO8601 date or datetime: %s", *a.OccurredAt)
+				return nil, fmt.Errorf("invalid occurred_at format, expected ISO8601 date or datetime: %s", *params.OccurredAt)
 			}
 		}
 		occurredAt = &t
 	}
 	if occurredAt != nil {
-		callHasWhyMatters := a.WhyMatters != nil && *a.WhyMatters != ""
+		callHasWhyMatters := params.WhyMatters != nil && *params.WhyMatters != ""
 		if !callHasWhyMatters && existingNwe.Node.WhyMatters == "" {
 			return nil, fmt.Errorf("occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.")
 		}
 	}
-	if a.Domain != nil {
-		resolved := h.store.ResolveAlias(*a.Domain)
+	if params.Domain != nil {
+		resolved := hnd.store.ResolveAlias(*params.Domain)
 		if resolved == existingNwe.Node.Domain {
-			a.Domain = nil
-		} else if a.Reason == nil || strings.TrimSpace(*a.Reason) == "" {
+			params.Domain = nil
+		} else if params.Reason == nil || strings.TrimSpace(*params.Reason) == "" {
 			return errorResult("reason is required when changing domain — confirm the target domain with the user before moving"), nil
 		}
 	}
 	// backcompat: transient=true maps to node_kind=transient
-	if a.Transient != nil && a.NodeKind == nil {
-		if *a.Transient {
+	if params.Transient != nil && params.NodeKind == nil {
+		if *params.Transient {
 			s := "transient"
-			a.NodeKind = &s
+			params.NodeKind = &s
 		} else {
 			s := "decision"
-			a.NodeKind = &s
+			params.NodeKind = &s
 		}
 	}
-	node, err := h.store.UpdateNode(a.ID, a.Label, a.Description, a.WhyMatters, a.Tags, occurredAt, a.NodeKind, a.Domain, a.Reason)
+	node, err := hnd.store.UpdateNode(params.ID, params.Label, params.Description, params.WhyMatters, params.Tags, occurredAt, params.NodeKind, params.Domain, params.Reason)
 	if err != nil {
 		return nil, err
 	}
 
-	nwe, err := h.store.GetNode(a.ID)
+	nwe, err := hnd.store.GetNode(params.ID)
 	if err != nil {
 		return nil, err
 	}
 
 	var trustNudge string
 	if contentTouched {
-		nudge, nudgeErr := h.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, a.ID), a.ID)
+		nudge, nudgeErr := hnd.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, params.ID), params.ID)
 		if nudgeErr != nil {
-			log.Printf("[memoryweb] trust nudge for %s: %v", a.ID, nudgeErr)
+			log.Printf("[memoryweb] trust nudge for %s: %v", params.ID, nudgeErr)
 		} else {
 			trustNudge = nudge
 		}
 	}
 
-	peerIDs := peerIDsFromEdges(nwe.Edges, a.ID)
-	labels := h.store.GetNodeLabels(peerIDs)
+	peerIDs := peerIDsFromEdges(nwe.Edges, params.ID)
+	labels := hnd.store.GetNodeLabels(peerIDs)
 	connections := buildReviseConnections(nwe, labels)
 
-	suggestions, err := h.store.SuggestEdges(a.ID, 5)
+	suggestions, err := hnd.store.SuggestEdges(params.ID, 5)
 	if err != nil || suggestions == nil {
 		suggestions = []db.EdgeSuggestion{}
 	}
 
-	duplicates, err := h.store.FindPossibleDuplicates(node.Label, node.Domain, node.ID)
+	duplicates, err := hnd.store.FindPossibleDuplicates(node.Label, node.Domain, node.ID)
 	if err != nil || duplicates == nil {
 		duplicates = []db.Node{}
 	}
@@ -188,7 +188,7 @@ func (h *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) {
 }
 
 // updateNodesBatch handles the batch mode of revise: items is the raw JSON array of update objects.
-func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	type updateItem struct {
 		ID          string  `json:"id"`
 		Label       *string `json:"label"`
@@ -220,7 +220,7 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		if u.ID == "" {
 			return nil, fmt.Errorf("update %d: id is required", i)
 		}
-		existingNwe, err := h.store.GetNode(u.ID)
+		existingNwe, err := hnd.store.GetNode(u.ID)
 		if err != nil {
 			return nil, fmt.Errorf("update %d: %w", i, err)
 		}
@@ -243,7 +243,7 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 			}
 		}
 		if u.Domain != nil {
-			resolved := h.store.ResolveAlias(*u.Domain)
+			resolved := hnd.store.ResolveAlias(*u.Domain)
 			if resolved == existingNwe.Node.Domain {
 				u.Domain = nil
 			} else if u.Reason == nil || strings.TrimSpace(*u.Reason) == "" {
@@ -273,7 +273,7 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 			Reason:      u.Reason,
 		}
 	}
-	nodes, err := h.store.UpdateNodesBatch(inputs)
+	nodes, err := hnd.store.UpdateNodesBatch(inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -286,14 +286,14 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	}
 	updated := make([]updatedEntry, len(nodes))
 	for i, node := range nodes {
-		nwe, err := h.store.GetNode(node.ID)
+		nwe, err := hnd.store.GetNode(node.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		var trustNudge string
 		if contentTouched[i] {
-			nudge, nudgeErr := h.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, node.ID), node.ID)
+			nudge, nudgeErr := hnd.trustNudgeForDependencies(outboundDependencyIDs(nwe.Edges, node.ID), node.ID)
 			if nudgeErr != nil {
 				log.Printf("[memoryweb] trust nudge for %s: %v", node.ID, nudgeErr)
 			} else {
@@ -302,10 +302,10 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		}
 
 		peerIDs := peerIDsFromEdges(nwe.Edges, node.ID)
-		labels := h.store.GetNodeLabels(peerIDs)
+		labels := hnd.store.GetNodeLabels(peerIDs)
 		connections := buildReviseConnections(nwe, labels)
 
-		suggestions, _ := h.store.SuggestEdges(node.ID, 5)
+		suggestions, _ := hnd.store.SuggestEdges(node.ID, 5)
 		if suggestions == nil {
 			suggestions = []db.EdgeSuggestion{}
 		}
@@ -325,8 +325,8 @@ func (h *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error) {
 }
 
 // updateNodes retains the old revise_all wire format for backward compat during transition (not exposed in ListTools).
-func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
+func (hnd *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
+	var params struct {
 		Updates []struct {
 			ID          string  `json:"id"`
 			Label       *string `json:"label"`
@@ -336,12 +336,12 @@ func (h *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
 			OccurredAt  *string `json:"occurred_at"`
 		} `json:"updates"`
 	}
-	if err := decodeParams(args, &a, "revise"); err != nil {
+	if err := decodeParams(args, &params, "revise"); err != nil {
 		return nil, err
 	}
-	raw, err := json.Marshal(a.Updates)
+	raw, err := json.Marshal(params.Updates)
 	if err != nil {
 		return nil, err
 	}
-	return h.updateNodesBatch(raw)
+	return hnd.updateNodesBatch(raw)
 }

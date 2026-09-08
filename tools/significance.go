@@ -7,8 +7,8 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
-func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
+func (hnd *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) {
+	var params struct {
 		Domain        string `json:"domain"`
 		MemoryID      string `json:"memory_id"`
 		Depth         int    `json:"depth"`
@@ -20,50 +20,50 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 		Mode          string `json:"mode"`
 		Digest        bool   `json:"digest"`
 	}
-	if err := decodeParams(args, &a, "significance"); err != nil {
+	if err := decodeParams(args, &params, "significance"); err != nil {
 		return nil, err
 	}
-	if a.Domain == "" && a.MemoryID == "" {
+	if params.Domain == "" && params.MemoryID == "" {
 		return errorResult("domain or memory_id is required"), nil
 	}
-	if a.Limit <= 0 {
-		a.Limit = 10
+	if params.Limit <= 0 {
+		params.Limit = 10
 	}
-	if a.DeclaredLimit <= 0 {
-		a.DeclaredLimit = 100
+	if params.DeclaredLimit <= 0 {
+		params.DeclaredLimit = 100
 	}
-	if a.DeclaredLimit > 500 {
-		a.DeclaredLimit = 500
+	if params.DeclaredLimit > 500 {
+		params.DeclaredLimit = 500
 	}
-	if a.RecencyWindow <= 0 {
-		a.RecencyWindow = 90
+	if params.RecencyWindow <= 0 {
+		params.RecencyWindow = 90
 	}
 
 	var tags []string
-	for _, tag := range strings.Split(a.Tags, ",") {
+	for _, tag := range strings.Split(params.Tags, ",") {
 		tag = strings.TrimSpace(tag)
 		if tag != "" {
 			tags = append(tags, tag)
 		}
 	}
-	nodeKinds := splitNodeKinds(a.NodeKind)
+	nodeKinds := splitNodeKinds(params.NodeKind)
 
-	if a.Mode == "trust" {
+	if params.Mode == "trust" {
 		var res db.TrustResult
 		var err error
-		if a.MemoryID != "" {
-			if a.Depth <= 0 {
-				a.Depth = 2
+		if params.MemoryID != "" {
+			if params.Depth <= 0 {
+				params.Depth = 2
 			}
-			res, err = h.store.GetTrustForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow, nodeKinds)
+			res, err = hnd.store.GetTrustForMemoryID(params.MemoryID, params.Depth, params.RecencyWindow, nodeKinds)
 		} else {
-			res, err = h.store.GetTrust(a.Domain, a.Limit, a.RecencyWindow, tags, nodeKinds)
+			res, err = hnd.store.GetTrust(params.Domain, params.Limit, params.RecencyWindow, tags, nodeKinds)
 		}
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
 		var out []byte
-		if a.Digest {
+		if params.Digest {
 			out, err = json.Marshal(toDigestTrustResult(res))
 		} else {
 			out, err = json.Marshal(toLeanTrustResult(res))
@@ -76,13 +76,13 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 
 	var res db.SignificanceResult
 	var err error
-	if a.MemoryID != "" {
-		if a.Depth <= 0 {
-			a.Depth = 2
+	if params.MemoryID != "" {
+		if params.Depth <= 0 {
+			params.Depth = 2
 		}
-		res, err = h.store.GetSignificanceForMemoryID(a.MemoryID, a.Depth, a.RecencyWindow, nodeKinds)
+		res, err = hnd.store.GetSignificanceForMemoryID(params.MemoryID, params.Depth, params.RecencyWindow, nodeKinds)
 	} else {
-		res, err = h.store.GetSignificance(a.Domain, a.Limit, a.RecencyWindow, tags, nodeKinds, a.DeclaredLimit)
+		res, err = hnd.store.GetSignificance(params.Domain, params.Limit, params.RecencyWindow, tags, nodeKinds, params.DeclaredLimit)
 	}
 	if err != nil {
 		return errorResult(err.Error()), nil
@@ -90,14 +90,14 @@ func (h *Handler) handleSignificance(args json.RawMessage) (*ToolResult, error) 
 
 	var out []byte
 	var err2 error
-	if a.Digest {
-		digest, err := h.digestSignificanceResult(res)
+	if params.Digest {
+		digest, err := hnd.digestSignificanceResult(res)
 		if err != nil {
 			return nil, err
 		}
 		out, err2 = json.Marshal(digest)
 	} else {
-		lean, err := h.leanSignificanceResult(res)
+		lean, err := hnd.leanSignificanceResult(res)
 		if err != nil {
 			return nil, err
 		}

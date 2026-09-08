@@ -8,16 +8,16 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
-func (h *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
-	return dispatchBatch(args, "remember", h.addNodeSingle, h.addNodesBatch)
+func (hnd *Handler) addNode(args json.RawMessage) (*ToolResult, error) {
+	return dispatchBatch(args, "remember", hnd.addNodeSingle, hnd.addNodesBatch)
 }
 
-func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	if msg := detectLegacyDecisionTypeKey(args); msg != "" {
 		return errorResult(msg), nil
 	}
 
-	var a struct {
+	var params struct {
 		Label       string            `json:"label"`
 		Description string            `json:"description"`
 		WhyMatters  string            `json:"why_matters"`
@@ -28,55 +28,55 @@ func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		Transient   bool              `json:"transient"`
 		NodeKind    string            `json:"node_kind"`
 	}
-	if err := decodeParams(args, &a, "remember"); err != nil {
+	if err := decodeParams(args, &params, "remember"); err != nil {
 		return nil, err
 	}
 	if err := requireNonEmpty(map[string]string{
-		"label":  a.Label,
-		"domain": a.Domain,
+		"label":  params.Label,
+		"domain": params.Domain,
 	}); err != nil {
 		return nil, err
 	}
 	var occurredAt *time.Time
-	if a.OccurredAt != "" {
-		t, err := time.Parse(time.RFC3339, a.OccurredAt)
+	if params.OccurredAt != "" {
+		t, err := time.Parse(time.RFC3339, params.OccurredAt)
 		if err != nil {
-			t, err = time.Parse("2006-01-02", a.OccurredAt)
+			t, err = time.Parse("2006-01-02", params.OccurredAt)
 			if err != nil {
-				return nil, fmt.Errorf("invalid occurred_at format, expected ISO8601 date or datetime: %s", a.OccurredAt)
+				return nil, fmt.Errorf("invalid occurred_at format, expected ISO8601 date or datetime: %s", params.OccurredAt)
 			}
 		}
 		occurredAt = &t
 	}
-	if occurredAt != nil && a.WhyMatters == "" {
+	if occurredAt != nil && params.WhyMatters == "" {
 		return nil, fmt.Errorf("occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.")
 	}
 	// backcompat: transient=true maps to node_kind=transient
-	if a.Transient && a.NodeKind == "" {
-		a.NodeKind = "transient"
+	if params.Transient && params.NodeKind == "" {
+		params.NodeKind = "transient"
 	}
-	if a.NodeKind == "" {
-		a.NodeKind = "decision"
+	if params.NodeKind == "" {
+		params.NodeKind = "decision"
 	}
-	domainExists, err := h.store.DomainExists(a.Domain)
+	domainExists, err := hnd.store.DomainExists(params.Domain)
 	if err != nil {
 		return nil, err
 	}
-	node, err := h.store.AddNode(a.Label, a.Description, a.WhyMatters, a.Domain, occurredAt, a.Tags, a.NodeKind)
+	node, err := hnd.store.AddNode(params.Label, params.Description, params.WhyMatters, params.Domain, occurredAt, params.Tags, params.NodeKind)
 	if err != nil {
 		return nil, err
 	}
 
-	extras := h.rememberFilingExtras(node, a.RelatedTo, domainExists)
+	extras := hnd.rememberFilingExtras(node, params.RelatedTo, domainExists)
 
-	skipped := processRelatedTo(h, node.ID, a.RelatedTo)
+	skipped := processRelatedTo(hnd, node.ID, params.RelatedTo)
 
-	suggestions, err := h.store.SuggestEdges(node.ID, 5)
+	suggestions, err := hnd.store.SuggestEdges(node.ID, 5)
 	if err != nil || suggestions == nil {
 		suggestions = []db.EdgeSuggestion{}
 	}
 
-	duplicates, err := h.store.FindPossibleDuplicates(node.Label, node.Domain, node.ID)
+	duplicates, err := hnd.store.FindPossibleDuplicates(node.Label, node.Domain, node.ID)
 	if err != nil || duplicates == nil {
 		duplicates = []db.Node{}
 	}
@@ -90,7 +90,7 @@ func (h *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	}
 
 	orphanWarning := ""
-	if len(a.RelatedTo) == 0 || (len(a.RelatedTo) > 0 && len(skipped) == len(a.RelatedTo)) {
+	if len(params.RelatedTo) == 0 || (len(params.RelatedTo) > 0 && len(skipped) == len(params.RelatedTo)) {
 		orphanWarning = "No connections were made. Call connect with from_memory/to_memory to link these memories — connect takes no domain parameter, memory IDs are global. Suggested connections may be in other domains; that's context only, not a connect argument."
 	}
 
@@ -128,7 +128,7 @@ type skippedConnection struct {
 
 // processRelatedTo attempts to create edges for each entry in the related_to list.
 // Entries that fail (node not found, etc.) are collected in the returned slice instead of silently dropped.
-func processRelatedTo(h *Handler, fromID string, entries []json.RawMessage) []skippedConnection {
+func processRelatedTo(hnd *Handler, fromID string, entries []json.RawMessage) []skippedConnection {
 	var skipped []skippedConnection
 	for _, raw := range entries {
 		relID := ""
@@ -153,7 +153,7 @@ func processRelatedTo(h *Handler, fromID string, entries []json.RawMessage) []sk
 		if relID == "" {
 			continue
 		}
-		if _, err := h.store.AddEdge(fromID, relID, relationship, "auto-linked at creation"); err != nil {
+		if _, err := hnd.store.AddEdge(fromID, relID, relationship, "auto-linked at creation"); err != nil {
 			reason := err.Error()
 			skipped = append(skipped, skippedConnection{ID: relID, Reason: reason})
 		}
@@ -162,7 +162,7 @@ func processRelatedTo(h *Handler, fromID string, entries []json.RawMessage) []sk
 }
 
 // addNodesBatch handles the batch mode of remember: items is the raw JSON array of node objects.
-func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	type nodeItem struct {
 		Label       string            `json:"label"`
 		Description string            `json:"description"`
@@ -187,58 +187,58 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i, n := range nodeList {
+	for i, nodeItem := range nodeList {
 		if err := requireNonEmpty(map[string]string{
-			"label":  n.Label,
-			"domain": n.Domain,
+			"label":  nodeItem.Label,
+			"domain": nodeItem.Domain,
 		}); err != nil {
 			return nil, fmt.Errorf("item %d: %w", i, err)
 		}
 	}
 	inputs := make([]db.NodeInput, len(nodeList))
-	for i, n := range nodeList {
+	for i, nodeItem := range nodeList {
 		var occurredAt *time.Time
-		if n.OccurredAt != "" {
-			t, err := time.Parse(time.RFC3339, n.OccurredAt)
+		if nodeItem.OccurredAt != "" {
+			t, err := time.Parse(time.RFC3339, nodeItem.OccurredAt)
 			if err != nil {
-				t, err = time.Parse("2006-01-02", n.OccurredAt)
+				t, err = time.Parse("2006-01-02", nodeItem.OccurredAt)
 				if err != nil {
-					return nil, fmt.Errorf("node %d: invalid occurred_at: %s", i, n.OccurredAt)
+					return nil, fmt.Errorf("node %d: invalid occurred_at: %s", i, nodeItem.OccurredAt)
 				}
 			}
 			occurredAt = &t
 		}
-		if occurredAt != nil && n.WhyMatters == "" {
+		if occurredAt != nil && nodeItem.WhyMatters == "" {
 			return nil, fmt.Errorf("node %d: occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline.", i)
 		}
 		// backcompat: transient=true maps to node_kind=transient
-		nodeKind := n.NodeKind
-		if n.Transient && nodeKind == "" {
+		nodeKind := nodeItem.NodeKind
+		if nodeItem.Transient && nodeKind == "" {
 			nodeKind = "transient"
 		}
 		if nodeKind == "" {
 			nodeKind = "decision"
 		}
 		inputs[i] = db.NodeInput{
-			Label:       n.Label,
-			Description: n.Description,
-			WhyMatters:  n.WhyMatters,
-			Tags:        n.Tags,
-			Domain:      n.Domain,
+			Label:       nodeItem.Label,
+			Description: nodeItem.Description,
+			WhyMatters:  nodeItem.WhyMatters,
+			Tags:        nodeItem.Tags,
+			Domain:      nodeItem.Domain,
 			OccurredAt:  occurredAt,
 			NodeKind:    nodeKind,
 		}
 	}
-	nodes, err := h.store.AddNodesBatch(inputs)
+	nodes, err := hnd.store.AddNodesBatch(inputs)
 	if err != nil {
 		return nil, err
 	}
 
 	domains := make([]string, len(nodeList))
-	for i, n := range nodeList {
-		domains[i] = n.Domain
+	for i, nodeItem := range nodeList {
+		domains[i] = nodeItem.Domain
 	}
-	domainSnap, err := h.snapshotDomainExistence(domains)
+	domainSnap, err := hnd.snapshotDomainExistence(domains)
 	if err != nil {
 		return nil, err
 	}
@@ -254,18 +254,18 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 	}
 	result := make([]entry, len(nodes))
 	anyConnected := false
-	for i, n := range nodes {
-		suggestions, _ := h.store.SuggestEdges(n.ID, 5)
+	for i, node := range nodes {
+		suggestions, _ := hnd.store.SuggestEdges(node.ID, 5)
 		if suggestions == nil {
 			suggestions = []db.EdgeSuggestion{}
 		}
-		extras := h.rememberFilingExtras(n, nodeList[i].RelatedTo, domainSnap[h.store.ResolveAlias(nodeList[i].Domain)])
-		skipped := processRelatedTo(h, n.ID, nodeList[i].RelatedTo)
+		extras := hnd.rememberFilingExtras(node, nodeList[i].RelatedTo, domainSnap[hnd.store.ResolveAlias(nodeList[i].Domain)])
+		skipped := processRelatedTo(hnd, node.ID, nodeList[i].RelatedTo)
 		if len(nodeList[i].RelatedTo) > 0 && len(skipped) < len(nodeList[i].RelatedTo) {
 			anyConnected = true
 		}
 		result[i] = entry{
-			Node:                 n,
+			Node:                 node,
 			SuggestedConnections: suggestions,
 			SkippedConnections:   skipped,
 			TrustNudge:           extras.TrustNudge,
@@ -289,8 +289,8 @@ func (h *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 }
 
 // addNodes retains the old remember_all wire format for backward compat during transition (not exposed in ListTools).
-func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
-	var a struct {
+func (hnd *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
+	var params struct {
 		Nodes []struct {
 			Label       string `json:"label"`
 			Description string `json:"description"`
@@ -301,14 +301,14 @@ func (h *Handler) addNodes(args json.RawMessage) (*ToolResult, error) {
 			Transient   bool   `json:"transient"`
 		} `json:"nodes"`
 	}
-	if err := decodeParams(args, &a, "remember"); err != nil {
+	if err := decodeParams(args, &params, "remember"); err != nil {
 		return nil, err
 	}
-	raw, err := json.Marshal(a.Nodes)
+	raw, err := json.Marshal(params.Nodes)
 	if err != nil {
 		return nil, err
 	}
-	return h.addNodesBatch(raw)
+	return hnd.addNodesBatch(raw)
 }
 
 // detectLegacyDecisionTypeKey inspects raw JSON for the retired 'decision_type'
@@ -329,13 +329,13 @@ type misdomainFlag struct {
 	SuggestedMemoryID string
 }
 
-func (h *Handler) checkNewDomainMisdomain(node *db.Node) (*misdomainFlag, error) {
-	candidate, err := h.store.FindMisdomainCandidate(node.ID, node.Domain)
+func (hnd *Handler) checkNewDomainMisdomain(node *db.Node) (*misdomainFlag, error) {
+	candidate, err := hnd.store.FindMisdomainCandidate(node.ID, node.Domain)
 	if err != nil || candidate == nil {
 		return nil, err
 	}
 	reason := fmt.Sprintf("suggested domain %q (anchor %s)", candidate.SuggestedDomain, candidate.SuggestedMemoryID)
-	if err := h.store.LogDomainCreationFlagged(node.ID, node.Label, reason); err != nil {
+	if err := hnd.store.LogDomainCreationFlagged(node.ID, node.Label, reason); err != nil {
 		return nil, err
 	}
 	return &misdomainFlag{

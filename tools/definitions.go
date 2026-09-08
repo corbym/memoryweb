@@ -2,7 +2,7 @@ package tools
 
 import "encoding/json"
 
-func (h *Handler) ListTools() (interface{}, error) {
+func (hnd *Handler) ListTools() (interface{}, error) {
 	tools := []ToolDef{
 		{
 			Name:        "remember",

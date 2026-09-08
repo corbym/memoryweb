@@ -14,9 +14,9 @@ type rememberFilingExtras struct {
 	SuggestedMemoryID string
 }
 
-func (h *Handler) rememberFilingExtras(node *db.Node, relatedTo []json.RawMessage, domainExisted bool) rememberFilingExtras {
+func (hnd *Handler) rememberFilingExtras(node *db.Node, relatedTo []json.RawMessage, domainExisted bool) rememberFilingExtras {
 	var out rememberFilingExtras
-	nudge, err := h.trustNudgeForDependencies(dependencyIDsFromRelatedTo(relatedTo), node.ID)
+	nudge, err := hnd.trustNudgeForDependencies(dependencyIDsFromRelatedTo(relatedTo), node.ID)
 	if err != nil {
 		log.Printf("[memoryweb] trust nudge for %s: %v", node.ID, err)
 	} else {
@@ -25,7 +25,7 @@ func (h *Handler) rememberFilingExtras(node *db.Node, relatedTo []json.RawMessag
 	if domainExisted {
 		return out
 	}
-	flagged, err := h.checkNewDomainMisdomain(node)
+	flagged, err := hnd.checkNewDomainMisdomain(node)
 	if err != nil {
 		log.Printf("[memoryweb] misdomain check for %s: %v", node.ID, err)
 		return out
@@ -38,14 +38,14 @@ func (h *Handler) rememberFilingExtras(node *db.Node, relatedTo []json.RawMessag
 	return out
 }
 
-func (h *Handler) snapshotDomainExistence(domains []string) (map[string]bool, error) {
+func (hnd *Handler) snapshotDomainExistence(domains []string) (map[string]bool, error) {
 	snap := make(map[string]bool, len(domains))
-	for _, d := range domains {
-		resolved := h.store.ResolveAlias(d)
+	for _, domain := range domains {
+		resolved := hnd.store.ResolveAlias(domain)
 		if _, seen := snap[resolved]; seen {
 			continue
 		}
-		exists, err := h.store.DomainExists(d)
+		exists, err := hnd.store.DomainExists(domain)
 		if err != nil {
 			return nil, err
 		}

@@ -9,9 +9,9 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
-func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
+func (hnd *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 	args = argsOrEmptyObject(args)
-	var a struct {
+	var params struct {
 		Domain        string `json:"domain"`
 		MemoryID      string `json:"memory_id"`
 		Depth         int    `json:"depth"`
@@ -25,88 +25,88 @@ func (h *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 		Order         string `json:"order"`
 		GroupByDomain bool   `json:"group_by_domain"`
 	}
-	if err := decodeParams(args, &a, "history"); err != nil {
+	if err := decodeParams(args, &params, "history"); err != nil {
 		return nil, err
 	}
-	if a.Order == "modified" {
-		if a.ImportantOnly || a.From != "" || a.To != "" {
+	if params.Order == "modified" {
+		if params.ImportantOnly || params.From != "" || params.To != "" {
 			return errorResult("order=modified cannot be combined with important_only, from, or to"), nil
 		}
 		recentArgs, err := json.Marshal(map[string]any{
-			"domain":          a.Domain,
-			"limit":           a.Limit,
-			"group_by_domain": a.GroupByDomain,
-			"tags":            a.Tags,
-			"node_kind":       a.NodeKind,
-			"memory_id":       a.MemoryID,
-			"depth":           a.Depth,
-			"digest":          a.Digest,
+			"domain":          params.Domain,
+			"limit":           params.Limit,
+			"group_by_domain": params.GroupByDomain,
+			"tags":            params.Tags,
+			"node_kind":       params.NodeKind,
+			"memory_id":       params.MemoryID,
+			"depth":           params.Depth,
+			"digest":          params.Digest,
 		})
 		if err != nil {
 			return nil, err
 		}
-		return h.recentChanges(recentArgs)
+		return hnd.recentChanges(recentArgs)
 	}
-	if a.Order != "" && a.Order != "effective" {
-		return errorResult(fmt.Sprintf("unknown order %q — use effective (default) or modified", a.Order)), nil
+	if params.Order != "" && params.Order != "effective" {
+		return errorResult(fmt.Sprintf("unknown order %q — use effective (default) or modified", params.Order)), nil
 	}
-	if a.GroupByDomain {
+	if params.GroupByDomain {
 		return errorResult("group_by_domain requires order=modified"), nil
 	}
-	if a.Limit <= 0 {
-		a.Limit = 20
+	if params.Limit <= 0 {
+		params.Limit = 20
 	}
-	if a.Limit > 500 {
-		a.Limit = 500
+	if params.Limit > 500 {
+		params.Limit = 500
 	}
-	parseDate := func(s string) (*time.Time, error) {
-		if s == "" {
+	parseDate := func(raw string) (*time.Time, error) {
+		if raw == "" {
 			return nil, nil
 		}
-		t, err := time.Parse(time.RFC3339, s)
+		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			t, err = time.Parse("2006-01-02", s)
+			t, err = time.Parse("2006-01-02", raw)
 			if err != nil {
-				return nil, fmt.Errorf("invalid date format, expected ISO8601: %s", s)
+				return nil, fmt.Errorf("invalid date format, expected ISO8601: %s", raw)
 			}
 		}
 		return &t, nil
 	}
-	from, err := parseDate(a.From)
+	from, err := parseDate(params.From)
 	if err != nil {
 		return nil, err
 	}
-	to, err := parseDate(a.To)
+	to, err := parseDate(params.To)
 	if err != nil {
 		return nil, err
 	}
 	var tags []string
-	for _, tag := range strings.Split(a.Tags, ",") {
+	for _, tag := range strings.Split(params.Tags, ",") {
 		tag = strings.TrimSpace(tag)
 		if tag != "" {
 			tags = append(tags, tag)
 		}
 	}
-	nodeKinds := splitNodeKinds(a.NodeKind)
+	nodeKinds := splitNodeKinds(params.NodeKind)
 	var nodes []db.Node
-	fetchLimit := a.Limit + 1
-	if a.MemoryID != "" {
-		if a.Depth <= 0 {
-			a.Depth = 2
+	fetchLimit := params.Limit + 1
+	if params.MemoryID != "" {
+		if params.Depth <= 0 {
+			params.Depth = 2
 		}
-		nodes, err = h.store.GetHistoryForMemoryID(a.MemoryID, a.Depth, a.ImportantOnly, tags, nodeKinds, from, to, fetchLimit)
+		nodes, err = hnd.store.GetHistoryForMemoryID(params.MemoryID, params.Depth, params.ImportantOnly, tags, nodeKinds, from, to, fetchLimit)
 	} else {
-		nodes, err = h.store.Timeline(a.Domain, a.ImportantOnly, tags, nodeKinds, from, to, fetchLimit)
+		nodes, err = hnd.store.Timeline(params.Domain, params.ImportantOnly, tags, nodeKinds, from, to, fetchLimit)
 	}
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
-	nodes, resultsTruncated := trimWithTruncation(nodes, a.Limit)
-	entries, err := h.leanEntriesFromNodes(nodes)
+	nodes, resultsTruncated := trimWithTruncation(nodes, params.Limit)
+	entries, err := hnd.leanEntriesFromNodes(nodes)
 	if err != nil {
 		return nil, err
 	}
-	if a.Digest {
+	if params.Digest {
 		out := struct {
 			Lines            []string `json:"lines"`
 			ResultsTruncated bool     `json:"results_truncated"`

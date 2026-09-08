@@ -17,30 +17,30 @@ const orientTrustRecencyWindow = 90
 // Non-blocking: store failures are silently swallowed so orient never fails due
 // to delta annotation. The signature returns no error to make this intent explicit
 // and prevent callers from accidentally propagating store errors.
-func (h *Handler) annotateTrustDeltas(entries []scoredLeanEntry, maxDeltas int) []scoredLeanEntry {
+func (hnd *Handler) annotateTrustDeltas(entries []scoredLeanEntry, maxDeltas int) []scoredLeanEntry {
 	var ids []string
-	for _, e := range entries {
-		if e.Trust != "" {
-			ids = append(ids, e.ID)
+	for _, entry := range entries {
+		if entry.Trust != "" {
+			ids = append(ids, entry.ID)
 		}
 	}
 	if len(ids) == 0 {
 		return entries
 	}
-	prior, err := h.store.LastTrustScores(ids)
+	prior, err := hnd.store.LastTrustScores(ids)
 	if err != nil {
 		return entries // non-fatal: skip delta annotations
 	}
 	const worseningThreshold = 0.3
 	annotated := 0
-	for i, e := range entries {
+	for i, entry := range entries {
 		if annotated >= maxDeltas {
 			break
 		}
-		if e.Trust == "" {
+		if entry.Trust == "" {
 			continue
 		}
-		if score, ok := prior[e.ID]; ok && score > worseningThreshold {
+		if score, ok := prior[entry.ID]; ok && score > worseningThreshold {
 			entries[i].Trust += "; ↓ since last orient"
 			annotated++
 		}
@@ -48,24 +48,24 @@ func (h *Handler) annotateTrustDeltas(entries []scoredLeanEntry, maxDeltas int) 
 	return entries
 }
 
-func (h *Handler) annotateSignificantTrust(entries []scoredLeanEntry) ([]scoredLeanEntry, error) {
+func (hnd *Handler) annotateSignificantTrust(entries []scoredLeanEntry) ([]scoredLeanEntry, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
 	ids := make([]string, len(entries))
-	for i, e := range entries {
-		ids[i] = e.ID
+	for i, entry := range entries {
+		ids[i] = entry.ID
 	}
-	assessments, err := h.store.AssessTrustForNodeIDs(ids, orientTrustRecencyWindow)
+	assessments, err := hnd.store.AssessTrustForNodeIDs(ids, orientTrustRecencyWindow)
 	if err != nil {
 		return nil, err
 	}
-	for i, e := range entries {
-		a, ok := assessments[e.ID]
-		if !ok || !a.IsLowTrust {
+	for i, entry := range entries {
+		assessment, ok := assessments[entry.ID]
+		if !ok || !assessment.IsLowTrust {
 			continue
 		}
-		entries[i].Trust = "low — " + a.TrustBasis
+		entries[i].Trust = "low — " + assessment.TrustBasis
 	}
 	return entries, nil
 }
@@ -86,22 +86,22 @@ func uniqueIDs(ids []string) []string {
 	return out
 }
 
-func (h *Handler) trustNudgeForDependencies(depIDs []string, excludeInboundFrom string) (string, error) {
+func (hnd *Handler) trustNudgeForDependencies(depIDs []string, excludeInboundFrom string) (string, error) {
 	depIDs = uniqueIDs(depIDs)
 	if len(depIDs) == 0 {
 		return "", nil
 	}
-	assessments, err := h.store.AssessTrustForNodeIDs(depIDs, orientTrustRecencyWindow, excludeInboundFrom)
+	assessments, err := hnd.store.AssessTrustForNodeIDs(depIDs, orientTrustRecencyWindow, excludeInboundFrom)
 	if err != nil {
 		return "", err
 	}
 	var parts []string
 	for _, id := range depIDs {
-		a, ok := assessments[id]
-		if !ok || !a.IsLowTrust {
+		assessment, ok := assessments[id]
+		if !ok || !assessment.IsLowTrust {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("memory %s (%s)", id, a.TrustBasis))
+		parts = append(parts, fmt.Sprintf("memory %s (%s)", id, assessment.TrustBasis))
 	}
 	if len(parts) == 0 {
 		return "", nil
@@ -133,13 +133,13 @@ func dependencyIDsFromRelatedTo(entries []json.RawMessage) []string {
 
 func outboundDependencyIDs(edges []db.Edge, nodeID string) []string {
 	var ids []string
-	for _, e := range edges {
-		if e.FromNode != nodeID {
+	for _, edge := range edges {
+		if edge.FromNode != nodeID {
 			continue
 		}
-		switch e.Relationship {
+		switch edge.Relationship {
 		case "connects_to", "depends_on", "caused_by", "blocked_by":
-			ids = append(ids, e.ToNode)
+			ids = append(ids, edge.ToNode)
 		}
 	}
 	return ids

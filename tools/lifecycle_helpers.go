@@ -6,39 +6,39 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
-func (h *Handler) annotateLifecycle(entries []leanEntry) ([]leanEntry, error) {
+func (hnd *Handler) annotateLifecycle(entries []leanEntry) ([]leanEntry, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
 	ids := make([]string, len(entries))
-	for i, e := range entries {
-		ids[i] = e.ID
+	for i, entry := range entries {
+		ids[i] = entry.ID
 	}
-	states, err := h.store.LifecycleStates(ids)
+	states, err := hnd.store.LifecycleStates(ids)
 	if err != nil {
 		return nil, err
 	}
-	for i, e := range entries {
-		if s, ok := states[e.ID]; ok {
-			entries[i].LifecycleState = string(s)
+	for i, entry := range entries {
+		if state, ok := states[entry.ID]; ok {
+			entries[i].LifecycleState = string(state)
 		}
 	}
 	return entries, nil
 }
 
-func (h *Handler) leanEntriesFromNodes(nodes []db.Node) ([]leanEntry, error) {
-	return h.annotateLifecycle(toLeanEntries(nodes))
+func (hnd *Handler) leanEntriesFromNodes(nodes []db.Node) ([]leanEntry, error) {
+	return hnd.annotateLifecycle(toLeanEntries(nodes))
 }
 
-func (h *Handler) annotateScoredLifecycle(entries []scoredLeanEntry) ([]scoredLeanEntry, error) {
+func (hnd *Handler) annotateScoredLifecycle(entries []scoredLeanEntry) ([]scoredLeanEntry, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
 	plain := make([]leanEntry, len(entries))
-	for i, e := range entries {
-		plain[i] = e.leanEntry
+	for i, entry := range entries {
+		plain[i] = entry.leanEntry
 	}
-	annotated, err := h.annotateLifecycle(plain)
+	annotated, err := hnd.annotateLifecycle(plain)
 	if err != nil {
 		return nil, err
 	}
@@ -48,13 +48,13 @@ func (h *Handler) annotateScoredLifecycle(entries []scoredLeanEntry) ([]scoredLe
 	return entries, nil
 }
 
-func (h *Handler) leanSearchResult(r *db.SearchResult) (leanSearchResult, error) {
+func (hnd *Handler) leanSearchResult(r *db.SearchResult) (leanSearchResult, error) {
 	result := toLeanSearchResult(r)
 	entries := make([]leanEntry, len(result.Nodes))
-	for i, n := range result.Nodes {
-		entries[i] = n.leanEntry
+	for i, node := range result.Nodes {
+		entries[i] = node.leanEntry
 	}
-	annotated, err := h.annotateLifecycle(entries)
+	annotated, err := hnd.annotateLifecycle(entries)
 	if err != nil {
 		return leanSearchResult{}, err
 	}
@@ -64,46 +64,46 @@ func (h *Handler) leanSearchResult(r *db.SearchResult) (leanSearchResult, error)
 	return result, nil
 }
 
-func (h *Handler) digestSearchResult(r *db.SearchResult) (digestSearchResult, error) {
-	lean, err := h.leanSearchResult(r)
+func (hnd *Handler) digestSearchResult(r *db.SearchResult) (digestSearchResult, error) {
+	lean, err := hnd.leanSearchResult(r)
 	if err != nil {
 		return digestSearchResult{}, err
 	}
 	lines := make([]string, len(lean.Nodes))
-	for i, n := range lean.Nodes {
-		lines[i] = digestLineFromSearchNode(n)
+	for i, node := range lean.Nodes {
+		lines[i] = digestLineFromSearchNode(node)
 	}
 	edges := make([]leanEdge, len(r.Edges))
-	for i, e := range r.Edges {
-		edges[i] = leanEdge{FromNode: e.FromNode, ToNode: e.ToNode, Relationship: e.Relationship}
+	for i, edge := range r.Edges {
+		edges[i] = leanEdge{FromNode: edge.FromNode, ToNode: edge.ToNode, Relationship: edge.Relationship}
 	}
 	return digestSearchResult{Lines: lines, Edges: edges, Truncated: r.Truncated}, nil
 }
 
-func (h *Handler) leanSignificanceResult(r db.SignificanceResult) (leanSignificanceResult, error) {
+func (hnd *Handler) leanSignificanceResult(r db.SignificanceResult) (leanSignificanceResult, error) {
 	result := toLeanSignificanceResult(r)
 	var err error
-	result.Declared, err = h.annotateLifecycle(result.Declared)
+	result.Declared, err = hnd.annotateLifecycle(result.Declared)
 	if err != nil {
 		return leanSignificanceResult{}, err
 	}
-	result.Structural, err = h.annotateScoredLifecycle(result.Structural)
+	result.Structural, err = hnd.annotateScoredLifecycle(result.Structural)
 	if err != nil {
 		return leanSignificanceResult{}, err
 	}
-	result.Uncurated, err = h.annotateScoredLifecycle(result.Uncurated)
+	result.Uncurated, err = hnd.annotateScoredLifecycle(result.Uncurated)
 	if err != nil {
 		return leanSignificanceResult{}, err
 	}
-	result.PotentiallyStale, err = h.annotateLifecycle(result.PotentiallyStale)
+	result.PotentiallyStale, err = hnd.annotateLifecycle(result.PotentiallyStale)
 	if err != nil {
 		return leanSignificanceResult{}, err
 	}
 	return result, nil
 }
 
-func (h *Handler) digestSignificanceResult(r db.SignificanceResult) (digestSignificanceResult, error) {
-	lean, err := h.leanSignificanceResult(r)
+func (hnd *Handler) digestSignificanceResult(r db.SignificanceResult) (digestSignificanceResult, error) {
+	lean, err := hnd.leanSignificanceResult(r)
 	if err != nil {
 		return digestSignificanceResult{}, err
 	}
@@ -120,38 +120,38 @@ func (h *Handler) digestSignificanceResult(r db.SignificanceResult) (digestSigni
 	}, nil
 }
 
-func (h *Handler) digestLinesFromNodes(nodes []db.Node) ([]string, error) {
-	entries, err := h.leanEntriesFromNodes(nodes)
+func (hnd *Handler) digestLinesFromNodes(nodes []db.Node) ([]string, error) {
+	entries, err := hnd.leanEntriesFromNodes(nodes)
 	if err != nil {
 		return nil, err
 	}
 	return digestLinesFromEntries(entries), nil
 }
 
-func (h *Handler) digestNodeList(nodes []db.Node, digest bool) (interface{}, error) {
+func (hnd *Handler) digestNodeList(nodes []db.Node, digest bool) (interface{}, error) {
 	if !digest {
 		return nodes, nil
 	}
-	lines, err := h.digestLinesFromNodes(nodes)
+	lines, err := hnd.digestLinesFromNodes(nodes)
 	if err != nil {
 		return nil, err
 	}
 	return lines, nil
 }
 
-func (h *Handler) digestSection(entries []leanEntry, digest bool) (interface{}, error) {
+func (hnd *Handler) digestSection(entries []leanEntry, digest bool) (interface{}, error) {
 	if !digest {
 		return entries, nil
 	}
-	annotated, err := h.annotateLifecycle(entries)
+	annotated, err := hnd.annotateLifecycle(entries)
 	if err != nil {
 		return nil, err
 	}
 	return digestLinesFromEntries(annotated), nil
 }
 
-func (h *Handler) orientLeanSection(nodes []db.Node, digest bool) (interface{}, error) {
-	entries, err := h.leanEntriesFromNodes(nodes)
+func (hnd *Handler) orientLeanSection(nodes []db.Node, digest bool) (interface{}, error) {
+	entries, err := hnd.leanEntriesFromNodes(nodes)
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +161,8 @@ func (h *Handler) orientLeanSection(nodes []db.Node, digest bool) (interface{}, 
 	return digestLinesFromEntries(entries), nil
 }
 
-func (h *Handler) orientScoredSection(entries []scoredLeanEntry, digest bool) (interface{}, error) {
-	annotated, err := h.annotateScoredLifecycle(entries)
+func (hnd *Handler) orientScoredSection(entries []scoredLeanEntry, digest bool) (interface{}, error) {
+	annotated, err := hnd.annotateScoredLifecycle(entries)
 	if err != nil {
 		return nil, err
 	}
@@ -172,28 +172,28 @@ func (h *Handler) orientScoredSection(entries []scoredLeanEntry, digest bool) (i
 	return digestLines(annotated, digestLineFromScored), nil
 }
 
-func (h *Handler) marshalRecentFromNodes(nodes []db.Node, resultsTruncated, digest bool) (*ToolResult, error) {
-	entries, err := h.leanEntriesFromNodes(nodes)
+func (hnd *Handler) marshalRecentFromNodes(nodes []db.Node, resultsTruncated, digest bool) (*ToolResult, error) {
+	entries, err := hnd.leanEntriesFromNodes(nodes)
 	if err != nil {
 		return nil, err
 	}
 	return marshalRecentList(entries, resultsTruncated, digest)
 }
 
-func (h *Handler) digestLinesFromDrift(candidates []db.DriftCandidate) ([]string, error) {
+func (hnd *Handler) digestLinesFromDrift(candidates []db.DriftCandidate) ([]string, error) {
 	nodes := make([]db.Node, len(candidates))
-	for i, c := range candidates {
-		nodes[i] = c.Node
+	for i, candidate := range candidates {
+		nodes[i] = candidate.Node
 	}
-	entries, err := h.leanEntriesFromNodes(nodes)
+	entries, err := hnd.leanEntriesFromNodes(nodes)
 	if err != nil {
 		return nil, err
 	}
 	lines := make([]string, len(candidates))
-	for i, c := range candidates {
-		reason := sanitiseDigestField(c.Reason)
+	for i, candidate := range candidates {
+		reason := sanitiseDigestField(candidate.Reason)
 		line := digestLineFromEntry(entries[i])
-		lines[i] = fmt.Sprintf("%s (%s, edges: %d)", line, reason, c.EdgeCount)
+		lines[i] = fmt.Sprintf("%s (%s, edges: %d)", line, reason, candidate.EdgeCount)
 	}
 	return lines, nil
 }
