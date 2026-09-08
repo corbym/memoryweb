@@ -120,14 +120,14 @@ type Recorder struct {
 // Any orphaned .current files from a previous crashed session are recovered
 // into the main logs before returning.
 func New(humanPath, jsonPath string) *Recorder {
-	r := &Recorder{
+	rec := &Recorder{
 		humanPath: humanPath,
 		jsonPath:  jsonPath,
 		client:    os.Getenv("MEMORYWEB_CLIENT"),
 		start:     time.Now().UTC(),
 	}
-	r.recoverCurrent()
-	return r
+	rec.recoverCurrent()
+	return rec
 }
 
 // recoverCurrent merges any orphaned *.current files from a previous crashed
@@ -181,33 +181,33 @@ func (r *Recorder) Record(tool string, argsRaw json.RawMessage, resultText strin
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	cr := callRec{tool: tool, kind: toolKinds[tool], isError: isError, ts: time.Now().UTC()}
+	call := callRec{tool: tool, kind: toolKinds[tool], isError: isError, ts: time.Now().UTC()}
 	if !isError {
 		switch tool {
 		case "remember":
-			cr.nodesFiled = 1
-			cr.transient = parseTransientArg(argsRaw)
-			cr.domain = parseDomainArg(argsRaw)
+			call.nodesFiled = 1
+			call.transient = parseTransientArg(argsRaw)
+			call.domain = parseDomainArg(argsRaw)
 		case "remember_all":
-			cr.nodesFiled, cr.transient = parseRememberAllArgs(argsRaw)
+			call.nodesFiled, call.transient = parseRememberAllArgs(argsRaw)
 		case "connect":
-			cr.edgesFiled = 1
+			call.edgesFiled = 1
 		case "connect_all":
-			cr.edgesFiled = parseEdgesCreated(resultText)
+			call.edgesFiled = parseEdgesCreated(resultText)
 		case "merge":
-			cr.edgesFiled = 1
+			call.edgesFiled = 1
 		case "whats_stale":
-			cr.staleTotal, cr.staleByType, cr.dupEdges = parseWhatsStaleResult(resultText)
+			call.staleTotal, call.staleByType, call.dupEdges = parseWhatsStaleResult(resultText)
 		case "audit":
 			var a struct {
 				Mode string `json:"mode"`
 			}
 			if json.Unmarshal(argsRaw, &a) == nil && a.Mode == "stale" {
-				cr.staleTotal, cr.staleByType, cr.dupEdges = parseWhatsStaleResult(resultText)
+				call.staleTotal, call.staleByType, call.dupEdges = parseWhatsStaleResult(resultText)
 			}
 		}
 	}
-	r.calls = append(r.calls, cr)
+	r.calls = append(r.calls, call)
 	r.writeCurrent()
 }
 
@@ -296,18 +296,18 @@ func (r *Recorder) computeSession() computedSession {
 	var staleByType [5]int
 	var dupEdges [4]int
 
-	for i, c := range r.calls {
-		byTool[c.tool]++
-		if c.isError {
+	for i, call := range r.calls {
+		byTool[call.tool]++
+		if call.isError {
 			errors++
 		}
-		nodesFiled += c.nodesFiled
-		edgesFiled += c.edgesFiled
-		transientFiled += c.transient
-		if c.domain != "" {
-			domains[c.domain]++
+		nodesFiled += call.nodesFiled
+		edgesFiled += call.edgesFiled
+		transientFiled += call.transient
+		if call.domain != "" {
+			domains[call.domain]++
 		}
-		if c.kind == kindRetrieval && !c.isError {
+		if call.kind == kindRetrieval && !call.isError {
 			retrievalTotal++
 			for j := i + 1; j <= i+3 && j < len(r.calls); j++ {
 				if r.calls[j].kind == kindWrite && !r.calls[j].isError {
@@ -316,14 +316,14 @@ func (r *Recorder) computeSession() computedSession {
 				}
 			}
 		}
-		if c.staleTotal > 0 {
+		if call.staleTotal > 0 {
 			staleChecks++
-			staleCandidates += c.staleTotal
+			staleCandidates += call.staleTotal
 			for t := range staleByType {
-				staleByType[t] += c.staleByType[t]
+				staleByType[t] += call.staleByType[t]
 			}
 			for b := range dupEdges {
-				dupEdges[b] += c.dupEdges[b]
+				dupEdges[b] += call.dupEdges[b]
 			}
 		}
 	}
@@ -466,14 +466,14 @@ func median(vals []float64) float64 {
 	if len(vals) == 0 {
 		return 0
 	}
-	s := make([]float64, len(vals))
-	copy(s, vals)
-	sort.Float64s(s)
-	n := len(s)
-	if n%2 == 0 {
-		return (s[n/2-1] + s[n/2]) / 2
+	scores := make([]float64, len(vals))
+	copy(scores, vals)
+	sort.Float64s(scores)
+	count := len(scores)
+	if count%2 == 0 {
+		return (scores[count/2-1] + scores[count/2]) / 2
 	}
-	return s[n/2]
+	return scores[count/2]
 }
 
 // ── formatting ────────────────────────────────────────────────────────────────
@@ -494,8 +494,8 @@ func (r *Recorder) formatSummary(sess computedSession, prior []sessionData) stri
 	sb.WriteString(fmt.Sprintf("Active %d min | %d tool calls", mins, sess.totalCalls))
 	if len(sess.domains) > 0 {
 		var dp []string
-		for d, n := range sess.domains {
-			dp = append(dp, fmt.Sprintf("%s (%d)", d, n))
+		for domain, count := range sess.domains {
+			dp = append(dp, fmt.Sprintf("%s (%d)", domain, count))
 		}
 		sort.Strings(dp)
 		sb.WriteString(" across " + strings.Join(dp, ", "))
@@ -507,8 +507,8 @@ func (r *Recorder) formatSummary(sess computedSession, prior []sessionData) stri
 		n    int
 	}
 	var tc []toolCount
-	for t, n := range sess.byTool {
-		tc = append(tc, toolCount{t, n})
+	for tool, count := range sess.byTool {
+		tc = append(tc, toolCount{tool, count})
 	}
 	sort.Slice(tc, func(i, j int) bool { return tc[i].n > tc[j].n })
 	if len(tc) > 5 {
@@ -558,9 +558,9 @@ func (r *Recorder) formatSummary(sess computedSession, prior []sessionData) stri
 	if sess.staleChecks > 0 {
 		typeNames := [5]string{"contradicts", "superseded", "stale", "duplicate", "transient"}
 		var parts []string
-		for i, n := range sess.staleByType {
-			if n > 0 {
-				parts = append(parts, fmt.Sprintf("%d %s", n, typeNames[i]))
+		for i, count := range sess.staleByType {
+			if count > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", count, typeNames[i]))
 			}
 		}
 		breakdown := ""
@@ -582,19 +582,19 @@ func (r *Recorder) formatSummary(sess computedSession, prior []sessionData) stri
 		var wkd30, wkd7 []float64
 		var total30, ret30 int
 
-		for _, p := range prior {
-			if p.StartTS.Before(now30) {
+		for _, previous := range prior {
+			if previous.StartTS.Before(now30) {
 				continue
 			}
 			total30++
-			if p.Type == "retrieval" {
+			if previous.Type == "retrieval" {
 				ret30++
 				continue
 			}
-			if !p.Burst {
-				wkd30 = append(wkd30, p.WKD)
-				if p.StartTS.After(now7) {
-					wkd7 = append(wkd7, p.WKD)
+			if !previous.Burst {
+				wkd30 = append(wkd30, previous.WKD)
+				if previous.StartTS.After(now7) {
+					wkd7 = append(wkd7, previous.WKD)
 				}
 			}
 		}
@@ -688,11 +688,11 @@ func parseWhatsStaleResult(resultText string) (total int, byType [5]int, dupEdge
 		return
 	}
 	total = len(candidates)
-	for _, c := range candidates {
-		idx := staleTypeIdx(c.Reason)
+	for _, candidate := range candidates {
+		idx := staleTypeIdx(candidate.Reason)
 		byType[idx]++
 		if idx == staleDuplicate {
-			dupEdges[edgeBucket(c.EdgeCount)]++
+			dupEdges[edgeBucket(candidate.EdgeCount)]++
 		}
 	}
 	return
