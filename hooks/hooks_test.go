@@ -753,6 +753,31 @@ func runLibTest(t *testing.T, home, snippet string) string {
 	return string(out)
 }
 
+func TestLib_ReadOptionMissingKeyWithExistingConfig(t *testing.T) {
+	home := t.TempDir()
+	// Config exists but lacks the queried key. Previously the trailing
+	// `[ -n "$_raw" ] && _opt=...` returned non-zero as the function's last
+	// statement, aborting hooks that call it bare under set -e.
+	writeConfig(t, home, map[string]interface{}{"unrelated_key": true})
+
+	out := runLibTest(t, home,
+		`set -euo pipefail; memoryweb_read_option "sweep_interval_turns" "15"; printf 'opt=%s rc=%s\n' "$_opt" "$?"`)
+	if !strings.Contains(out, "opt=15 rc=0") {
+		t.Fatalf("expected default preserved and rc 0 under set -e; got: %s", out)
+	}
+}
+
+func TestLib_ReadOptionPresentKey(t *testing.T) {
+	home := t.TempDir()
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+
+	out := runLibTest(t, home,
+		`memoryweb_read_option "session_orient_enabled" "false"; printf 'opt=%s\n' "$_opt"`)
+	if !strings.Contains(out, "opt=true") {
+		t.Fatalf("expected present key to read through; got: %s", out)
+	}
+}
+
 func TestReadOption_FileAbsent(t *testing.T) {
 	home := t.TempDir()
 	out := runLibTest(t, home,
@@ -1110,6 +1135,37 @@ func TestUserPromptSubmitHook_OrientDomainTopic_WritesBoth(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"topic":"schema migration"`) {
 		t.Errorf("ctx file should carry the topic from the last domain-carrying orient; got: %s", data)
+	}
+}
+
+func TestUserPromptSubmitHook_CapturesOrientScopeForConsumerHookOnly(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "ups-quiet-capture"
+	// session_orient_enabled off (no per-prompt nudge); a consumer hook that
+	// relies on the ctx file (here PostCompact) is enabled instead.
+	writeConfig(t, home, map[string]interface{}{"reinject_on_compact": true})
+
+	appendTranscriptLines(t, projectsDir, sessionID,
+		orientAssistantLineTopic("toolu_topic", "deep-game", "schema migration"),
+	)
+
+	out, code := runUPSHook(t, sessionID, stateDir, projectsDir, "continue",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	data, err := os.ReadFile(ctxFile)
+	if err != nil {
+		t.Fatalf("expected context file even without session_orient_enabled: %v", err)
+	}
+	if !strings.Contains(string(data), `"domain":"deep-game"`) || !strings.Contains(string(data), `"topic":"schema migration"`) {
+		t.Errorf("ctx file should carry domain+topic for the consumer hook; got: %s", data)
 	}
 }
 

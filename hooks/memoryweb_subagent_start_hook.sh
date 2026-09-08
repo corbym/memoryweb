@@ -73,9 +73,9 @@ if [ -n "${orient_hint}" ]; then
 fi
 if [ -n "${dream_digest}" ]; then
   if [ -n "${additional}" ]; then
-    additional="${additional}\n\nmemoryweb context for this sub-agent session:\n\n${dream_digest}"
+    additional="${additional}"$'\n\n'"memoryweb context for this sub-agent session:"$'\n\n'"${dream_digest}"
   else
-    additional="memoryweb context for this sub-agent session:\n\n${dream_digest}"
+    additional="memoryweb context for this sub-agent session:"$'\n\n'"${dream_digest}"
   fi
 fi
 

@@ -25,8 +25,17 @@ printf '%s userpromptsubmit_hook session=%s\n' \
 
 additional_parts=""
 
-# ── Orient nudge ──────────────────────────────────────────────────────────────
-if memoryweb_option_enabled "session_orient_enabled" "false" && [ -n "${session_id}" ]; then
+# ── Orient scope capture + nudge ──────────────────────────────────────────────
+# Capture the session's orient scope (last oriented domain + topic) whenever any
+# consumer of mw_orient_ctx_<session>.json is enabled — the UserPromptSubmit
+# nudge, PostCompact reinjection, or SubagentStart inheritance — so a quiet
+# capture config (no per-prompt nudge) still powers the other two hooks.
+capture=false
+memoryweb_option_enabled "session_orient_enabled" "false" && capture=true
+memoryweb_option_enabled "reinject_on_compact" "false" && capture=true
+memoryweb_option_enabled "subagent_orient_enabled" "false" && capture=true
+
+if [ "${capture}" = true ] && [ -n "${session_id}" ]; then
   ctx_file="${STATE_DIR}/mw_orient_ctx_${session_id}.json"
 
   orient_found=false
@@ -69,7 +78,7 @@ if memoryweb_option_enabled "session_orient_enabled" "false" && [ -n "${session_
     fi
   fi
 
-  if ! "${orient_found}"; then
+  if memoryweb_option_enabled "session_orient_enabled" "false" && ! "${orient_found}"; then
     additional_parts="memoryweb: orient() has not been called yet this session. Call orient() (and orient(domain=X) for the relevant domain) before answering or filing anything."
   fi
 fi

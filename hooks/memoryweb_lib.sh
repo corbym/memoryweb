@@ -18,7 +18,12 @@ memoryweb_read_option() {
       | head -1 \
       | sed 's/.*:[[:space:]]*//' \
       | tr -d ' "' || true)
-    [ -n "${_raw}" ] && _opt="${_raw}"
+    # Guard with if (not `[ -n ] && ...`): a missing key makes the else branch
+    # return non-zero, and as the last statement of this function that aborts
+    # any hook that calls it under `set -e` when config exists but lacks the key.
+    if [ -n "${_raw}" ]; then
+      _opt="${_raw}"
+    fi
   fi
 }
 
