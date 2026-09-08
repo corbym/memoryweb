@@ -1,6 +1,6 @@
 # revise: response envelope + re-embed on semantic change
 
-**Status:** OPEN
+**Status:** COMPLETE — v1.44.0 (commit ac15e3c)
 
 **Shared-surface spec:** `spec-revise-response-envelope-re-embed-shared-contract-memoryweb-mirrors-story-250-no-ownership-supersede-27342d56`
 

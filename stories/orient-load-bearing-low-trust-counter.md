@@ -1,6 +1,6 @@
 # orient: header load_bearing_low_trust counter
 
-**Status:** OPEN
+**Status:** COMPLETE — v1.49.0 (commit 95dd2dc)
 
 **Shared-surface node:** `surfacing-vector-orient-header-l-d7dce0d6`
 

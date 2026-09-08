@@ -1,5 +1,7 @@
 # hooks: options CLI subcommand
 
+**Status:** COMPLETE — v1.53.0 (commit 3678c39)
+
 Adds `memoryweb options [set <key> <value>]` — a CLI subcommand for viewing and setting
 per-user hook options. Options are stored in `~/.memoryweb/config.json` and read by all
 hook scripts. Existing env-var overrides (`MEMORYWEB_SAVE_INTERVAL`) remain as the

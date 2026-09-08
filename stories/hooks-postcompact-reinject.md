@@ -1,5 +1,7 @@
 # hooks: PostCompact context reinject hook
 
+**Status:** COMPLETE — (commit dc3d251)
+
 Adds `memoryweb_postcompact_hook.sh` — a PostCompact hook that fires *after* context
 compaction and injects a brief orient-domain nudge so the agent does not start the
 compacted session cold. Reads the context file written by the UserPromptSubmit hook

@@ -1,5 +1,7 @@
 # hooks: UserPromptSubmit hook — orient nudge + auto-recall
 
+**Status:** COMPLETE — (commit dc3d251)
+
 Adds `memoryweb_userpromptsubmit_hook.sh` — a UserPromptSubmit hook with two
 independent behaviours:
 

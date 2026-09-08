@@ -29,4 +29,7 @@ bug-purge-copy/
 # machine-specific Claude Code config & local skills
 .claude/
 
+# machine-specific opencode config (backlog-mcp points at this machine's exe)
+opencode.json
+
 *.exe

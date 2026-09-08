@@ -1,5 +1,7 @@
 # hooks: SubagentStart + SubagentStop hook surface expansion
 
+**Status:** COMPLETE — (commit dc3d251)
+
 Adds two new hook scripts — `memoryweb_subagent_start_hook.sh` and
 `memoryweb_subagent_stop_hook.sh` — and registers them in `memoryweb setup`.
 Mirrors Recordari STORY-151's SubagentStart/SubagentStop coverage. Closes the

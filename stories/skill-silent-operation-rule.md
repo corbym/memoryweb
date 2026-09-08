@@ -1,5 +1,7 @@
 # memoryweb skill — silent-operation rule and verbosity trim
 
+**Status:** COMPLETE — (commit c16d2b6)
+
 Mirrors [recordari STORY-311](../../../recordari/requirements/epic-009-agent-distribution-hooks-mcpb-bundle-and/story-311.md) for the memoryweb skill file.
 
 ---

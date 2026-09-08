@@ -1,5 +1,7 @@
 # setup idempotency — no duplicate hook entries on second run
 
+**Status:** COMPLETE — v1.53.0 (commit 3678c39)
+
 Fixes `memoryweb setup` so running it twice does not write duplicate hook entries to
 `~/.claude/settings.json`. Adds unit tests for `runSetup` and `setupUpsertCommand`,
 which currently have no test coverage. Mirrors the same idempotency requirement as

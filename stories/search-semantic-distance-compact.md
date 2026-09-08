@@ -1,5 +1,7 @@
 # search: preserve semantic_distance in compact (2+ result) rendering
 
+**Status:** COMPLETE — (commit de5044e)
+
 Fixes `search` dropping `semantic_distance` from results when there are 2 or more
 matches. The score is currently only included in the single-result full-object response
 — the case where it matters least. In multi-result compact rendering, agents have no

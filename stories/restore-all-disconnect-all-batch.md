@@ -1,6 +1,6 @@
 # batch restore_all and disconnect_all
 
-**Status:** OPEN
+**Status:** COMPLETE — (commit 6825b6e)
 
 **memoryweb-meta node:** `missing-batch-operations-forget--42b2eb9d`
 

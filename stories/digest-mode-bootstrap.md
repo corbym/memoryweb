@@ -1,6 +1,6 @@
 # digest-mode on cross-domain orient bootstrap
 
-**Status:** OPEN
+**Status:** COMPLETE — v1.48.0 (commit 561823d)
 
 **Shared-surface node:** `cross-cutting-gap-digest-mode-not-shipped-on-orient-or-audit-04aa0ae4` (residual: bootstrap only)
 

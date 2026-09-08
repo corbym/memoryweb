@@ -1,6 +1,6 @@
 # trust deltas in digest-mode orient output
 
-**Status:** OPEN
+**Status:** COMPLETE — v1.50.0 (commit 65719fb)
 
 **Shared-surface node:** `surfacing-vector-trust-deltas-fe-a89714a5`
 

@@ -1,5 +1,7 @@
 # audit: connected-but-stale placeholder detection
 
+**Status:** COMPLETE — v1.52.0 (commit 6b8df73)
+
 Adds detection of nodes that are well-connected (have edges) but semantically stale
 — placeholder labels like "TBD", "TODO", "open question older than N days", or labels
 that match the superseded/contradicts heuristics but are NOT orphaned. These fall
