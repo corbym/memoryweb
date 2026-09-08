@@ -21,16 +21,16 @@ type SearchResult struct {
 	Truncated bool         `json:"truncated,omitempty"`
 }
 
-func (s *Store) SearchNodes(query, domain string, limit int, memoryID string, nodeKinds []string) (*SearchResult, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) SearchNodes(query, domain string, limit int, memoryID string, nodeKinds []string) (*SearchResult, error) {
+	domain = st.ResolveAlias(domain)
 
 	if strings.TrimSpace(query) == "" && len(nodeKinds) > 0 {
-		return s.listNodesByKind(domain, nodeKinds, limit, memoryID)
+		return st.listNodesByKind(domain, nodeKinds, limit, memoryID)
 	}
 
 	var allowedIDs []string
 	if memoryID != "" {
-		ids, _, err := s.neighbourhoodIDs(memoryID, 2)
+		ids, _, err := st.neighbourhoodIDs(memoryID, 2)
 		if err != nil {
 			return nil, err
 		}
@@ -38,10 +38,10 @@ func (s *Store) SearchNodes(query, domain string, limit int, memoryID string, no
 	}
 
 	// Try semantic search when sqlite-vec is loaded.
-	if s.vecAvailable {
+	if st.vecAvailable {
 		embedding, err := embed(query)
 		if err == nil && len(embedding) > 0 {
-			result, err := s.searchNodesSemantic(query, domain, limit, embedding, allowedIDs, nodeKinds)
+			result, err := st.searchNodesSemantic(query, domain, limit, embedding, allowedIDs, nodeKinds)
 			if err == nil {
 				return result, nil
 			}
@@ -49,11 +49,11 @@ func (s *Store) SearchNodes(query, domain string, limit int, memoryID string, no
 		}
 	}
 
-	return s.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
+	return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
 }
 
 // listNodesByKind returns live nodes filtered by node_kind, ordered by updated_at DESC.
-func (s *Store) listNodesByKind(domain string, nodeKinds []string, limit int, memoryID string) (*SearchResult, error) {
+func (st *Store) listNodesByKind(domain string, nodeKinds []string, limit int, memoryID string) (*SearchResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -61,7 +61,7 @@ func (s *Store) listNodesByKind(domain string, nodeKinds []string, limit int, me
 
 	var allowedIDs []string
 	if memoryID != "" {
-		ids, _, err := s.neighbourhoodIDs(memoryID, 2)
+		ids, _, err := st.neighbourhoodIDs(memoryID, 2)
 		if err != nil {
 			return nil, err
 		}
@@ -76,16 +76,16 @@ func (s *Store) listNodesByKind(domain string, nodeKinds []string, limit int, me
 	}
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	if len(allowedIDs) > 0 {
-		ph, phArgs := inClause(allowedIDs)
-		conds = append(conds, "id IN ("+ph+")")
-		args = append(args, phArgs...)
+		placeholders, placeholderArgs := inClause(allowedIDs)
+		conds = append(conds, "id IN ("+placeholders+")")
+		args = append(args, placeholderArgs...)
 	}
 	args = append(args, fetch)
 
-	q := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE ` +
+	query := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE ` +
 		strings.Join(conds, " AND ") + ` ORDER BY updated_at DESC LIMIT ?`
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (s *Store) listNodesByKind(domain string, nodeKinds []string, limit int, me
 		nodes = nodes[:limit]
 	}
 	results := wrapNodes(nodes)
-	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, nodes), Truncated: truncated}, nil
+	return &SearchResult{Nodes: results, Edges: collectEdges(st.db, nodes), Truncated: truncated}, nil
 }
 
 // SearchNodesExact performs a pure substring (LIKE) search, bypassing semantic
@@ -108,23 +108,23 @@ func (s *Store) listNodesByKind(domain string, nodeKinds []string, limit int, me
 // number, or short code that is known to appear verbatim in the stored content.
 // Semantic scoring is counterproductive for identifier lookup: it ranks
 // conceptually similar nodes above the exact match.
-func (s *Store) SearchNodesExact(query, domain string, limit int, memoryID string, nodeKinds []string) (*SearchResult, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) SearchNodesExact(query, domain string, limit int, memoryID string, nodeKinds []string) (*SearchResult, error) {
+	domain = st.ResolveAlias(domain)
 
 	if strings.TrimSpace(query) == "" && len(nodeKinds) > 0 {
-		return s.listNodesByKind(domain, nodeKinds, limit, memoryID)
+		return st.listNodesByKind(domain, nodeKinds, limit, memoryID)
 	}
 
 	var allowedIDs []string
 	if memoryID != "" {
-		ids, _, err := s.neighbourhoodIDs(memoryID, 2)
+		ids, _, err := st.neighbourhoodIDs(memoryID, 2)
 		if err != nil {
 			return nil, err
 		}
 		allowedIDs = ids
 	}
 
-	return s.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
+	return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
 }
 
 // semanticDistanceThreshold is the maximum cosine distance for a node to be
@@ -136,7 +136,7 @@ const semanticDistanceThreshold = 0.3
 // searchNodesSemantic ranks nodes by cosine distance between the query
 // embedding and stored node embeddings, then falls back to LIKE if no
 // semantic results are found within the relevance threshold.
-func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding []float32, allowedIDs, nodeKinds []string) (*SearchResult, error) {
+func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding []float32, allowedIDs, nodeKinds []string) (*SearchResult, error) {
 	blob, err := vec.SerializeFloat32(embedding)
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 	ORDER BY dist ASC
 	LIMIT ?`
 	var rows *sql.Rows
-	rows, err = s.db.Query(semQ, args...)
+	rows, err = st.db.Query(semQ, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 
 	if len(results) == 0 {
 		// No embeddings within threshold (or all filtered out); fall back to literal search.
-		return s.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
+		return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
 	}
 
 	truncated := len(results) > limit
@@ -214,25 +214,25 @@ func (s *Store) searchNodesSemantic(query, domain string, limit int, embedding [
 	}
 
 	nodes := extractNodes(results)
-	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, nodes), Truncated: truncated}, nil
+	return &SearchResult{Nodes: results, Edges: collectEdges(st.db, nodes), Truncated: truncated}, nil
 }
 
 // searchNodesLike performs a full-phrase LIKE search with a multi-word fallback.
 // When allowedIDs is non-empty, results are restricted to nodes in that set.
-func (s *Store) searchNodesLike(query, domain string, limit int, allowedIDs, nodeKinds []string) (*SearchResult, error) {
-	q := "%" + query + "%"
+func (st *Store) searchNodesLike(query, domain string, limit int, allowedIDs, nodeKinds []string) (*SearchResult, error) {
+	pattern := "%" + query + "%"
 	fetch := limit + 1
 
 	likeClause := "(label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)"
 	conds := []string{"archived_at IS NULL", likeClause}
-	args := []interface{}{q, q, q, q}
+	args := []interface{}{pattern, pattern, pattern, pattern}
 	if domain != "" {
 		conds = append(conds, "domain = ?")
 		args = append(args, domain)
 	}
 	if len(allowedIDs) > 0 {
-		ph, idArgs := inClause(allowedIDs)
-		conds = append(conds, "id IN ("+ph+")")
+		placeholders, idArgs := inClause(allowedIDs)
+		conds = append(conds, "id IN ("+placeholders+")")
 		args = append(args, idArgs...)
 	}
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
@@ -240,7 +240,7 @@ func (s *Store) searchNodesLike(query, domain string, limit int, allowedIDs, nod
 
 	qStr := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
 	 WHERE ` + strings.Join(conds, " AND ") + ` ORDER BY updated_at DESC LIMIT ?`
-	rows, err := s.db.Query(qStr, args...)
+	rows, err := st.db.Query(qStr, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +266,7 @@ func (s *Store) searchNodesLike(query, domain string, limit int, allowedIDs, nod
 		if len(words) > 1 {
 			log.Printf("[memoryweb] search: no results for %q (domain=%q), falling back to individual-word search", query, domain)
 			var wordTruncated bool
-			nodes, wordTruncated, err = s.searchByWords(words, domain, limit, nodeKinds)
+			nodes, wordTruncated, err = st.searchByWords(words, domain, limit, nodeKinds)
 			if err != nil {
 				return nil, err
 			}
@@ -275,7 +275,7 @@ func (s *Store) searchNodesLike(query, domain string, limit int, allowedIDs, nod
 	}
 
 	results := wrapNodes(nodes)
-	return &SearchResult{Nodes: results, Edges: collectEdges(s.db, nodes), Truncated: truncated}, nil
+	return &SearchResult{Nodes: results, Edges: collectEdges(st.db, nodes), Truncated: truncated}, nil
 }
 
 // extractNodes extracts the embedded Node from each NodeResult.
@@ -293,7 +293,7 @@ func wrapNodes(nodes []Node) []NodeResult {
 // why_matters, tags). Results are ordered by updated_at DESC.
 // Returns the matching nodes and a truncated flag (true when the result set
 // was capped at limit).
-func (s *Store) searchByWords(words []string, domain string, limit int, nodeKinds []string) ([]Node, bool, error) {
+func (st *Store) searchByWords(words []string, domain string, limit int, nodeKinds []string) ([]Node, bool, error) {
 	// Build: (label LIKE ? OR desc LIKE ? OR why LIKE ? OR tags LIKE ?)
 	//        OR (label LIKE ? OR ...)   ... one group per word.
 	const fields = 4 // label, description, why_matters, tags
@@ -314,19 +314,19 @@ func (s *Store) searchByWords(words []string, domain string, limit int, nodeKind
 		args = append(args, domain)
 	}
 	conds = append(conds, "("+combined+")")
-	for _, w := range words {
-		wq := "%" + w + "%"
+	for _, word := range words {
+		wordPattern := "%" + word + "%"
 		for j := 0; j < fields; j++ {
-			args = append(args, wq)
+			args = append(args, wordPattern)
 		}
 	}
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	args = append(args, fetch)
 
-	q := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
+	query := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
 	     WHERE ` + strings.Join(conds, " AND ") + ` ORDER BY updated_at DESC LIMIT ?`
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return nil, false, err
 	}

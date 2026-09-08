@@ -98,7 +98,7 @@ const trustJoins = `FROM nodes n
 // discounted by the same recency decay GetSignificance uses. Scores are
 // normalised to [0, 1] within the result set, ordered by trust_score DESC,
 // capped at limit.
-func (s *Store) GetTrust(domain string, limit, recencyWindowDays int, tags, nodeKinds []string) (TrustResult, error) {
+func (st *Store) GetTrust(domain string, limit, recencyWindowDays int, tags, nodeKinds []string) (TrustResult, error) {
 	conds := []string{
 		"n.domain = ?",
 		"n.archived_at IS NULL",
@@ -113,17 +113,17 @@ func (s *Store) GetTrust(domain string, limit, recencyWindowDays int, tags, node
 	      ` + trustJoins + `
 	      WHERE ` + strings.Join(conds, " AND ")
 
-	accum, order, err := s.scanTrustRows(q, args, nil)
+	accum, order, err := st.scanTrustRows(q, args, nil)
 	if err != nil {
 		return TrustResult{}, fmt.Errorf("GetTrust: %w", err)
 	}
-	return s.finishTrust(accum, order, domain, limit)
+	return st.finishTrust(accum, order, domain, limit)
 }
 
 // getTrustByNodeIDs runs trust analysis scoped to a specific set of node IDs
 // (e.g. a neighbourhood). domain is used only for logging; it does not further
 // filter the node set. No limit truncation, matching getSignificanceByNodeIDs.
-func (s *Store) getTrustByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int, nodeKinds []string) (TrustResult, error) {
+func (st *Store) getTrustByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int, nodeKinds []string) (TrustResult, error) {
 	if len(nodeIDs) == 0 {
 		return TrustResult{Nodes: []TrustNode{}, CallID: shortID()}, nil
 	}
@@ -137,29 +137,29 @@ func (s *Store) getTrustByNodeIDs(nodeIDs []string, domain string, recencyWindow
 	      ` + trustJoins + `
 	      WHERE ` + strings.Join(conds, " AND ")
 
-	accum, order, err := s.scanTrustRows(q, args, nil)
+	accum, order, err := st.scanTrustRows(q, args, nil)
 	if err != nil {
 		return TrustResult{}, fmt.Errorf("getTrustByNodeIDs: %w", err)
 	}
-	return s.finishTrust(accum, order, domain, 0)
+	return st.finishTrust(accum, order, domain, 0)
 }
 
 // GetTrustForMemoryID returns trust analysis scoped to the depth-hop
 // neighbourhood of the given memory ID, clipped to the anchor's domain.
-func (s *Store) GetTrustForMemoryID(nodeID string, depth int, recencyWindowDays int, nodeKinds []string) (TrustResult, error) {
-	ids, anchorDomain, err := s.neighbourhoodIDs(nodeID, depth)
+func (st *Store) GetTrustForMemoryID(nodeID string, depth int, recencyWindowDays int, nodeKinds []string) (TrustResult, error) {
+	ids, anchorDomain, err := st.neighbourhoodIDs(nodeID, depth)
 	if err != nil {
 		return TrustResult{}, err
 	}
-	return s.getTrustByNodeIDs(ids, anchorDomain, recencyWindowDays, nodeKinds)
+	return st.getTrustByNodeIDs(ids, anchorDomain, recencyWindowDays, nodeKinds)
 }
 
 // scanTrustRows runs query and accumulates one trustAccum per target node,
 // summing the weighted contribution of every qualifying inbound edge.
 // excludeInboundFrom skips inbound edges whose from-node is in the set (used when
 // assessing dependency trust so the filing/revising node does not inflate its deps).
-func (s *Store) scanTrustRows(query string, args []interface{}, excludeInboundFrom map[string]struct{}) (map[string]*trustAccum, []string, error) {
-	rows, err := s.db.Query(query, args...)
+func (st *Store) scanTrustRows(query string, args []interface{}, excludeInboundFrom map[string]struct{}) (map[string]*trustAccum, []string, error) {
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -168,35 +168,35 @@ func (s *Store) scanTrustRows(query string, args []interface{}, excludeInboundFr
 	accum := map[string]*trustAccum{}
 	var order []string
 	for rows.Next() {
-		var n Node
-		var desc, why, tagsCol sql.NullString
+		var node Node
+		var description, whyMatters, tagsCol sql.NullString
 		var occurredAt, archivedAt sql.NullTime
 		var nodeKind string
 		var relationship, neighbourKind, neighbourID sql.NullString
 		var decay sql.NullFloat64
 		if err := rows.Scan(
-			&n.ID, &n.Label, &desc, &why, &tagsCol, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
+			&node.ID, &node.Label, &description, &whyMatters, &tagsCol, &node.Domain,
+			&node.CreatedAt, &node.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
 			&relationship, &neighbourKind, &neighbourID, &decay,
 		); err != nil {
 			return nil, nil, fmt.Errorf("scan: %w", err)
 		}
-		n.Description = desc.String
-		n.WhyMatters = why.String
-		n.Tags = tagsCol.String
-		n.OccurredAt = nullTimeToPtr(occurredAt)
-		n.ArchivedAt = nullTimeToPtr(archivedAt)
-		n.NodeKind = nodeKind
+		node.Description = description.String
+		node.WhyMatters = whyMatters.String
+		node.Tags = tagsCol.String
+		node.OccurredAt = nullTimeToPtr(occurredAt)
+		node.ArchivedAt = nullTimeToPtr(archivedAt)
+		node.NodeKind = nodeKind
 
-		a, ok := accum[n.ID]
+		a, ok := accum[node.ID]
 		if !ok {
 			a = &trustAccum{
-				node:       n,
+				node:       node,
 				raw:        intrinsicWeightOf(nodeKind),
 				neighbours: map[string]int{},
 			}
-			accum[n.ID] = a
-			order = append(order, n.ID)
+			accum[node.ID] = a
+			order = append(order, node.ID)
 		}
 		if relationship.Valid && neighbourKind.Valid && decay.Valid {
 			if excludeInboundFrom != nil && neighbourID.Valid {
@@ -222,7 +222,7 @@ func (s *Store) scanTrustRows(query string, args []interface{}, excludeInboundFr
 // finishTrust normalises raw scores to [0,1], sorts descending, truncates to
 // limit (when > 0), and logs each returned node to significance_log with
 // rank_type='trust'.
-func (s *Store) finishTrust(accum map[string]*trustAccum, order []string, domain string, limit int) (TrustResult, error) {
+func (st *Store) finishTrust(accum map[string]*trustAccum, order []string, domain string, limit int) (TrustResult, error) {
 	if len(order) == 0 {
 		return TrustResult{Nodes: []TrustNode{}, CallID: shortID()}, nil
 	}
@@ -261,7 +261,7 @@ func (s *Store) finishTrust(accum map[string]*trustAccum, order []string, domain
 	calledAt := time.Now().UTC()
 	for _, n := range nodes {
 		score := n.TrustScore
-		if err := s.logSignificance(callID, calledAt, domain, limit, n.ID, n.Label, "trust", &score); err != nil {
+		if err := st.logSignificance(callID, calledAt, domain, limit, n.ID, n.Label, "trust", &score); err != nil {
 			return TrustResult{}, fmt.Errorf("log trust: %w", err)
 		}
 	}
@@ -273,7 +273,7 @@ func (s *Store) finishTrust(accum map[string]*trustAccum, order []string, domain
 // node ID without normalising scores or writing significance_log rows.
 // excludeInboundFrom omits inbound edges from those node IDs (typically the node
 // being filed or revised, so its depends_on link does not mask low-trust deps).
-func (s *Store) AssessTrustForNodeIDs(nodeIDs []string, recencyWindowDays int, excludeInboundFrom ...string) (map[string]TrustAssessment, error) {
+func (st *Store) AssessTrustForNodeIDs(nodeIDs []string, recencyWindowDays int, excludeInboundFrom ...string) (map[string]TrustAssessment, error) {
 	if recencyWindowDays <= 0 {
 		recencyWindowDays = defaultTrustRecencyWindow
 	}
@@ -296,7 +296,7 @@ func (s *Store) AssessTrustForNodeIDs(nodeIDs []string, recencyWindowDays int, e
 	q := `SELECT ` + trustSelectColumns + `
 	      ` + trustJoins + `
 	      WHERE ` + strings.Join(conds, " AND ")
-	accum, _, err := s.scanTrustRows(q, args, exclude)
+	accum, _, err := st.scanTrustRows(q, args, exclude)
 	if err != nil {
 		return nil, fmt.Errorf("AssessTrustForNodeIDs: %w", err)
 	}

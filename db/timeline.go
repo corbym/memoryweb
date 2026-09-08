@@ -10,8 +10,8 @@ import (
 // RecentChanges orders by updated_at DESC, breaking ties on rowid DESC so two
 // nodes written within the same clock tick (observed on Windows) still come
 // back in insertion order instead of in SQLite's unspecified tie order.
-func (s *Store) RecentChanges(domain string, limit int, nodeKinds []string) ([]Node, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) RecentChanges(domain string, limit int, nodeKinds []string) ([]Node, error) {
+	domain = st.ResolveAlias(domain)
 	conds := []string{"archived_at IS NULL"}
 	args := []interface{}{}
 	if domain != "" {
@@ -21,10 +21,10 @@ func (s *Store) RecentChanges(domain string, limit int, nodeKinds []string) ([]N
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	args = append(args, limit)
 
-	q := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE ` +
+	query := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE ` +
 		strings.Join(conds, " AND ") + ` ORDER BY updated_at DESC, rowid DESC LIMIT ?`
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -33,14 +33,13 @@ func (s *Store) RecentChanges(domain string, limit int, nodeKinds []string) ([]N
 	var nodes []Node
 	for rows.Next() {
 		var n Node
-		var oa sql.NullTime
-		var aa sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind)
-		if oa.Valid {
-			n.OccurredAt = &oa.Time
+		var occurredAt, archivedAt sql.NullTime
+		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind)
+		if occurredAt.Valid {
+			n.OccurredAt = &occurredAt.Time
 		}
-		if aa.Valid {
-			n.ArchivedAt = &aa.Time
+		if archivedAt.Valid {
+			n.ArchivedAt = &archivedAt.Time
 		}
 		nodes = append(nodes, n)
 	}
@@ -54,22 +53,22 @@ func (s *Store) RecentChanges(domain string, limit int, nodeKinds []string) ([]N
 // neighbourhood of that memory; domain is ignored in that case.
 // When tags is non-nil and non-empty, only nodes whose tags column contains
 // at least one of the supplied tags (whole-word OR match) are returned.
-func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) RecentChangesScoped(memoryID string, depth int, domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
+	domain = st.ResolveAlias(domain)
 	conds := []string{"archived_at IS NULL"}
 	args := []interface{}{}
 
 	if memoryID != "" {
-		ids, _, err := s.neighbourhoodIDs(memoryID, depth)
+		ids, _, err := st.neighbourhoodIDs(memoryID, depth)
 		if err != nil {
 			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
 		}
-		ph, phArgs := inClause(ids)
-		conds = append(conds, "id IN ("+ph+")")
-		args = append(args, phArgs...)
+		placeholders, placeholderArgs := inClause(ids)
+		conds = append(conds, "id IN ("+placeholders+")")
+		args = append(args, placeholderArgs...)
 	} else if domain != "" {
 		conds = append(conds, "domain = ?")
 		args = append(args, domain)
@@ -79,10 +78,10 @@ func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, t
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	args = append(args, limit)
 
-	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
+	query := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY updated_at DESC, rowid DESC LIMIT ?"
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,8 +94,8 @@ func (s *Store) RecentChangesScoped(memoryID string, depth int, domain string, t
 // When importantOnly is true, only nodes with occurred_at explicitly set are returned.
 // tags filters to nodes matching at least one tag (whole-word match).
 // from/to filter by effective date (COALESCE(occurred_at, created_at)).
-func (s *Store) Timeline(domain string, importantOnly bool, tags, nodeKinds []string, from, to *time.Time, limit int) ([]Node, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) Timeline(domain string, importantOnly bool, tags, nodeKinds []string, from, to *time.Time, limit int) ([]Node, error) {
+	domain = st.ResolveAlias(domain)
 	if limit <= 0 {
 		limit = 20
 	}
@@ -126,7 +125,7 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags, nodeKinds []st
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY COALESCE(occurred_at, created_at) ASC LIMIT ?"
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +137,8 @@ func (s *Store) Timeline(domain string, importantOnly bool, tags, nodeKinds []st
 // GetHistoryForMemoryID returns the chronological timeline of a memory's
 // neighbourhood (depth hops from nodeID, domain-clipped). Applies the same
 // filters as Timeline: importantOnly, tags, from/to date range.
-func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bool, tags, nodeKinds []string, from, to *time.Time, limit int) ([]Node, error) {
-	ids, _, err := s.neighbourhoodIDs(nodeID, depth)
+func (st *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bool, tags, nodeKinds []string, from, to *time.Time, limit int) ([]Node, error) {
+	ids, _, err := st.neighbourhoodIDs(nodeID, depth)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +176,7 @@ func (s *Store) GetHistoryForMemoryID(nodeID string, depth int, importantOnly bo
 	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY COALESCE(occurred_at, created_at) ASC LIMIT ?"
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("GetHistoryForMemoryID: %w", err)
 	}

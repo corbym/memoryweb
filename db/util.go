@@ -12,20 +12,20 @@ import (
 
 var nonAlpha = regexp.MustCompile(`[^a-z0-9]+`)
 
-func slug(s string) string {
-	s = strings.ToLower(s)
-	s = nonAlpha.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if len(s) > 32 {
-		s = s[:32]
+func slug(input string) string {
+	input = strings.ToLower(input)
+	input = nonAlpha.ReplaceAllString(input, "-")
+	input = strings.Trim(input, "-")
+	if len(input) > 32 {
+		input = input[:32]
 	}
-	return s
+	return input
 }
 
 func shortID() string {
-	b := make([]byte, 4)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	buf := make([]byte, 4)
+	rand.Read(buf)
+	return hex.EncodeToString(buf)
 }
 
 // tagFilter builds a single WHERE condition (and appends the corresponding args)
@@ -121,8 +121,8 @@ func inClause[T any](items []T) (string, []any) {
 	for i, v := range items {
 		args[i] = v
 	}
-	ph := strings.Repeat("?,", len(items))
-	return ph[:len(ph)-1], args
+	placeholders := strings.Repeat("?,", len(items))
+	return placeholders[:len(placeholders)-1], args
 }
 
 // filter returns a new slice containing only the items for which keep returns true.
@@ -164,13 +164,13 @@ func applyStringField(newVal *string, current, col, fieldName string, sets, chan
 // created_at, updated_at, occurred_at, archived_at, tags, node_kind.
 func scanNodeRow(rows *sql.Rows) (Node, error) {
 	var n Node
-	var oa, aa sql.NullTime
+	var occurredAt, archivedAt sql.NullTime
 	if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-		&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind); err != nil {
+		&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind); err != nil {
 		return Node{}, err
 	}
-	n.OccurredAt = nullTimeToPtr(oa)
-	n.ArchivedAt = nullTimeToPtr(aa)
+	n.OccurredAt = nullTimeToPtr(occurredAt)
+	n.ArchivedAt = nullTimeToPtr(archivedAt)
 	return n, nil
 }
 
@@ -184,21 +184,21 @@ func scanNodeRows(rows *sql.Rows) ([]Node, error) {
 // columns in the order: id, label, description, why_matters, tags, domain,
 // created_at, updated_at, occurred_at, archived_at, node_kind.
 func scanNode(rows *sql.Rows) (Node, error) {
-	var n Node
-	var desc, why, tags sql.NullString
+	var node Node
+	var description, whyMatters, tags sql.NullString
 	var occurredAt, archivedAt sql.NullTime
 	var nodeKind string
 	if err := rows.Scan(
-		&n.ID, &n.Label, &desc, &why, &tags, &n.Domain,
-		&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
+		&node.ID, &node.Label, &description, &whyMatters, &tags, &node.Domain,
+		&node.CreatedAt, &node.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
 	); err != nil {
-		return n, err
+		return node, err
 	}
-	n.Description = desc.String
-	n.WhyMatters = why.String
-	n.Tags = tags.String
-	n.OccurredAt = nullTimeToPtr(occurredAt)
-	n.ArchivedAt = nullTimeToPtr(archivedAt)
-	n.NodeKind = nodeKind
-	return n, nil
+	node.Description = description.String
+	node.WhyMatters = whyMatters.String
+	node.Tags = tags.String
+	node.OccurredAt = nullTimeToPtr(occurredAt)
+	node.ArchivedAt = nullTimeToPtr(archivedAt)
+	node.NodeKind = nodeKind
+	return node, nil
 }

@@ -237,15 +237,15 @@ CREATE INDEX IF NOT EXISTS idx_significance_log_call_id ON significance_log(call
 
 // migrate creates the schema_migrations tracking table (if needed) then applies
 // any unapplied migrations in version order inside individual transactions.
-func (s *Store) migrate() error {
+func (st *Store) migrate() error {
 	// Check whether schema_migrations already exists before we create it.
 	var migrationsTableExisted int
-	s.db.QueryRow(
+	st.db.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'`,
 	).Scan(&migrationsTableExisted)
 
 	// Bootstrap: ensure schema_migrations exists.
-	if _, err := s.db.Exec(`
+	if _, err := st.db.Exec(`
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    INTEGER PRIMARY KEY,
 			desc       TEXT NOT NULL,
@@ -260,13 +260,13 @@ func (s *Store) migrate() error {
 	// Stamp all known migrations as applied so we don't re-run them.
 	if migrationsTableExisted == 0 {
 		var nodesExists int
-		s.db.QueryRow(
+		st.db.QueryRow(
 			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nodes'`,
 		).Scan(&nodesExists)
 		if nodesExists > 0 {
 			now := time.Now().UTC()
 			for _, m := range migrations {
-				if _, err := s.db.Exec(
+				if _, err := st.db.Exec(
 					`INSERT OR IGNORE INTO schema_migrations (version, desc, applied_at) VALUES (?, ?, ?)`,
 					m.version, m.desc, now,
 				); err != nil {
@@ -279,7 +279,7 @@ func (s *Store) migrate() error {
 
 	for _, m := range migrations {
 		var count int
-		if err := s.db.QueryRow(
+		if err := st.db.QueryRow(
 			`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, m.version,
 		).Scan(&count); err != nil {
 			return fmt.Errorf("migration v%d: check: %w", m.version, err)
@@ -288,7 +288,7 @@ func (s *Store) migrate() error {
 			continue // already applied
 		}
 
-		tx, err := s.db.Begin()
+		tx, err := st.db.Begin()
 		if err != nil {
 			return fmt.Errorf("migration v%d: begin tx: %w", m.version, err)
 		}

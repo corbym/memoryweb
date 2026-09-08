@@ -30,9 +30,9 @@ type PurgeResult struct {
 // true, or when there is no domain filter). This exists so an operator who
 // only archives-then-purges doesn't mistake "0 archived candidates" for
 // "domain is empty" — the domain can still have live nodes.
-func (s *Store) Purge(domain string, before *time.Time, dryRun bool, includeLive bool) (PurgeResult, error) {
+func (st *Store) Purge(domain string, before *time.Time, dryRun bool, includeLive bool) (PurgeResult, error) {
 	if domain != "" {
-		domain = s.ResolveAlias(domain)
+		domain = st.ResolveAlias(domain)
 	}
 
 	var conds []string
@@ -63,7 +63,7 @@ func (s *Store) Purge(domain string, before *time.Time, dryRun bool, includeLive
 			strings.Join(conds, " AND ") + " ORDER BY archived_at ASC"
 	}
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return PurgeResult{}, fmt.Errorf("query archived nodes: %w", err)
 	}
@@ -75,32 +75,32 @@ func (s *Store) Purge(domain string, before *time.Time, dryRun bool, includeLive
 	}
 	var candidates []candidate
 	for rows.Next() {
-		var c candidate
+		var cand candidate
 		var at sql.NullTime
-		if err := rows.Scan(&c.id, &c.label, &at); err != nil {
+		if err := rows.Scan(&cand.id, &cand.label, &at); err != nil {
 			rows.Close()
 			return PurgeResult{}, fmt.Errorf("scan: %w", err)
 		}
 		if at.Valid {
-			c.archivedAt = at.Time
+			cand.archivedAt = at.Time
 		}
-		candidates = append(candidates, c)
+		candidates = append(candidates, cand)
 	}
 	rows.Close()
 
 	// Build the Node slice (minimal fields) for the caller.
 	result := PurgeResult{}
 	if domain != "" && !includeLive {
-		s.db.QueryRow( //nolint:errcheck // best-effort informational count, never fatal
+		st.db.QueryRow( //nolint:errcheck // best-effort informational count, never fatal
 			`SELECT COUNT(*) FROM nodes WHERE LOWER(TRIM(domain)) = LOWER(TRIM(?)) AND archived_at IS NULL`,
 			domain,
 		).Scan(&result.LiveRemaining)
 	}
-	for _, c := range candidates {
-		at := c.archivedAt
+	for _, cand := range candidates {
+		at := cand.archivedAt
 		result.Nodes = append(result.Nodes, Node{
-			ID:         c.id,
-			Label:      c.label,
+			ID:         cand.id,
+			Label:      cand.label,
 			ArchivedAt: &at,
 		})
 	}
@@ -110,32 +110,32 @@ func (s *Store) Purge(domain string, before *time.Time, dryRun bool, includeLive
 	}
 
 	// Hard-delete inside a transaction.
-	tx, err := s.db.Begin()
+	tx, err := st.db.Begin()
 	if err != nil {
 		return PurgeResult{}, fmt.Errorf("begin transaction: %w", err)
 	}
 
 	now := time.Now().UTC()
-	for _, c := range candidates {
+	for _, cand := range candidates {
 		if _, err := tx.Exec(
 			`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			"auditlog-"+shortID(), "purge", c.id, c.label, nil, now,
+			"auditlog-"+shortID(), "purge", cand.id, cand.label, nil, now,
 		); err != nil {
 			tx.Rollback()
-			return PurgeResult{}, fmt.Errorf("write audit_log for %s: %w", c.id, err)
+			return PurgeResult{}, fmt.Errorf("write audit_log for %s: %w", cand.id, err)
 		}
 
-		res, err := tx.Exec(`DELETE FROM edges WHERE from_node = ? OR to_node = ?`, c.id, c.id)
+		res, err := tx.Exec(`DELETE FROM edges WHERE from_node = ? OR to_node = ?`, cand.id, cand.id)
 		if err != nil {
 			tx.Rollback()
-			return PurgeResult{}, fmt.Errorf("delete edges for %s: %w", c.id, err)
+			return PurgeResult{}, fmt.Errorf("delete edges for %s: %w", cand.id, err)
 		}
 		deleted, _ := res.RowsAffected()
 		result.TotalEdges += int(deleted)
 
-		if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, c.id); err != nil {
+		if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, cand.id); err != nil {
 			tx.Rollback()
-			return PurgeResult{}, fmt.Errorf("delete node %s: %w", c.id, err)
+			return PurgeResult{}, fmt.Errorf("delete node %s: %w", cand.id, err)
 		}
 	}
 

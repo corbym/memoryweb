@@ -37,8 +37,8 @@ type NodeInput struct {
 	NodeKind    string
 }
 
-func (s *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time, tags string, nodeKind string) (*Node, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) AddNode(label, description, whyMatters, domain string, occurredAt *time.Time, tags string, nodeKind string) (*Node, error) {
+	domain = st.ResolveAlias(domain)
 	id := slug(label) + "-" + shortID()
 	now := time.Now().UTC()
 
@@ -47,7 +47,7 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 	}
 
 	// Atomically insert the node and (when occurred_at is set) its audit row.
-	tx, err := s.db.Begin()
+	tx, err := st.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 
 	// Generate and store an embedding for semantic search (best-effort, after commit).
 	if embedding, err := embed(embedTextForNode(label, description, whyMatters)); err == nil {
-		s.storeEmbedding(id, embedding)
+		st.storeEmbedding(id, embedding)
 	}
 
 	return &Node{
@@ -94,12 +94,12 @@ func (s *Store) AddNode(label, description, whyMatters, domain string, occurredA
 
 // GetNodeLabels returns a map of id → label for the given node IDs.
 // Missing or archived nodes are omitted from the result.
-func (s *Store) GetNodeLabels(ids []string) map[string]string {
+func (st *Store) GetNodeLabels(ids []string) map[string]string {
 	if len(ids) == 0 {
 		return map[string]string{}
 	}
 	clause, args := inClause(ids)
-	rows, err := s.db.Query(
+	rows, err := st.db.Query(
 		`SELECT id, label FROM nodes WHERE id IN (`+clause+`) AND archived_at IS NULL`,
 		args...,
 	)
@@ -120,24 +120,23 @@ func (s *Store) GetNodeLabels(ids []string) map[string]string {
 	return out
 }
 
-func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
+func (st *Store) GetNode(id string) (*NodeWithEdges, error) {
 	var n Node
-	var oa sql.NullTime
-	var aa sql.NullTime
-	err := s.db.QueryRow(
+	var occurredAt, archivedAt sql.NullTime
+	err := st.db.QueryRow(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 		 FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
-	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind)
+	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("node not found: %s", id)
 	}
 	if err != nil {
 		return nil, err
 	}
-	n.OccurredAt = nullTimeToPtr(oa)
-	n.ArchivedAt = nullTimeToPtr(aa)
+	n.OccurredAt = nullTimeToPtr(occurredAt)
+	n.ArchivedAt = nullTimeToPtr(archivedAt)
 
-	rows, err := s.db.Query(
+	rows, err := st.db.Query(
 		`SELECT `+edgeSelectColumns+` FROM edges
 		 WHERE from_node = ? OR to_node = ?`, id, id,
 	)
@@ -164,11 +163,11 @@ func (s *Store) GetNode(id string) (*NodeWithEdges, error) {
 // Writes an audit_log entry recording which fields changed and their old values.
 // Returns the full updated node. Returns an error if the node does not exist or
 // has been archived.
-func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time, nodeKind *string, domain *string, moveReason *string) (*Node, error) {
+func (st *Store) UpdateNode(id string, label, description, whyMatters, tags *string, occurredAt *time.Time, nodeKind *string, domain *string, moveReason *string) (*Node, error) {
 	// Fetch current values for comparison and audit trail.
 	var cur Node
 	var curOA, curAA sql.NullTime
-	if err := s.db.QueryRow(
+	if err := st.db.QueryRow(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 		 FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
 	).Scan(&cur.ID, &cur.Label, &cur.Description, &cur.WhyMatters, &cur.Domain,
@@ -216,7 +215,7 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 		}
 	}
 	if domain != nil {
-		resolved := s.ResolveAlias(*domain)
+		resolved := st.ResolveAlias(*domain)
 		if resolved != cur.Domain {
 			if moveReason == nil || strings.TrimSpace(*moveReason) == "" {
 				return nil, fmt.Errorf("reason is required when changing domain")
@@ -239,7 +238,7 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 	}
 
 	// Atomically update the node and write the audit row in a single transaction.
-	tx, err := s.db.Begin()
+	tx, err := st.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -263,20 +262,20 @@ func (s *Store) UpdateNode(id string, label, description, whyMatters, tags *stri
 
 	// Re-fetch the updated node.
 	var n Node
-	var oa, aa sql.NullTime
-	if err := s.db.QueryRow(
+	var fetchedOccurredAt, fetchedArchivedAt sql.NullTime
+	if err := st.db.QueryRow(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 		 FROM nodes WHERE id = ?`, id,
-	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind); err != nil {
+	).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &fetchedOccurredAt, &fetchedArchivedAt, &n.Tags, &n.NodeKind); err != nil {
 		return nil, err
 	}
-	n.OccurredAt = nullTimeToPtr(oa)
-	n.ArchivedAt = nullTimeToPtr(aa)
+	n.OccurredAt = nullTimeToPtr(fetchedOccurredAt)
+	n.ArchivedAt = nullTimeToPtr(fetchedArchivedAt)
 
 	// Re-embed if semantic fields changed (best-effort, never fails the update).
 	if n.Label != cur.Label || n.Description != cur.Description || n.WhyMatters != cur.WhyMatters {
 		if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
-			s.storeEmbedding(id, embedding)
+			st.storeEmbedding(id, embedding)
 		}
 	}
 
@@ -298,11 +297,11 @@ type NodeUpdateInput struct {
 
 // UpdateNodesBatch updates multiple nodes in a single transaction.
 // All updates succeed or all are rolled back.
-func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
+func (st *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 	if len(inputs) == 0 {
 		return []*Node{}, nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := st.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +350,7 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			}
 		}
 		if inp.Domain != nil {
-			resolved := s.ResolveAlias(*inp.Domain)
+			resolved := st.ResolveAlias(*inp.Domain)
 			if resolved != cur.Domain {
 				if inp.Reason == nil || strings.TrimSpace(*inp.Reason) == "" {
 					tx.Rollback()
@@ -397,16 +396,16 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 
 		// Re-fetch within the tx.
 		var n Node
-		var oa, aa sql.NullTime
+		var occurredAt, archivedAt sql.NullTime
 		if err := tx.QueryRow(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 			 FROM nodes WHERE id = ?`, inp.ID,
-		).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind); err != nil {
+		).Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind); err != nil {
 			tx.Rollback()
 			return nil, err
 		}
-		n.OccurredAt = nullTimeToPtr(oa)
-		n.ArchivedAt = nullTimeToPtr(aa)
+		n.OccurredAt = nullTimeToPtr(occurredAt)
+		n.ArchivedAt = nullTimeToPtr(archivedAt)
 		nodes = append(nodes, &n)
 	}
 
@@ -418,7 +417,7 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 	for i, n := range nodes {
 		if semanticChanged[i] {
 			if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
-				s.storeEmbedding(n.ID, embedding)
+				st.storeEmbedding(n.ID, embedding)
 			}
 		}
 	}
@@ -430,8 +429,8 @@ func (s *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 
 // AddNodesBatch inserts all nodes in a single transaction.
 // If any node fails validation or insertion the transaction is rolled back.
-func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
-	tx, err := s.db.Begin()
+func (st *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
+	tx, err := st.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -446,7 +445,7 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 			tx.Rollback()
 			return nil, fmt.Errorf("node %d: domain is required", i)
 		}
-		domain := s.ResolveAlias(inp.Domain)
+		domain := st.ResolveAlias(inp.Domain)
 		id := slug(inp.Label) + "-" + shortID()
 		nodeKind := inp.NodeKind
 		if nodeKind == "" {
@@ -482,7 +481,7 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 		if n.OccurredAt != nil {
 			now2 := time.Now().UTC()
 			provenance := "agent-assigned"
-			_, _ = s.db.Exec(
+			_, _ = st.db.Exec(
 				`INSERT INTO audit_log (id, action, node_id, node_label, provenance, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
 				"auditlog-"+shortID(), "occurred_at_set", n.ID, n.Label, provenance, now2,
 			)
@@ -492,7 +491,7 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 	// Generate and store embeddings for each node (best-effort, after commit).
 	for _, n := range nodes {
 		if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
-			s.storeEmbedding(n.ID, embedding)
+			st.storeEmbedding(n.ID, embedding)
 		}
 	}
 
@@ -501,8 +500,8 @@ func (s *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 
 // LogDomainCreationFlagged records a domain_creation_flagged audit event when
 // remember() creates a new domain that KNN suggests may be mis-assigned.
-func (s *Store) LogDomainCreationFlagged(nodeID, nodeLabel, reason string) error {
-	_, err := s.db.Exec(
+func (st *Store) LogDomainCreationFlagged(nodeID, nodeLabel, reason string) error {
+	_, err := st.db.Exec(
 		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		"auditlog-"+shortID(), "domain_creation_flagged", nodeID, nodeLabel, reason, time.Now().UTC(),
 	)
@@ -512,22 +511,22 @@ func (s *Store) LogDomainCreationFlagged(nodeID, nodeLabel, reason string) error
 // ── archive / restore ─────────────────────────────────────────────────────────
 
 // ArchiveNode soft-deletes a node by setting archived_at and records an audit_log entry.
-func (s *Store) ArchiveNode(id, reason string) error {
+func (st *Store) ArchiveNode(id, reason string) error {
 	now := time.Now().UTC()
 
 	var label string
-	if err := s.db.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
+	if err := st.db.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("node not found: %s", id)
 		}
 		return err
 	}
 
-	if _, err := s.db.Exec(`UPDATE nodes SET archived_at = ? WHERE id = ?`, now, id); err != nil {
+	if _, err := st.db.Exec(`UPDATE nodes SET archived_at = ? WHERE id = ?`, now, id); err != nil {
 		return err
 	}
 
-	_, err := s.db.Exec(
+	_, err := st.db.Exec(
 		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		"auditlog-"+shortID(), "archive", id, label, reason, now,
 	)
@@ -537,10 +536,10 @@ func (s *Store) ArchiveNode(id, reason string) error {
 // ArchiveNodesBatch archives multiple nodes in a single transaction.
 // If any node ID does not exist, the whole transaction is rolled back and an
 // error is returned — no nodes are archived on partial failure.
-func (s *Store) ArchiveNodesBatch(items []struct{ ID, Reason string }) error {
+func (st *Store) ArchiveNodesBatch(items []struct{ ID, Reason string }) error {
 	now := time.Now().UTC()
 
-	tx, err := s.db.Begin()
+	tx, err := st.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -569,10 +568,10 @@ func (s *Store) ArchiveNodesBatch(items []struct{ ID, Reason string }) error {
 
 // RestoreNodesBatch un-archives multiple nodes in a single transaction.
 // If any ID is not found, the whole transaction is rolled back.
-func (s *Store) RestoreNodesBatch(ids []string) error {
+func (st *Store) RestoreNodesBatch(ids []string) error {
 	now := time.Now().UTC()
 
-	tx, err := s.db.Begin()
+	tx, err := st.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -600,22 +599,22 @@ func (s *Store) RestoreNodesBatch(ids []string) error {
 }
 
 // RestoreNode clears archived_at on a node and records an audit_log entry.
-func (s *Store) RestoreNode(id string) error {
+func (st *Store) RestoreNode(id string) error {
 	now := time.Now().UTC()
 
 	var label string
-	if err := s.db.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
+	if err := st.db.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("node not found: %s", id)
 		}
 		return err
 	}
 
-	if _, err := s.db.Exec(`UPDATE nodes SET archived_at = NULL WHERE id = ?`, id); err != nil {
+	if _, err := st.db.Exec(`UPDATE nodes SET archived_at = NULL WHERE id = ?`, id); err != nil {
 		return err
 	}
 
-	_, err := s.db.Exec(
+	_, err := st.db.Exec(
 		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		"auditlog-"+shortID(), "restore", id, label, nil, now,
 	)
@@ -624,11 +623,11 @@ func (s *Store) RestoreNode(id string) error {
 
 // ListArchived returns archived nodes, optionally filtered by domain.
 // limit caps results (default 25 when limit <= 0); query fetches limit+1 to detect truncation.
-func (s *Store) ListArchived(domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
+func (st *Store) ListArchived(domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
 	if limit <= 0 {
 		limit = 25
 	}
-	domain = s.ResolveAlias(domain)
+	domain = st.ResolveAlias(domain)
 
 	conds := []string{"archived_at IS NOT NULL"}
 	args := []interface{}{}
@@ -641,10 +640,10 @@ func (s *Store) ListArchived(domain string, tags, nodeKinds []string, limit int)
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	args = append(args, limit+1)
 
-	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
+	query := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY archived_at DESC LIMIT ?"
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -654,10 +653,10 @@ func (s *Store) ListArchived(domain string, tags, nodeKinds []string, limit int)
 }
 
 // CountNodes returns the number of live (non-archived) nodes in a domain.
-func (s *Store) CountNodes(domain string) (int, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) CountNodes(domain string) (int, error) {
+	domain = st.ResolveAlias(domain)
 	var count int
-	err := s.db.QueryRow(
+	err := st.db.QueryRow(
 		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`,
 		domain,
 	).Scan(&count)
@@ -665,10 +664,10 @@ func (s *Store) CountNodes(domain string) (int, error) {
 }
 
 // CountArchived returns the number of archived nodes in a domain.
-func (s *Store) CountArchived(domain string) (int, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) CountArchived(domain string) (int, error) {
+	domain = st.ResolveAlias(domain)
 	var count int
-	err := s.db.QueryRow(
+	err := st.db.QueryRow(
 		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NOT NULL`,
 		domain,
 	).Scan(&count)
@@ -680,13 +679,13 @@ func (s *Store) CountArchived(domain string) (int, error) {
 // FindPossibleDuplicates returns live nodes in the same domain whose normalised
 // label closely matches the given label (lowercased, punctuation stripped).
 // The node with the given excludeID is excluded (used to avoid self-match).
-func (s *Store) FindPossibleDuplicates(label, domain, excludeID string) ([]Node, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) FindPossibleDuplicates(label, domain, excludeID string) ([]Node, error) {
+	domain = st.ResolveAlias(domain)
 	norm := normaliseLabel(label)
 	if norm == "" {
 		return []Node{}, nil
 	}
-	rows, err := s.db.Query(
+	rows, err := st.db.Query(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 		 FROM nodes WHERE domain = ? AND archived_at IS NULL AND id != ?`,
 		domain, excludeID,
@@ -722,12 +721,12 @@ func normaliseLabel(s string) string {
 // GetStandingNodes returns live nodes with node_kind = 'standing' for the
 // given domain, ordered by inbound edge count descending. limit caps results
 // (default 20 when limit <= 0). truncated is true when more standing nodes exist.
-func (s *Store) GetStandingNodes(domain string, limit int) ([]Node, bool, error) {
+func (st *Store) GetStandingNodes(domain string, limit int) ([]Node, bool, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	domain = s.ResolveAlias(domain)
-	rows, err := s.db.Query(`
+	domain = st.ResolveAlias(domain)
+	rows, err := st.db.Query(`
 		SELECT n.id, n.label, n.description, n.why_matters, n.domain,
 		       n.created_at, n.updated_at, n.occurred_at, n.archived_at,
 		       n.tags, n.node_kind,
@@ -744,14 +743,14 @@ func (s *Store) GetStandingNodes(domain string, limit int) ([]Node, bool, error)
 	defer rows.Close()
 	nodes, err := scanRows(rows, func(r *sql.Rows) (Node, error) {
 		var n Node
-		var oa, aa sql.NullTime
+		var occurredAt, archivedAt sql.NullTime
 		var inboundCount int64
 		if err := r.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind, &inboundCount); err != nil {
+			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind, &inboundCount); err != nil {
 			return Node{}, err
 		}
-		n.OccurredAt = nullTimeToPtr(oa)
-		n.ArchivedAt = nullTimeToPtr(aa)
+		n.OccurredAt = nullTimeToPtr(occurredAt)
+		n.ArchivedAt = nullTimeToPtr(archivedAt)
 		return n, nil
 	})
 	if err != nil {

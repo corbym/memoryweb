@@ -26,14 +26,14 @@ type lifecycleNode struct {
 
 // LifecycleStates returns derived lifecycle markers for live nodes. Missing keys
 // mean no marker. Priority: contested > superseded > resolved.
-func (s *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, error) {
+func (st *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, error) {
 	out := make(map[string]LifecycleState)
 	if len(nodeIDs) == 0 {
 		return out, nil
 	}
 
 	ph, args := inClause(nodeIDs)
-	rows, err := s.db.Query(
+	rows, err := st.db.Query(
 		`SELECT id, node_kind, label FROM nodes WHERE archived_at IS NULL AND id IN (`+ph+`)`,
 		args...,
 	)
@@ -41,9 +41,9 @@ func (s *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, er
 		return nil, err
 	}
 	nodes, err := scanRows(rows, func(r *sql.Rows) (lifecycleNode, error) {
-		var n lifecycleNode
-		err := r.Scan(&n.id, &n.kind, &n.label)
-		return n, err
+		var node lifecycleNode
+		err := r.Scan(&node.id, &node.kind, &node.label)
+		return node, err
 	})
 	if err != nil {
 		return nil, err
@@ -55,13 +55,13 @@ func (s *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, er
 	kindByID := make(map[string]string, len(nodes))
 	labelByID := make(map[string]string, len(nodes))
 	liveIDs := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		kindByID[n.id] = n.kind
-		labelByID[n.id] = n.label
-		liveIDs[n.id] = true
+	for _, node := range nodes {
+		kindByID[node.id] = node.kind
+		labelByID[node.id] = node.label
+		liveIDs[node.id] = true
 	}
 
-	edgeRows, err := s.db.Query(
+	edgeRows, err := st.db.Query(
 		`SELECT e.from_node, e.to_node, e.relationship FROM edges e
 		 INNER JOIN nodes nf ON nf.id = e.from_node AND nf.archived_at IS NULL
 		 INNER JOIN nodes nt ON nt.id = e.to_node AND nt.archived_at IS NULL
@@ -73,20 +73,20 @@ func (s *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, er
 	}
 	type edgeLite struct{ from, to, rel string }
 	edges, err := scanRows(edgeRows, func(r *sql.Rows) (edgeLite, error) {
-		var e edgeLite
-		err := r.Scan(&e.from, &e.to, &e.rel)
-		return e, err
+		var edge edgeLite
+		err := r.Scan(&edge.from, &edge.to, &edge.rel)
+		return edge, err
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	hasResolutionBetween := func(a, b string) bool {
-		for _, e := range edges {
-			if !resolutionRelationships[e.rel] {
+		for _, edge := range edges {
+			if !resolutionRelationships[edge.rel] {
 				continue
 			}
-			if (e.from == a && e.to == b) || (e.from == b && e.to == a) {
+			if (edge.from == a && edge.to == b) || (edge.from == b && edge.to == a) {
 				return true
 			}
 		}
@@ -94,25 +94,25 @@ func (s *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, er
 	}
 
 	contested := make(map[string]bool)
-	for _, e := range edges {
-		if e.rel != "contradicts" {
+	for _, edge := range edges {
+		if edge.rel != "contradicts" {
 			continue
 		}
-		if hasResolutionBetween(e.from, e.to) {
+		if hasResolutionBetween(edge.from, edge.to) {
 			continue
 		}
-		if liveIDs[e.from] {
-			contested[e.from] = true
+		if liveIDs[edge.from] {
+			contested[edge.from] = true
 		}
-		if liveIDs[e.to] {
-			contested[e.to] = true
+		if liveIDs[edge.to] {
+			contested[edge.to] = true
 		}
 	}
 
 	superseded := make(map[string]bool)
-	for _, e := range edges {
-		if e.rel == "supersedes" && liveIDs[e.to] {
-			superseded[e.to] = true
+	for _, edge := range edges {
+		if edge.rel == "supersedes" && liveIDs[edge.to] {
+			superseded[edge.to] = true
 		}
 	}
 
@@ -122,8 +122,8 @@ func (s *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, er
 			continue
 		}
 		if kindByID[id] == "issue" {
-			for _, e := range edges {
-				if e.from == id && resolutionRelationships[e.rel] {
+			for _, edge := range edges {
+				if edge.from == id && resolutionRelationships[edge.rel] {
 					resolved[id] = true
 					break
 				}
@@ -132,15 +132,15 @@ func (s *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, er
 		if resolved[id] {
 			continue
 		}
-		for _, e := range edges {
-			if e.rel != "contradicts" {
+		for _, edge := range edges {
+			if edge.rel != "contradicts" {
 				continue
 			}
 			partner := ""
-			if e.from == id {
-				partner = e.to
-			} else if e.to == id {
-				partner = e.from
+			if edge.from == id {
+				partner = edge.to
+			} else if edge.to == id {
+				partner = edge.from
 			} else {
 				continue
 			}

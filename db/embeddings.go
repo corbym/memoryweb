@@ -30,8 +30,8 @@ const ollamaEndpoint = "http://localhost:11434/api/embed"
 // embeddingModel returns the Ollama model to use for embeddings.
 // Defaults to snowflake-arctic-embed. Override with MEMORYWEB_EMBED_MODEL.
 func embeddingModel() string {
-	if v := os.Getenv("MEMORYWEB_EMBED_MODEL"); v != "" {
-		return v
+	if model := os.Getenv("MEMORYWEB_EMBED_MODEL"); model != "" {
+		return model
 	}
 	return defaultEmbeddingModel
 }
@@ -50,11 +50,11 @@ func EmbeddingModel() string { return embeddingModel() }
 // exercise LIKE search behaviour in isolation from Ollama.
 func embed(text string) ([]float32, error) {
 	endpoint := ollamaEndpoint
-	if v := os.Getenv("MEMORYWEB_OLLAMA_ENDPOINT"); v != "" {
-		if v == "disabled" {
+	if envEndpoint := os.Getenv("MEMORYWEB_OLLAMA_ENDPOINT"); envEndpoint != "" {
+		if envEndpoint == "disabled" {
 			return nil, fmt.Errorf("embedding disabled by MEMORYWEB_OLLAMA_ENDPOINT")
 		}
-		endpoint = v
+		endpoint = envEndpoint
 	}
 	body, err := json.Marshal(ollamaEmbedRequest{Model: embeddingModel(), Input: text})
 	if err != nil {
@@ -104,15 +104,15 @@ func EmbedTextForNode(label, description, whyMatters string) string {
 
 // storedEmbeddingModel reads the embedding model recorded in the config table.
 // Returns "" if no model has been recorded yet.
-func (s *Store) storedEmbeddingModel() string {
-	var v string
-	s.db.QueryRow(`SELECT value FROM config WHERE key = 'embedding_model'`).Scan(&v)
-	return v
+func (st *Store) storedEmbeddingModel() string {
+	var model string
+	st.db.QueryRow(`SELECT value FROM config WHERE key = 'embedding_model'`).Scan(&model)
+	return model
 }
 
 // setStoredEmbeddingModel writes or updates the embedding model in the config table.
-func (s *Store) setStoredEmbeddingModel(model string) {
-	s.db.Exec( //nolint:errcheck
+func (st *Store) setStoredEmbeddingModel(model string) {
+	st.db.Exec( //nolint:errcheck
 		`INSERT INTO config(key, value) VALUES('embedding_model', ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		model,
@@ -120,8 +120,8 @@ func (s *Store) setStoredEmbeddingModel(model string) {
 }
 
 // clearEmbeddings deletes all rows from node_embeddings.
-func (s *Store) clearEmbeddings() (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM node_embeddings`)
+func (st *Store) clearEmbeddings() (int64, error) {
+	res, err := st.db.Exec(`DELETE FROM node_embeddings`)
 	if err != nil {
 		return 0, err
 	}
@@ -131,8 +131,8 @@ func (s *Store) clearEmbeddings() (int64, error) {
 // storeEmbedding inserts or replaces the embedding for a node in the
 // node_embeddings virtual table. Returns true if the embedding was stored
 // successfully. A failure only degrades search quality, not correctness.
-func (s *Store) storeEmbedding(id string, embedding []float32) bool {
-	if !s.vecAvailable || len(embedding) == 0 {
+func (st *Store) storeEmbedding(id string, embedding []float32) bool {
+	if !st.vecAvailable || len(embedding) == 0 {
 		return false
 	}
 	if len(embedding) != embeddingDim {
@@ -148,7 +148,7 @@ func (s *Store) storeEmbedding(id string, embedding []float32) bool {
 		log.Printf("[memoryweb] serialize embedding for %s: %v", id, err)
 		return false
 	}
-	if _, err := s.db.Exec(
+	if _, err := st.db.Exec(
 		`INSERT OR REPLACE INTO node_embeddings(node_id, embedding) VALUES (?, ?)`,
 		id, blob,
 	); err != nil {
@@ -165,20 +165,20 @@ func (s *Store) storeEmbedding(id string, embedding []float32) bool {
 // The model must output exactly 1024-dimensional vectors.
 // progress is called after each successful embedding with (done, total);
 // pass nil to disable progress reporting.
-func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) {
-	if !s.vecAvailable {
+func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) {
+	if !st.vecAvailable {
 		return 0, fmt.Errorf("sqlite-vec not available; cannot backfill embeddings")
 	}
 
 	current := embeddingModel()
-	if stored := s.storedEmbeddingModel(); stored != "" && stored != current {
+	if stored := st.storedEmbeddingModel(); stored != "" && stored != current {
 		log.Printf("[memoryweb] embedding model changed from %q to %q — clearing existing embeddings", stored, current)
-		if _, err := s.clearEmbeddings(); err != nil {
+		if _, err := st.clearEmbeddings(); err != nil {
 			return 0, fmt.Errorf("clear embeddings on model change: %w", err)
 		}
 	}
 
-	rows, err := s.db.Query(`
+	rows, err := st.db.Query(`
 		SELECT n.id, n.label, n.description, n.why_matters
 		FROM nodes n
 		LEFT JOIN node_embeddings e ON e.node_id = n.id
@@ -194,11 +194,11 @@ func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) 
 	}
 	var candidates []candidate
 	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.id, &c.label, &c.description, &c.whyMatters); err != nil {
+		var cand candidate
+		if err := rows.Scan(&cand.id, &cand.label, &cand.description, &cand.whyMatters); err != nil {
 			return 0, err
 		}
-		candidates = append(candidates, c)
+		candidates = append(candidates, cand)
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err
@@ -218,9 +218,9 @@ func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) 
 		}
 	}
 
-	n := 0
-	for i, c := range candidates {
-		embedding, err := embed(embedTextForNode(c.label, c.description, c.whyMatters))
+	count := 0
+	for i, cand := range candidates {
+		embedding, err := embed(embedTextForNode(cand.label, cand.description, cand.whyMatters))
 		if progress != nil {
 			progress(i+1, len(candidates))
 		}
@@ -229,19 +229,19 @@ func (s *Store) BackfillEmbeddings(progress func(done, total int)) (int, error) 
 			// the caller is rendering a progress bar and individual error lines
 			// would corrupt it. The summary already conveys how many succeeded.
 			if progress == nil {
-				log.Printf("[memoryweb] backfill embed %s: %v", c.id, err)
+				log.Printf("[memoryweb] backfill embed %s: %v", cand.id, err)
 			}
 			continue
 		}
-		if s.storeEmbedding(c.id, embedding) {
-			n++
+		if st.storeEmbedding(cand.id, embedding) {
+			count++
 		}
 	}
 
 	// Record the current model only when the run produced results or there was
 	// nothing to do — not when Ollama was unavailable and candidates were skipped.
-	if n > 0 || len(candidates) == 0 {
-		s.setStoredEmbeddingModel(current)
+	if count > 0 || len(candidates) == 0 {
+		st.setStoredEmbeddingModel(current)
 	}
-	return n, nil
+	return count, nil
 }

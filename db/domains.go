@@ -15,9 +15,9 @@ type DomainAlias struct {
 
 // ResolveAlias returns the canonical domain for name, or name itself if no
 // alias is registered.
-func (s *Store) ResolveAlias(name string) string {
+func (st *Store) ResolveAlias(name string) string {
 	var canonical string
-	err := s.db.QueryRow(`SELECT domain FROM domain_aliases WHERE alias = ?`, name).Scan(&canonical)
+	err := st.db.QueryRow(`SELECT domain FROM domain_aliases WHERE alias = ?`, name).Scan(&canonical)
 	if err != nil {
 		return name
 	}
@@ -25,9 +25,9 @@ func (s *Store) ResolveAlias(name string) string {
 }
 
 // AddAlias registers alias as an alternative name for domain.
-func (s *Store) AddAlias(alias, domain string) error {
+func (st *Store) AddAlias(alias, domain string) error {
 	var liveCount int
-	if err := s.db.QueryRow(
+	if err := st.db.QueryRow(
 		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, alias,
 	).Scan(&liveCount); err != nil {
 		return err
@@ -35,7 +35,7 @@ func (s *Store) AddAlias(alias, domain string) error {
 	if liveCount > 0 {
 		return fmt.Errorf("cannot register alias %q: %d live node(s) already filed under that domain name — revise their domain to %q first", alias, liveCount, domain)
 	}
-	_, err := s.db.Exec(
+	_, err := st.db.Exec(
 		`INSERT OR REPLACE INTO domain_aliases (alias, domain, created_at) VALUES (?, ?, ?)`,
 		alias, domain, time.Now().UTC(),
 	)
@@ -43,32 +43,32 @@ func (s *Store) AddAlias(alias, domain string) error {
 }
 
 // ListAliases returns all registered domain aliases.
-func (s *Store) ListAliases() ([]DomainAlias, error) {
-	rows, err := s.db.Query(`SELECT alias, domain, created_at FROM domain_aliases ORDER BY alias`)
+func (st *Store) ListAliases() ([]DomainAlias, error) {
+	rows, err := st.db.Query(`SELECT alias, domain, created_at FROM domain_aliases ORDER BY alias`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []DomainAlias
 	for rows.Next() {
-		var a DomainAlias
-		rows.Scan(&a.Alias, &a.Domain, &a.CreatedAt)
-		out = append(out, a)
+		var alias DomainAlias
+		rows.Scan(&alias.Alias, &alias.Domain, &alias.CreatedAt)
+		out = append(out, alias)
 	}
 	return out, nil
 }
 
 // RemoveAlias deletes an alias. Returns an error if the alias does not exist.
-func (s *Store) RemoveAlias(alias string) error {
-	res, err := s.db.Exec(`DELETE FROM domain_aliases WHERE alias = ?`, alias)
+func (st *Store) RemoveAlias(alias string) error {
+	res, err := st.db.Exec(`DELETE FROM domain_aliases WHERE alias = ?`, alias)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
+	affected, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if affected == 0 {
 		return fmt.Errorf("alias not found: %s", alias)
 	}
 	return nil
@@ -93,9 +93,9 @@ type RenameDomainResult struct {
 // Returns an error if:
 //   - oldDomain has no live nodes (not found)
 //   - newDomain already has live nodes (caller should use MergeDomains instead)
-func (s *Store) RenameDomain(oldDomain, newDomain string) (*RenameDomainResult, error) {
+func (st *Store) RenameDomain(oldDomain, newDomain string) (*RenameDomainResult, error) {
 	var oldCount int
-	if err := s.db.QueryRow(
+	if err := st.db.QueryRow(
 		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, oldDomain,
 	).Scan(&oldCount); err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func (s *Store) RenameDomain(oldDomain, newDomain string) (*RenameDomainResult, 
 	}
 
 	var newCount int
-	if err := s.db.QueryRow(
+	if err := st.db.QueryRow(
 		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, newDomain,
 	).Scan(&newCount); err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func (s *Store) RenameDomain(oldDomain, newDomain string) (*RenameDomainResult, 
 		return nil, fmt.Errorf("domain %q already has live nodes — use merge_domains instead", newDomain)
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := st.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func (s *Store) RenameDomain(oldDomain, newDomain string) (*RenameDomainResult, 
 		tx.Rollback()
 		return nil, err
 	}
-	n, err := res.RowsAffected()
+	affected, err := res.RowsAffected()
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -138,7 +138,7 @@ func (s *Store) RenameDomain(oldDomain, newDomain string) (*RenameDomainResult, 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return &RenameDomainResult{NodesRenamed: int(n), OldDomain: oldDomain, NewDomain: newDomain}, nil
+	return &RenameDomainResult{NodesRenamed: int(affected), OldDomain: oldDomain, NewDomain: newDomain}, nil
 }
 
 // MergeDomainsResult holds the output of MergeDomains.
@@ -159,9 +159,9 @@ type MergeDomainsResult struct {
 // Returns an error if:
 //   - sourceDomain has no live nodes (not found)
 //   - targetDomain has no live nodes (caller should use RenameDomain instead)
-func (s *Store) MergeDomains(sourceDomain, targetDomain string, dryRun bool) (*MergeDomainsResult, error) {
+func (st *Store) MergeDomains(sourceDomain, targetDomain string, dryRun bool) (*MergeDomainsResult, error) {
 	var srcCount int
-	if err := s.db.QueryRow(
+	if err := st.db.QueryRow(
 		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, sourceDomain,
 	).Scan(&srcCount); err != nil {
 		return nil, err
@@ -171,7 +171,7 @@ func (s *Store) MergeDomains(sourceDomain, targetDomain string, dryRun bool) (*M
 	}
 
 	var tgtCount int
-	if err := s.db.QueryRow(
+	if err := st.db.QueryRow(
 		`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, targetDomain,
 	).Scan(&tgtCount); err != nil {
 		return nil, err
@@ -181,7 +181,7 @@ func (s *Store) MergeDomains(sourceDomain, targetDomain string, dryRun bool) (*M
 	}
 
 	// Detect label collisions before any write.
-	colRows, err := s.db.Query(`
+	colRows, err := st.db.Query(`
 		SELECT s.label FROM nodes s
 		JOIN nodes t ON LOWER(s.label) = LOWER(t.label)
 		WHERE s.domain = ? AND s.archived_at IS NULL
@@ -213,7 +213,7 @@ func (s *Store) MergeDomains(sourceDomain, targetDomain string, dryRun bool) (*M
 		}, nil
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := st.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (s *Store) MergeDomains(sourceDomain, targetDomain string, dryRun bool) (*M
 		tx.Rollback()
 		return nil, err
 	}
-	n, err := res.RowsAffected()
+	affected, err := res.RowsAffected()
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -238,22 +238,22 @@ func (s *Store) MergeDomains(sourceDomain, targetDomain string, dryRun bool) (*M
 		return nil, err
 	}
 	return &MergeDomainsResult{
-		NodesMoved:      int(n),
+		NodesMoved:      int(affected),
 		SourceDomain:    sourceDomain,
 		TargetDomain:    targetDomain,
 		LabelCollisions: collisions,
 	}, nil
 }
 
-func (s *Store) DomainExists(domain string) (bool, error) {
-	domain = s.ResolveAlias(domain)
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, domain).Scan(&n)
-	return n > 0, err
+func (st *Store) DomainExists(domain string) (bool, error) {
+	domain = st.ResolveAlias(domain)
+	var count int
+	err := st.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, domain).Scan(&count)
+	return count > 0, err
 }
 
-func (s *Store) ListDomains() ([]string, error) {
-	rows, err := s.db.Query(
+func (st *Store) ListDomains() ([]string, error) {
+	rows, err := st.db.Query(
 		`SELECT DISTINCT domain FROM nodes WHERE archived_at IS NULL ORDER BY domain ASC`,
 	)
 	if err != nil {
@@ -262,11 +262,11 @@ func (s *Store) ListDomains() ([]string, error) {
 	defer rows.Close()
 	var domains []string
 	for rows.Next() {
-		var d string
-		if err := rows.Scan(&d); err != nil {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
 			return nil, err
 		}
-		domains = append(domains, d)
+		domains = append(domains, domain)
 	}
 	if domains == nil {
 		domains = []string{}

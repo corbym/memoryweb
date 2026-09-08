@@ -31,28 +31,28 @@ type EdgeInput struct {
 func scanEdge(scanner interface {
 	Scan(dest ...any) error
 }) (Edge, error) {
-	var e Edge
+	var edge Edge
 	var verdict sql.NullString
-	if err := scanner.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &verdict, &e.CreatedAt); err != nil {
+	if err := scanner.Scan(&edge.ID, &edge.FromNode, &edge.ToNode, &edge.Relationship, &edge.Narrative, &verdict, &edge.CreatedAt); err != nil {
 		return Edge{}, err
 	}
 	if verdict.Valid {
-		e.Verdict = verdict.String
+		edge.Verdict = verdict.String
 	}
-	return e, nil
+	return edge, nil
 }
 
-func (s *Store) AddEdge(fromID, toID, relationship, narrative string, verdict ...string) (*Edge, error) {
-	v := ""
+func (st *Store) AddEdge(fromID, toID, relationship, narrative string, verdict ...string) (*Edge, error) {
+	val := ""
 	if len(verdict) > 0 {
-		v = verdict[0]
+		val = verdict[0]
 	}
 	if relationship != "resolved" {
-		v = ""
+		val = ""
 	}
 	// Look up from node and get its domain.
 	var fromDomain string
-	if err := s.db.QueryRow(`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, fromID).Scan(&fromDomain); err != nil {
+	if err := st.db.QueryRow(`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, fromID).Scan(&fromDomain); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("node not found: %s", fromID)
 		}
@@ -60,11 +60,11 @@ func (s *Store) AddEdge(fromID, toID, relationship, narrative string, verdict ..
 	}
 	// Check to node exists (live only).
 	var toCount int
-	s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NULL`, toID).Scan(&toCount)
+	st.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NULL`, toID).Scan(&toCount)
 	if toCount == 0 {
 		// Distinguish: archived vs. genuinely missing.
 		var archivedCount int
-		s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NOT NULL`, toID).Scan(&archivedCount)
+		st.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NOT NULL`, toID).Scan(&archivedCount)
 		if archivedCount > 0 {
 			return nil, fmt.Errorf("memory archived; use restore first (id %q)", toID)
 		}
@@ -73,10 +73,10 @@ func (s *Store) AddEdge(fromID, toID, relationship, narrative string, verdict ..
 	id := "edge-" + shortID()
 	now := time.Now().UTC()
 	var verdictVal interface{}
-	if v != "" {
-		verdictVal = v
+	if val != "" {
+		verdictVal = val
 	}
-	_, err := s.db.Exec(
+	_, err := st.db.Exec(
 		`INSERT INTO edges (id, from_node, to_node, relationship, narrative, verdict, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		id, fromID, toID, relationship, narrative, verdictVal, now,
@@ -84,14 +84,14 @@ func (s *Store) AddEdge(fromID, toID, relationship, narrative string, verdict ..
 	if err != nil {
 		return nil, err
 	}
-	edge := Edge{id, fromID, toID, relationship, narrative, v, now}
+	edge := Edge{id, fromID, toID, relationship, narrative, val, now}
 	return &edge, nil
 }
 
 // AddEdgesBatch inserts all edges in a single transaction.
 // If any edge references a non-existent or archived node the transaction is rolled back.
-func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
-	tx, err := s.db.Begin()
+func (st *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
+	tx, err := st.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
 			tx.Rollback()
 			// Distinguish: archived vs. genuinely missing.
 			var archivedCount int
-			s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NOT NULL`, inp.ToNode).Scan(&archivedCount)
+			st.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ? AND archived_at IS NOT NULL`, inp.ToNode).Scan(&archivedCount)
 			if archivedCount > 0 {
 				return nil, fmt.Errorf("memory archived; use restore first (id %q)", inp.ToNode)
 			}
@@ -148,13 +148,13 @@ func (s *Store) AddEdgesBatch(inputs []EdgeInput) ([]*Edge, error) {
 	return edges, nil
 }
 
-func (s *Store) DeleteEdge(id string) error {
-	res, err := s.db.Exec(`DELETE FROM edges WHERE id = ?`, id)
+func (st *Store) DeleteEdge(id string) error {
+	res, err := st.db.Exec(`DELETE FROM edges WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
 		return fmt.Errorf("edge not found: %s", id)
 	}
 	return nil
@@ -162,8 +162,8 @@ func (s *Store) DeleteEdge(id string) error {
 
 // DeleteEdgesBatch hard-deletes multiple edges in a single transaction.
 // If any edge ID is not found, the whole transaction is rolled back.
-func (s *Store) DeleteEdgesBatch(ids []string) error {
-	tx, err := s.db.Begin()
+func (st *Store) DeleteEdgesBatch(ids []string) error {
+	tx, err := st.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -174,8 +174,8 @@ func (s *Store) DeleteEdgesBatch(ids []string) error {
 		if err != nil {
 			return err
 		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
 			return fmt.Errorf("edge not found: %s", id)
 		}
 	}

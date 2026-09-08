@@ -42,7 +42,7 @@ type SignificanceResult struct {
 // Every call writes rows to significance_log (one per returned node in
 // structural, uncurated, potentially_stale) so the decay function can be
 // validated over time.
-func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int, tags, nodeKinds []string, declaredLimit int) (SignificanceResult, error) {
+func (st *Store) GetSignificance(domain string, limit int, recencyWindowDays int, tags, nodeKinds []string, declaredLimit int) (SignificanceResult, error) {
 	callID := shortID()
 	var res SignificanceResult
 	res.CallID = callID
@@ -59,7 +59,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 		declaredQ += ` LIMIT ?`
 		declaredArgs = append(declaredArgs, declaredLimit+1)
 	}
-	declaredRows, err := s.db.Query(declaredQ, declaredArgs...)
+	declaredRows, err := st.db.Query(declaredQ, declaredArgs...)
 	if err != nil {
 		return res, fmt.Errorf("GetSignificance declared: %w", err)
 	}
@@ -105,32 +105,32 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 		GROUP BY n.id
 		ORDER BY importance_score DESC
 		LIMIT ?`
-	structRows, err := s.db.Query(structQ, structArgs...)
+	structRows, err := st.db.Query(structQ, structArgs...)
 	if err != nil {
 		return res, fmt.Errorf("GetSignificance structural: %w", err)
 	}
 	defer structRows.Close()
 	structIDs := map[string]bool{}
 	for structRows.Next() {
-		var sn ScoredNode
-		var tags, desc, why sql.NullString
+		var scoredNode ScoredNode
+		var tags, description, whyMatters sql.NullString
 		var occurredAt, archivedAt sql.NullTime
 		var nodeKind string
 		if err := structRows.Scan(
-			&sn.ID, &sn.Label, &desc, &why, &tags, &sn.Domain,
-			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
-			&sn.ImportanceScore,
+			&scoredNode.ID, &scoredNode.Label, &description, &whyMatters, &tags, &scoredNode.Domain,
+			&scoredNode.CreatedAt, &scoredNode.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
+			&scoredNode.ImportanceScore,
 		); err != nil {
 			return res, fmt.Errorf("GetSignificance scan structural: %w", err)
 		}
-		sn.Description = desc.String
-		sn.WhyMatters = why.String
-		sn.Tags = tags.String
-		sn.OccurredAt = nullTimeToPtr(occurredAt)
-		sn.ArchivedAt = nullTimeToPtr(archivedAt)
-		sn.NodeKind = nodeKind
-		res.Structural = append(res.Structural, sn)
-		structIDs[sn.ID] = true
+		scoredNode.Description = description.String
+		scoredNode.WhyMatters = whyMatters.String
+		scoredNode.Tags = tags.String
+		scoredNode.OccurredAt = nullTimeToPtr(occurredAt)
+		scoredNode.ArchivedAt = nullTimeToPtr(archivedAt)
+		scoredNode.NodeKind = nodeKind
+		res.Structural = append(res.Structural, scoredNode)
+		structIDs[scoredNode.ID] = true
 	}
 	if err := structRows.Err(); err != nil {
 		return res, fmt.Errorf("GetSignificance structural rows: %w", err)
@@ -142,15 +142,15 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	if res.StructuralResultsTruncated {
 		res.Structural = res.Structural[:limit]
 		structIDs = map[string]bool{}
-		for _, sn := range res.Structural {
-			structIDs[sn.ID] = true
+		for _, scoredNode := range res.Structural {
+			structIDs[scoredNode.ID] = true
 		}
 	}
 
 	// ── uncurated: structural top-N with no occurred_at ───────────────────────
-	for _, sn := range res.Structural {
-		if sn.OccurredAt == nil {
-			res.Uncurated = append(res.Uncurated, sn)
+	for _, scoredNode := range res.Structural {
+		if scoredNode.OccurredAt == nil {
+			res.Uncurated = append(res.Uncurated, scoredNode)
 		}
 	}
 	if res.Uncurated == nil {
@@ -168,9 +168,9 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 		for id := range structIDs {
 			structIDList = append(structIDList, id)
 		}
-		ph, phArgs := inClause(structIDList)
-		psConds = append(psConds, "id NOT IN ("+ph+")")
-		psArgs = append(psArgs, phArgs...)
+		placeholders, placeholderArgs := inClause(structIDList)
+		psConds = append(psConds, "id NOT IN ("+placeholders+")")
+		psArgs = append(psArgs, placeholderArgs...)
 	}
 	psQ := `SELECT id, label, description, why_matters, tags, domain,
 	       created_at, updated_at, occurred_at, archived_at, node_kind
@@ -179,7 +179,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 		psQ += ` LIMIT ?`
 		psArgs = append(psArgs, declaredLimit+1)
 	}
-	psRows, err := s.db.Query(psQ, psArgs...)
+	psRows, err := st.db.Query(psQ, psArgs...)
 	if err != nil {
 		return res, fmt.Errorf("GetSignificance potentially_stale: %w", err)
 	}
@@ -207,25 +207,25 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 	// ── log ───────────────────────────────────────────────────────────────────
 	calledAt := time.Now().UTC()
 	logged := map[string]bool{}
-	for _, sn := range res.Structural {
-		if !logged[sn.ID] {
-			if err := s.logSignificance(callID, calledAt, domain, limit, sn.ID, sn.Label, "structural", &sn.ImportanceScore); err != nil {
+	for _, scoredNode := range res.Structural {
+		if !logged[scoredNode.ID] {
+			if err := st.logSignificance(callID, calledAt, domain, limit, scoredNode.ID, scoredNode.Label, "structural", &scoredNode.ImportanceScore); err != nil {
 				return res, fmt.Errorf("GetSignificance log structural: %w", err)
 			}
-			logged[sn.ID] = true
+			logged[scoredNode.ID] = true
 		}
 	}
-	for _, sn := range res.Uncurated {
-		if !logged[sn.ID] {
-			if err := s.logSignificance(callID, calledAt, domain, limit, sn.ID, sn.Label, "uncurated", nil); err != nil {
+	for _, scoredNode := range res.Uncurated {
+		if !logged[scoredNode.ID] {
+			if err := st.logSignificance(callID, calledAt, domain, limit, scoredNode.ID, scoredNode.Label, "uncurated", nil); err != nil {
 				return res, fmt.Errorf("GetSignificance log uncurated: %w", err)
 			}
-			logged[sn.ID] = true
+			logged[scoredNode.ID] = true
 		}
 	}
 	for _, n := range res.PotentiallyStale {
 		if !logged[n.ID] {
-			if err := s.logSignificance(callID, calledAt, domain, limit, n.ID, n.Label, "potentially_stale", nil); err != nil {
+			if err := st.logSignificance(callID, calledAt, domain, limit, n.ID, n.Label, "potentially_stale", nil); err != nil {
 				return res, fmt.Errorf("GetSignificance log potentially_stale: %w", err)
 			}
 			logged[n.ID] = true
@@ -240,7 +240,7 @@ func (s *Store) GetSignificance(domain string, limit int, recencyWindowDays int,
 // getSignificanceByNodeIDs runs dual-signal importance analysis scoped to a
 // specific set of node IDs (e.g. a neighbourhood). domain is used only for
 // logging; it does not further filter the node set.
-func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int, nodeKinds []string) (SignificanceResult, error) {
+func (st *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recencyWindowDays int, nodeKinds []string) (SignificanceResult, error) {
 	callID := shortID()
 	var res SignificanceResult
 	res.CallID = callID
@@ -253,13 +253,13 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 		return res, nil
 	}
 
-	ph, nodeArgs := inClause(nodeIDs)
+	placeholders, nodeArgs := inClause(nodeIDs)
 
-	declConds := []string{"id IN (" + ph + ")", "occurred_at IS NOT NULL", "archived_at IS NULL"}
+	declConds := []string{"id IN (" + placeholders + ")", "occurred_at IS NOT NULL", "archived_at IS NULL"}
 	declConds, declArgs := nodeKindFilter("node_kind", nodeKinds, declConds, append([]interface{}{}, nodeArgs...))
 
 	// ── declared ─────────────────────────────────────────────────────────────
-	declaredRows, err := s.db.Query(
+	declaredRows, err := st.db.Query(
 		`SELECT id, label, description, why_matters, tags, domain,
 		        created_at, updated_at, occurred_at, archived_at, node_kind
 		 FROM nodes
@@ -284,12 +284,12 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 	}
 
 	// ── structural ────────────────────────────────────────────────────────────
-	structConds := []string{"n.id IN (" + ph + ")", "n.archived_at IS NULL", "n2.archived_at IS NULL", "(julianday('now') - julianday(n2.updated_at)) <= ?"}
+	structConds := []string{"n.id IN (" + placeholders + ")", "n.archived_at IS NULL", "n2.archived_at IS NULL", "(julianday('now') - julianday(n2.updated_at)) <= ?"}
 	structConds, structKindArgs := nodeKindFilter("n.node_kind", nodeKinds, structConds, nil)
 	structArgs := append(nodeArgs, recencyWindowDays)
 	structArgs = append(structArgs, structKindArgs...)
 
-	structRows, err := s.db.Query(
+	structRows, err := st.db.Query(
 		`SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
 		        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.node_kind,
 		        SUM(1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS importance_score
@@ -305,25 +305,25 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 	defer structRows.Close()
 	structIDs := map[string]bool{}
 	for structRows.Next() {
-		var sn ScoredNode
-		var tags, desc, why sql.NullString
+		var scoredNode ScoredNode
+		var tags, description, whyMatters sql.NullString
 		var occurredAt, archivedAt sql.NullTime
 		var nodeKind string
 		if err := structRows.Scan(
-			&sn.ID, &sn.Label, &desc, &why, &tags, &sn.Domain,
-			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
-			&sn.ImportanceScore,
+			&scoredNode.ID, &scoredNode.Label, &description, &whyMatters, &tags, &scoredNode.Domain,
+			&scoredNode.CreatedAt, &scoredNode.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
+			&scoredNode.ImportanceScore,
 		); err != nil {
 			return res, fmt.Errorf("getSignificanceByNodeIDs scan structural: %w", err)
 		}
-		sn.Description = desc.String
-		sn.WhyMatters = why.String
-		sn.Tags = tags.String
-		sn.OccurredAt = nullTimeToPtr(occurredAt)
-		sn.ArchivedAt = nullTimeToPtr(archivedAt)
-		sn.NodeKind = nodeKind
-		res.Structural = append(res.Structural, sn)
-		structIDs[sn.ID] = true
+		scoredNode.Description = description.String
+		scoredNode.WhyMatters = whyMatters.String
+		scoredNode.Tags = tags.String
+		scoredNode.OccurredAt = nullTimeToPtr(occurredAt)
+		scoredNode.ArchivedAt = nullTimeToPtr(archivedAt)
+		scoredNode.NodeKind = nodeKind
+		res.Structural = append(res.Structural, scoredNode)
+		structIDs[scoredNode.ID] = true
 	}
 	if err := structRows.Err(); err != nil {
 		return res, fmt.Errorf("getSignificanceByNodeIDs structural rows: %w", err)
@@ -333,9 +333,9 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 	}
 
 	// ── uncurated ─────────────────────────────────────────────────────────────
-	for _, sn := range res.Structural {
-		if sn.OccurredAt == nil {
-			res.Uncurated = append(res.Uncurated, sn)
+	for _, scoredNode := range res.Structural {
+		if scoredNode.OccurredAt == nil {
+			res.Uncurated = append(res.Uncurated, scoredNode)
 		}
 	}
 	if res.Uncurated == nil {
@@ -355,25 +355,25 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 	// ── log ───────────────────────────────────────────────────────────────────
 	calledAt := time.Now().UTC()
 	logged := map[string]bool{}
-	for _, sn := range res.Structural {
-		if !logged[sn.ID] {
-			if err := s.logSignificance(callID, calledAt, domain, len(nodeIDs), sn.ID, sn.Label, "structural", &sn.ImportanceScore); err != nil {
+	for _, scoredNode := range res.Structural {
+		if !logged[scoredNode.ID] {
+			if err := st.logSignificance(callID, calledAt, domain, len(nodeIDs), scoredNode.ID, scoredNode.Label, "structural", &scoredNode.ImportanceScore); err != nil {
 				return res, fmt.Errorf("getSignificanceByNodeIDs log structural: %w", err)
 			}
-			logged[sn.ID] = true
+			logged[scoredNode.ID] = true
 		}
 	}
-	for _, sn := range res.Uncurated {
-		if !logged[sn.ID] {
-			if err := s.logSignificance(callID, calledAt, domain, len(nodeIDs), sn.ID, sn.Label, "uncurated", nil); err != nil {
+	for _, scoredNode := range res.Uncurated {
+		if !logged[scoredNode.ID] {
+			if err := st.logSignificance(callID, calledAt, domain, len(nodeIDs), scoredNode.ID, scoredNode.Label, "uncurated", nil); err != nil {
 				return res, fmt.Errorf("getSignificanceByNodeIDs log uncurated: %w", err)
 			}
-			logged[sn.ID] = true
+			logged[scoredNode.ID] = true
 		}
 	}
 	for _, n := range res.PotentiallyStale {
 		if !logged[n.ID] {
-			if err := s.logSignificance(callID, calledAt, domain, len(nodeIDs), n.ID, n.Label, "potentially_stale", nil); err != nil {
+			if err := st.logSignificance(callID, calledAt, domain, len(nodeIDs), n.ID, n.Label, "potentially_stale", nil); err != nil {
 				return res, fmt.Errorf("getSignificanceByNodeIDs log potentially_stale: %w", err)
 			}
 			logged[n.ID] = true
@@ -386,18 +386,18 @@ func (s *Store) getSignificanceByNodeIDs(nodeIDs []string, domain string, recenc
 // GetSignificanceForMemoryID returns dual-signal importance analysis scoped to
 // the depth-hop neighbourhood of the given memory ID, clipped to the anchor's
 // domain. Depth 2 is recommended; depth 1 produces near-uniform low scores.
-func (s *Store) GetSignificanceForMemoryID(nodeID string, depth int, recencyWindowDays int, nodeKinds []string) (SignificanceResult, error) {
-	ids, anchorDomain, err := s.neighbourhoodIDs(nodeID, depth)
+func (st *Store) GetSignificanceForMemoryID(nodeID string, depth int, recencyWindowDays int, nodeKinds []string) (SignificanceResult, error) {
+	ids, anchorDomain, err := st.neighbourhoodIDs(nodeID, depth)
 	if err != nil {
 		return SignificanceResult{}, err
 	}
-	return s.getSignificanceByNodeIDs(ids, anchorDomain, recencyWindowDays, nodeKinds)
+	return st.getSignificanceByNodeIDs(ids, anchorDomain, recencyWindowDays, nodeKinds)
 }
 
 // logSignificance inserts one row into significance_log.
-func (s *Store) logSignificance(callID string, calledAt time.Time, domain string, limitN int, nodeID, nodeLabel, rankType string, score *float64) error {
+func (st *Store) logSignificance(callID string, calledAt time.Time, domain string, limitN int, nodeID, nodeLabel, rankType string, score *float64) error {
 	id := shortID()
-	_, err := s.db.Exec(
+	_, err := st.db.Exec(
 		`INSERT INTO significance_log (id, call_id, called_at, domain, limit_n, node_id, node_label, rank_type, score)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, callID, calledAt, domain, limitN, nodeID, nodeLabel, rankType, score,
@@ -408,22 +408,22 @@ func (s *Store) logSignificance(callID string, calledAt time.Time, domain string
 // LastTrustScores returns the most recently logged trust score from significance_log
 // for each supplied node ID, keyed by node ID. Nodes with no prior trust log entry
 // are absent from the map. Used by orient digest mode to detect trust worsening.
-func (s *Store) LastTrustScores(nodeIDs []string) (map[string]float64, error) {
+func (st *Store) LastTrustScores(nodeIDs []string) (map[string]float64, error) {
 	if len(nodeIDs) == 0 {
 		return nil, nil
 	}
-	ph, args := inClause(nodeIDs)
+	placeholders, args := inClause(nodeIDs)
 	// ROW_NUMBER() partitioned by node_id ensures exactly one row per node even
 	// when two log entries share an identical called_at timestamp.
-	q := `SELECT node_id, score FROM (
+	query := `SELECT node_id, score FROM (
 	        SELECT node_id, score,
 	               ROW_NUMBER() OVER (PARTITION BY node_id ORDER BY called_at DESC) AS rn
 	        FROM significance_log
-	        WHERE node_id IN (` + ph + `)
+	        WHERE node_id IN (` + placeholders + `)
 	          AND rank_type = 'trust'
 	          AND score IS NOT NULL
 	      ) WHERE rn = 1`
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("LastTrustScores: %w", err)
 	}

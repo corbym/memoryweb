@@ -36,17 +36,17 @@ type PathResult struct {
 // traversal of edges. Only live (non-archived) nodes are traversed; archived
 // nodes act as walls. maxDepth caps the search at that many hops (hard limit: 6).
 // Returns an empty PathResult (no error) when no path exists.
-func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error) {
+func (st *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error) {
 	if maxDepth <= 0 || maxDepth > 6 {
 		maxDepth = 6
 	}
 	if fromID == toID {
 		// Trivial: source == destination.
-		n, err := s.GetNode(fromID)
+		node, err := st.GetNode(fromID)
 		if err != nil {
 			return nil, err
 		}
-		return &PathResult{Path: []Node{n.Node}, Edges: nil}, nil
+		return &PathResult{Path: []Node{node.Node}, Edges: nil}, nil
 	}
 
 	// BFS: each entry is a path (slice of node IDs) from fromID to the frontier.
@@ -67,7 +67,7 @@ func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error)
 		}
 
 		// Fetch all edges from or to the current tail node (undirected traversal).
-		rows, err := s.db.Query(`
+		rows, err := st.db.Query(`
 			SELECT e.id, e.from_node, e.to_node, e.relationship, e.narrative, e.created_at
 			FROM edges e
 			JOIN nodes nf ON nf.id = e.from_node AND nf.archived_at IS NULL
@@ -81,19 +81,19 @@ func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error)
 			neighbour string
 		}
 		for rows.Next() {
-			var e Edge
-			if err := rows.Scan(&e.ID, &e.FromNode, &e.ToNode, &e.Relationship, &e.Narrative, &e.CreatedAt); err != nil {
+			var edge Edge
+			if err := rows.Scan(&edge.ID, &edge.FromNode, &edge.ToNode, &edge.Relationship, &edge.Narrative, &edge.CreatedAt); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			next := e.ToNode
+			next := edge.ToNode
 			if next == tail {
-				next = e.FromNode
+				next = edge.FromNode
 			}
 			neighbours = append(neighbours, struct {
 				edge      Edge
 				neighbour string
-			}{e, next})
+			}{edge, next})
 		}
 		rows.Close()
 
@@ -107,7 +107,7 @@ func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error)
 			}
 			if nb.neighbour == toID {
 				// Found it — materialise the result.
-				return s.materialisePath(newPath.nodes, newPath.edges)
+				return st.materialisePath(newPath.nodes, newPath.edges)
 			}
 			visited[nb.neighbour] = true
 			queue = append(queue, newPath)
@@ -118,11 +118,11 @@ func (s *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error)
 
 // materialisePath fetches full Node structs for the path and all edges
 // incident to any node on the path (spine edges + context branches).
-func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) {
+func (st *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) {
 	_ = edgeIDs // we now fetch all incident edges instead of just spine edges
 	nodes := make([]Node, 0, len(nodeIDs))
 	for _, id := range nodeIDs {
-		nwe, err := s.GetNode(id)
+		nwe, err := st.GetNode(id)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +133,7 @@ func (s *Store) materialisePath(nodeIDs, edgeIDs []string) (*PathResult, error) 
 	ph, phArgs := inClause(nodeIDs)
 	args := append(phArgs, phArgs...)
 
-	rows, err := s.db.Query(
+	rows, err := st.db.Query(
 		`SELECT `+edgeSelectColumns+` FROM edges
 		 WHERE from_node IN (`+ph+`) OR to_node IN (`+ph+`)`,
 		args...,
@@ -164,81 +164,80 @@ type ConnectionResult struct {
 }
 
 // bestMatch returns the first node whose label or description best matches the term.
-func (s *Store) bestMatch(term, domain string) (*Node, error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) bestMatch(term, domain string) (*Node, error) {
+	domain = st.ResolveAlias(domain)
 	q := "%" + term + "%"
 	var row *sql.Row
 	if domain != "" {
-		row = s.db.QueryRow(
+		row = st.db.QueryRow(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
 			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
 			domain, q, q, q, q, q,
 		)
 	} else {
-		row = s.db.QueryRow(
+		row = st.db.QueryRow(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
 			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
 			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
 			q, q, q, q, q,
 		)
 	}
-	var n Node
-	var oa sql.NullTime
-	var aa sql.NullTime
-	err := row.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind)
+	var node Node
+	var occurredAt, archivedAt sql.NullTime
+	err := row.Scan(&node.ID, &node.Label, &node.Description, &node.WhyMatters, &node.Domain, &node.CreatedAt, &node.UpdatedAt, &occurredAt, &archivedAt, &node.Tags, &node.NodeKind)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	n.OccurredAt = nullTimeToPtr(oa)
-	n.ArchivedAt = nullTimeToPtr(aa)
-	return &n, nil
+	node.OccurredAt = nullTimeToPtr(occurredAt)
+	node.ArchivedAt = nullTimeToPtr(archivedAt)
+	return &node, nil
 }
 
-func (s *Store) FindConnections(fromTerm, toTerm, domain string) (*ConnectionResult, error) {
-	return s.FindConnectionsResolved("", fromTerm, "", toTerm, domain)
+func (st *Store) FindConnections(fromTerm, toTerm, domain string) (*ConnectionResult, error) {
+	return st.FindConnectionsResolved("", fromTerm, "", toTerm, domain)
 }
 
 // FindConnectionsResolved returns direct edges between two nodes. Each side is
 // resolved by id (exact live node) or label (bestMatch fuzzy search).
-func (s *Store) FindConnectionsResolved(fromID, fromLabel, toID, toLabel, domain string) (*ConnectionResult, error) {
-	from, err := s.resolveConnectionEndpoint(fromID, fromLabel, domain)
+func (st *Store) FindConnectionsResolved(fromID, fromLabel, toID, toLabel, domain string) (*ConnectionResult, error) {
+	from, err := st.resolveConnectionEndpoint(fromID, fromLabel, domain)
 	if err != nil {
 		return nil, err
 	}
-	to, err := s.resolveConnectionEndpoint(toID, toLabel, domain)
+	to, err := st.resolveConnectionEndpoint(toID, toLabel, domain)
 	if err != nil {
 		return nil, err
 	}
-	return s.connectionResultBetween(from, to)
+	return st.connectionResultBetween(from, to)
 }
 
-func (s *Store) resolveConnectionEndpoint(id, label, domain string) (*Node, error) {
+func (st *Store) resolveConnectionEndpoint(id, label, domain string) (*Node, error) {
 	if id != "" {
-		nwe, err := s.GetNode(id)
+		nwe, err := st.GetNode(id)
 		if err != nil {
 			return nil, err
 		}
 		return &nwe.Node, nil
 	}
 	if label != "" {
-		n, err := s.bestMatch(label, domain)
+		node, err := st.bestMatch(label, domain)
 		if err != nil {
 			return nil, err
 		}
-		if n == nil {
+		if node == nil {
 			return nil, fmt.Errorf("no live memory matched label %q", label)
 		}
-		return n, nil
+		return node, nil
 	}
 	return nil, fmt.Errorf("id or label is required")
 }
 
-func (s *Store) connectionResultBetween(from, to *Node) (*ConnectionResult, error) {
-	rows, err := s.db.Query(
+func (st *Store) connectionResultBetween(from, to *Node) (*ConnectionResult, error) {
+	rows, err := st.db.Query(
 		`SELECT `+edgeSelectColumns+` FROM edges
 		 WHERE (from_node = ? AND to_node = ?) OR (from_node = ? AND to_node = ?)`,
 		from.ID, to.ID, to.ID, from.ID,
@@ -268,8 +267,8 @@ func (s *Store) connectionResultBetween(from, to *Node) (*ConnectionResult, erro
 // the full node set was larger than limit. nodesTotal is the full domain node
 // count before any truncation; edgesTotal is the count of intra-domain edges
 // across all nodes (not just the shown subset).
-func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []Edge, truncated bool, nodesTotal int, edgesTotal int, err error) {
-	domain = s.ResolveAlias(domain)
+func (st *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []Edge, truncated bool, nodesTotal int, edgesTotal int, err error) {
+	domain = st.ResolveAlias(domain)
 	if limit <= 0 {
 		limit = 40
 	}
@@ -278,7 +277,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 	}
 
 	// Step 1: all live nodes in the domain.
-	rows, err := s.db.Query(
+	rows, err := st.db.Query(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 		 FROM nodes WHERE archived_at IS NULL AND domain = ?`, domain)
 	if err != nil {
@@ -298,7 +297,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 	ids := mapSlice(allNodes, func(n Node) string { return n.ID })
 	ph, phArgs := inClause(ids)
 	rankArgs := append(phArgs, phArgs...)
-	ecRows, ecErr := s.db.Query(
+	ecRows, ecErr := st.db.Query(
 		`SELECT id_val, COUNT(*) FROM (`+
 			`SELECT from_node AS id_val FROM edges WHERE from_node IN (`+ph+`) `+
 			`UNION ALL `+
@@ -322,7 +321,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 	nodesTotal = len(allNodes)
 	// Count intra-domain edges (both endpoints in domain) across the full node set.
 	if nodesTotal > 0 {
-		_ = s.db.QueryRow(
+		_ = st.db.QueryRow(
 			`SELECT COUNT(*) FROM edges WHERE from_node IN (`+ph+`) AND to_node IN (`+ph+`)`,
 			rankArgs...,
 		).Scan(&edgesTotal)
@@ -340,7 +339,7 @@ func (s *Store) GetDomainGraph(domain string, limit int) (nodes []Node, edges []
 	// Step 4: fetch edges whose both endpoints are in the result set.
 	ph2, nodePhArgs := inClause(mapSlice(nodes, func(n Node) string { return n.ID }))
 	edgeArgs := append(nodePhArgs, nodePhArgs...)
-	eRows, eErr := s.db.Query(
+	eRows, eErr := st.db.Query(
 		`SELECT `+edgeSelectColumns+` FROM edges `+
 			`WHERE from_node IN (`+ph2+`) AND to_node IN (`+ph2+`)`,
 		edgeArgs...,
@@ -378,14 +377,14 @@ type EdgeSuggestion struct {
 // same-domain match). Falls back to keyword matching (tag overlap + label words)
 // when embeddings are unavailable.
 // It never creates edges — the caller must use AddEdge to act on suggestions.
-func (s *Store) SuggestEdges(id string, limit int) ([]EdgeSuggestion, error) {
+func (st *Store) SuggestEdges(id string, limit int) ([]EdgeSuggestion, error) {
 	if limit <= 0 {
 		limit = 5
 	}
 
 	// Fetch the target node.
 	var targetLabel, targetDomain, targetTags, targetDesc, targetWhy string
-	if err := s.db.QueryRow(
+	if err := st.db.QueryRow(
 		`SELECT label, domain, tags, description, why_matters FROM nodes WHERE id = ? AND archived_at IS NULL`, id,
 	).Scan(&targetLabel, &targetDomain, &targetTags, &targetDesc, &targetWhy); err != nil {
 		if err == sql.ErrNoRows {
@@ -396,24 +395,24 @@ func (s *Store) SuggestEdges(id string, limit int) ([]EdgeSuggestion, error) {
 
 	// Try semantic path when the node has an embedding stored.
 	// Use the enriched variant so the reason field surfaces keyword overlap.
-	if s.vecAvailable {
-		if results, ok, err := s.suggestEdgesSemanticEnriched(id, targetLabel, targetDomain, targetDesc, targetWhy, targetTags, limit); err == nil && ok {
+	if st.vecAvailable {
+		if results, ok, err := st.suggestEdgesSemanticEnriched(id, targetLabel, targetDomain, targetDesc, targetWhy, targetTags, limit); err == nil && ok {
 			return results, nil
 		}
 	}
 
 	// Keyword fallback: extract meaningful keywords from label + tags.
-	return s.suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags, limit)
+	return st.suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags, limit)
 }
 
 // suggestEdgesSemantic finds candidate connections using embedding cosine
 // distance. Returns (results, true, nil) on success, (nil, false, nil) when
 // no embedding exists for the node (caller falls back to keyword path).
-func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters string, limit int) ([]EdgeSuggestion, bool, error) {
+func (st *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters string, limit int) ([]EdgeSuggestion, bool, error) {
 	// Look up the stored embedding blob for this node and pass it directly
 	// to the sqlite-vec distance function.
 	var blob []byte
-	if err := s.db.QueryRow(
+	if err := st.db.QueryRow(
 		`SELECT embedding FROM node_embeddings WHERE node_id = ?`, id,
 	).Scan(&blob); err != nil {
 		// No embedding yet — fall back to keyword path.
@@ -427,7 +426,7 @@ func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters 
 	// and already-connected nodes). We over-fetch to have room to apply domain
 	// affinity filtering before capping at limit.
 	fetch := limit * 4
-	rows, err := s.db.Query(`
+	rows, err := st.db.Query(`
 		SELECT n.id, n.label, n.domain,
 		       vec_distance_cosine(e.embedding, ?) AS dist
 		FROM node_embeddings e
@@ -454,15 +453,15 @@ func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters 
 	}
 	var all []candidate
 	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.id, &c.label, &c.domain, &c.dist); err != nil {
+		var cand candidate
+		if err := rows.Scan(&cand.id, &cand.label, &cand.domain, &cand.dist); err != nil {
 			return nil, false, err
 		}
 		// Hard floor: suppress anything beyond the similarity floor.
-		if c.dist > CandidateSimilarityFloor {
+		if cand.dist > CandidateSimilarityFloor {
 			break // results are ordered by dist ASC; all following are worse
 		}
-		all = append(all, c)
+		all = append(all, cand)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
@@ -476,11 +475,11 @@ func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters 
 	// Domain affinity: find best same-domain distance.
 	bestSameDomainDist := float64(2.0) // worst possible cosine distance
 	haveSameDomain := false
-	for _, c := range all {
-		if c.domain == domain {
+	for _, cand := range all {
+		if cand.domain == domain {
 			haveSameDomain = true
-			if c.dist < bestSameDomainDist {
-				bestSameDomainDist = c.dist
+			if cand.dist < bestSameDomainDist {
+				bestSameDomainDist = cand.dist
 			}
 		}
 	}
@@ -494,11 +493,11 @@ func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters 
 	// every candidate already inside the outer floor would trivially pass).
 	threshold := bestSameDomainDist * (1.0 - crossDomainAffinityBoost)
 	var kept []candidate
-	for _, c := range all {
-		if c.domain == domain {
-			kept = append(kept, c)
-		} else if haveSameDomain && c.dist <= threshold {
-			kept = append(kept, c)
+	for _, cand := range all {
+		if cand.domain == domain {
+			kept = append(kept, cand)
+		} else if haveSameDomain && cand.dist <= threshold {
+			kept = append(kept, cand)
 		}
 	}
 
@@ -513,14 +512,14 @@ func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters 
 	// (targetTags and targetLabel are not in scope here; we pass them in the
 	// caller's embedded text. A lightweight re-derive from label is sufficient.)
 	result := make([]EdgeSuggestion, len(kept))
-	for i, c := range kept {
+	for i, cand := range kept {
 		var reason string
-		if c.domain != domain {
+		if cand.domain != domain {
 			reason = "semantically similar (cross-domain)"
 		} else {
 			reason = "semantically similar"
 		}
-		result[i] = EdgeSuggestion{ID: c.id, Label: c.label, Reason: reason, Domain: c.domain}
+		result[i] = EdgeSuggestion{ID: cand.id, Label: cand.label, Reason: reason, Domain: cand.domain}
 	}
 	return result, true, nil
 }
@@ -528,8 +527,8 @@ func (s *Store) suggestEdgesSemantic(id, label, domain, description, whyMatters 
 // suggestEdgesSemanticWithKeywords is like suggestEdgesSemantic but also runs
 // keyword matching to enrich the reason field. The reason will mention shared
 // tags or label words when they exist.
-func (s *Store) suggestEdgesSemanticEnriched(id, label, domain, description, whyMatters, tags string, limit int) ([]EdgeSuggestion, bool, error) {
-	results, ok, err := s.suggestEdgesSemantic(id, label, domain, description, whyMatters, limit)
+func (st *Store) suggestEdgesSemanticEnriched(id, label, domain, description, whyMatters, tags string, limit int) ([]EdgeSuggestion, bool, error) {
+	results, ok, err := st.suggestEdgesSemantic(id, label, domain, description, whyMatters, limit)
 	if err != nil || !ok || len(results) == 0 {
 		return results, ok, err
 	}
@@ -550,7 +549,7 @@ func (s *Store) suggestEdgesSemanticEnriched(id, label, domain, description, why
 		}
 		// Fetch candidate tags from DB for tag overlap check.
 		var cTags string
-		s.db.QueryRow(`SELECT tags FROM nodes WHERE id = ?`, results[i].ID).Scan(&cTags)
+		st.db.QueryRow(`SELECT tags FROM nodes WHERE id = ?`, results[i].ID).Scan(&cTags)
 		cTagsLower := strings.ToLower(cTags)
 		for _, kw := range keywords {
 			if seen[kw] {
@@ -582,7 +581,7 @@ func (s *Store) suggestEdgesSemanticEnriched(id, label, domain, description, why
 
 // suggestEdgesKeyword finds candidate connections using tag overlap and label
 // word matching. This is the fallback path when no embedding is available.
-func (s *Store) suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags string, limit int) ([]EdgeSuggestion, error) {
+func (st *Store) suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags string, limit int) ([]EdgeSuggestion, error) {
 	// Extract meaningful keywords from label + tags (lowercased, deduplicated,
 	// stop-words and very short words removed).
 	keywords := suggestKeywords(targetLabel, targetTags)
@@ -591,7 +590,7 @@ func (s *Store) suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags st
 	}
 
 	// Fetch all other live nodes in the same domain (cap at 200 to bound work).
-	rows, err := s.db.Query(
+	rows, err := st.db.Query(
 		`SELECT id, label, tags FROM nodes
 		 WHERE id != ? AND domain = ? AND archived_at IS NULL
 		 ORDER BY updated_at DESC LIMIT 200`,
@@ -664,8 +663,8 @@ func (s *Store) suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags st
 	}
 
 	result := make([]EdgeSuggestion, len(candidates))
-	for i, c := range candidates {
-		result[i] = EdgeSuggestion{ID: c.id, Label: c.label, Reason: c.reason, Domain: targetDomain}
+	for i, cand := range candidates {
+		result[i] = EdgeSuggestion{ID: cand.id, Label: cand.label, Reason: cand.reason, Domain: targetDomain}
 	}
 	return result, nil
 }
@@ -683,18 +682,18 @@ func suggestKeywords(label, tags string) []string {
 	seen := map[string]bool{}
 	var keywords []string
 	addWords := func(text string) {
-		for _, w := range strings.Fields(strings.ToLower(text)) {
+		for _, word := range strings.Fields(strings.ToLower(text)) {
 			// Strip any leading/trailing punctuation or symbol, not just the
 			// ASCII set — em-dash, en-dash, curly quotes, ellipsis, etc. would
 			// otherwise survive as a standalone "word" of 3+ UTF-8 bytes.
-			w = strings.TrimFunc(w, func(r rune) bool {
+			word = strings.TrimFunc(word, func(r rune) bool {
 				return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 			})
-			if utf8.RuneCountInString(w) < 3 || stopWords[w] || seen[w] {
+			if utf8.RuneCountInString(word) < 3 || stopWords[word] || seen[word] {
 				continue
 			}
-			seen[w] = true
-			keywords = append(keywords, w)
+			seen[word] = true
+			keywords = append(keywords, word)
 		}
 	}
 	addWords(tags) // tags first — higher signal
@@ -705,25 +704,25 @@ func suggestKeywords(label, tags string) []string {
 // GetNodeNeighbourhood returns the target node, all live nodes directly
 // connected to it (depth 1), and all edges between those nodes.
 // Returns an error if the node does not exist or is archived.
-func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge, err error) {
+func (st *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge, err error) {
 	var target Node
-	var oa, aa sql.NullTime
-	err = s.db.QueryRow(
+	var occurredAt, archivedAt sql.NullTime
+	err = st.db.QueryRow(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 		 FROM nodes WHERE id = ? AND archived_at IS NULL`, nodeID,
 	).Scan(&target.ID, &target.Label, &target.Description, &target.WhyMatters, &target.Domain,
-		&target.CreatedAt, &target.UpdatedAt, &oa, &aa, &target.Tags, &target.NodeKind)
+		&target.CreatedAt, &target.UpdatedAt, &occurredAt, &archivedAt, &target.Tags, &target.NodeKind)
 	if err == sql.ErrNoRows {
 		return nil, nil, fmt.Errorf("node not found: %s", nodeID)
 	}
 	if err != nil {
 		return nil, nil, err
 	}
-	target.OccurredAt = nullTimeToPtr(oa)
-	target.ArchivedAt = nullTimeToPtr(aa)
+	target.OccurredAt = nullTimeToPtr(occurredAt)
+	target.ArchivedAt = nullTimeToPtr(archivedAt)
 
 	// Collect IDs of all direct neighbours via edges.
-	eRows, err := s.db.Query(
+	eRows, err := st.db.Query(
 		`SELECT CASE WHEN from_node = ? THEN to_node ELSE from_node END AS neighbour_id
 		 FROM edges WHERE from_node = ? OR to_node = ?`, nodeID, nodeID, nodeID)
 	if err != nil {
@@ -752,7 +751,7 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 
 	// Fetch all live nodes in the neighbourhood.
 	ph, nArgs := inClause(allIDs)
-	nRows, err := s.db.Query(
+	nRows, err := st.db.Query(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 		 FROM nodes WHERE archived_at IS NULL AND id IN (`+ph+`)`, nArgs...)
 	if err != nil {
@@ -768,7 +767,7 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 
 	// Fetch all edges where both endpoints are in the live neighbourhood set.
 	eArgs := append(nArgs, nArgs...)
-	edgeRows, err := s.db.Query(
+	edgeRows, err := st.db.Query(
 		`SELECT `+edgeSelectColumns+`
 		 FROM edges WHERE from_node IN (`+ph+`) AND to_node IN (`+ph+`)`, eArgs...)
 	if err != nil {
@@ -790,9 +789,9 @@ func (s *Store) GetNodeNeighbourhood(nodeID string) (nodes []Node, edges []Edge,
 // neighbourhoodIDs performs a BFS from nodeID for depth hops, clipping at the
 // anchor node's domain boundary (cross-domain edges are not followed). Returns
 // all visited IDs (including the anchor) and the anchor's domain.
-func (s *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, error) {
+func (st *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, error) {
 	var anchorDomain string
-	err := s.db.QueryRow(
+	err := st.db.QueryRow(
 		`SELECT domain FROM nodes WHERE id = ? AND archived_at IS NULL`, nodeID,
 	).Scan(&anchorDomain)
 	if err == sql.ErrNoRows {
@@ -805,7 +804,7 @@ func (s *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, er
 	visited := map[string]bool{nodeID: true}
 	frontier := []string{nodeID}
 
-	for d := 0; d < depth && len(frontier) > 0; d++ {
+	for level := 0; level < depth && len(frontier) > 0; level++ {
 		ph := strings.Repeat("?,", len(frontier))
 		ph = ph[:len(ph)-1]
 		// args: frontier IDs (for from_node IN), frontier IDs again (for to_node IN), domain
@@ -816,7 +815,7 @@ func (s *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, er
 		}
 		args[len(frontier)*2] = anchorDomain
 
-		rows, err := s.db.Query(
+		rows, err := st.db.Query(
 			`SELECT DISTINCT n.id
 			 FROM edges e
 			 JOIN nodes n ON (
@@ -866,19 +865,19 @@ type MisdomainCandidate struct {
 // only the similarity floor applied (no domain-affinity reranking). Returns nil
 // when no embedding exists, vec is unavailable, or no cross-domain match clears
 // the floor.
-func (s *Store) FindMisdomainCandidate(nodeID, requestedDomain string) (*MisdomainCandidate, error) {
-	if !s.vecAvailable {
+func (st *Store) FindMisdomainCandidate(nodeID, requestedDomain string) (*MisdomainCandidate, error) {
+	if !st.vecAvailable {
 		return nil, nil
 	}
-	requestedDomain = s.ResolveAlias(requestedDomain)
+	requestedDomain = st.ResolveAlias(requestedDomain)
 	var blob []byte
-	if err := s.db.QueryRow(`SELECT embedding FROM node_embeddings WHERE node_id = ?`, nodeID).Scan(&blob); err != nil {
+	if err := st.db.QueryRow(`SELECT embedding FROM node_embeddings WHERE node_id = ?`, nodeID).Scan(&blob); err != nil {
 		return nil, nil
 	}
 	if len(blob) == 0 {
 		return nil, nil
 	}
-	rows, err := s.db.Query(`
+	rows, err := st.db.Query(`
 		SELECT n.id, n.domain, vec_distance_cosine(e.embedding, ?) AS dist
 		FROM node_embeddings e
 		JOIN nodes n ON n.id = e.node_id

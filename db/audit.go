@@ -31,15 +31,15 @@ const conflictsDomainThreshold = 0.3
 // pairs are included only when their distance is below conflictsDomainThreshold.
 // The result contains up to limit pairs. Empty slice (not nil) is returned when
 // no embeddings exist.
-func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds []string) ([]ConflictCandidate, error) {
+func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds []string) ([]ConflictCandidate, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	domain = s.ResolveAlias(domain)
+	domain = st.ResolveAlias(domain)
 
 	// Fetch live nodes with their embeddings. If no embeddings table is
 	// available or empty, return an empty slice.
-	if !s.vecAvailable {
+	if !st.vecAvailable {
 		return []ConflictCandidate{}, nil
 	}
 
@@ -58,7 +58,7 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 	WHERE ` + strings.Join(conds, " AND ") + `
 	ORDER BY n.id`
 
-	rows, err := s.db.Query(nodeQ, args...)
+	rows, err := st.db.Query(nodeQ, args...)
 	if err != nil {
 		return []ConflictCandidate{}, nil
 	}
@@ -91,7 +91,7 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 	// between the two nodes (checked in either direction).
 	type pairKey struct{ a, b string }
 	contradicting := make(map[pairKey]bool)
-	edgeRows, err := s.db.Query(
+	edgeRows, err := st.db.Query(
 		`SELECT from_node, to_node FROM edges WHERE relationship IN ('contradicts', 'resolved', 'resolved_by', 'supersedes')`)
 	if err == nil {
 		for edgeRows.Next() {
@@ -137,7 +137,7 @@ func (s *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds
 			ORDER BY dist ASC`
 
 		distArgs := append([]interface{}{na.embedding}, innerArgs...)
-		dRows, err := s.db.Query(distQ, distArgs...)
+		dRows, err := st.db.Query(distQ, distArgs...)
 		if err != nil {
 			continue
 		}
@@ -229,11 +229,11 @@ type DriftCandidate struct {
 //  6. Transient node older than 7 days.
 //  7. Standing node with fewer than 2 inbound edges and older than 30 days.
 //  8. Connected placeholder whose target appears resolved.
-func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, memoryID string, depth int) ([]DriftCandidate, error) {
+func (st *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, memoryID string, depth int) ([]DriftCandidate, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	domain = s.ResolveAlias(domain)
+	domain = st.ResolveAlias(domain)
 
 	var out []DriftCandidate
 	seen := make(map[string]bool)
@@ -260,7 +260,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	// shared recordari skill document — accepted here alongside memoryweb's
 	// own resolved_by/supersedes so the same skill guidance works on both
 	// products.
-	rows, err := s.db.Query(`
+	rows, err := st.db.Query(`
 		SELECT a.id, a.label, a.description, a.why_matters, a.domain,
 		       a.created_at, a.updated_at, a.occurred_at, a.archived_at, a.tags, a.node_kind,
 		       b.id, b.label, b.description, b.why_matters, b.domain,
@@ -323,7 +323,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	// ── Rule 2: shadow domain rows (filed under alias name, not canonical) ─────
 	var rowsShadow *sql.Rows
 	if domain != "" {
-		rowsShadow, err = s.db.Query(
+		rowsShadow, err = st.db.Query(
 			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
 			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
 			        da.domain AS canonical_domain
@@ -332,7 +332,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 			 WHERE n.archived_at IS NULL AND da.domain = ?`,
 			domain)
 	} else {
-		rowsShadow, err = s.db.Query(
+		rowsShadow, err = st.db.Query(
 			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
 			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
 			        da.domain AS canonical_domain
@@ -345,15 +345,15 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	}
 	for rowsShadow.Next() {
 		var n Node
-		var oa, aa sql.NullTime
+		var occurredAt, archivedAt sql.NullTime
 		var canonical string
 		if err := rowsShadow.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind, &canonical); err != nil {
+			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind, &canonical); err != nil {
 			rowsShadow.Close()
 			return nil, err
 		}
-		n.OccurredAt = nullTimeToPtr(oa)
-		n.ArchivedAt = nullTimeToPtr(aa)
+		n.OccurredAt = nullTimeToPtr(occurredAt)
+		n.ArchivedAt = nullTimeToPtr(archivedAt)
 		add(n, nil, fmt.Sprintf("filed under alias domain %q (canonical: %q) — unreachable by domain-scoped reads; revise domain to canonical", n.Domain, canonical))
 	}
 	rowsShadow.Close()
@@ -366,11 +366,11 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		`LOWER(label) LIKE '%replaced%' OR LOWER(label) LIKE '%legacy%' OR LOWER(label) LIKE '%previous%')`
 	var rows2 *sql.Rows
 	if domain != "" {
-		rows2, err = s.db.Query(
+		rows2, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+supersededKW, domain)
 	} else {
-		rows2, err = s.db.Query(
+		rows2, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind ` +
 				`FROM nodes WHERE archived_at IS NULL AND ` + supersededKW)
 	}
@@ -399,12 +399,12 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	const ageFilter = `((occurred_at IS NOT NULL AND occurred_at < ?) OR (occurred_at IS NULL AND created_at < ?))`
 	var rows3 *sql.Rows
 	if domain != "" {
-		rows3, err = s.db.Query(
+		rows3, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+staleKW+` AND `+ageFilter,
 			domain, cutoff30, cutoff30)
 	} else {
-		rows3, err = s.db.Query(
+		rows3, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind `+
 				`FROM nodes WHERE archived_at IS NULL AND `+staleKW+` AND `+ageFilter,
 			cutoff30, cutoff30)
@@ -430,11 +430,11 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 		`AND n2.domain = nodes.domain AND LOWER(n2.label) = LOWER(nodes.label) AND n2.id != nodes.id)`
 	var rows4 *sql.Rows
 	if domain != "" {
-		rows4, err = s.db.Query(
+		rows4, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND `+dupExists, domain)
 	} else {
-		rows4, err = s.db.Query(
+		rows4, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind ` +
 				`FROM nodes WHERE archived_at IS NULL AND ` + dupExists)
 	}
@@ -458,12 +458,12 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	cutoff7 := time.Now().UTC().AddDate(0, 0, -7)
 	var rows5 *sql.Rows
 	if domain != "" {
-		rows5, err = s.db.Query(
+		rows5, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind `+
 				`FROM nodes WHERE archived_at IS NULL AND domain = ? AND node_kind = 'transient' AND created_at < ?`,
 			domain, cutoff7)
 	} else {
-		rows5, err = s.db.Query(
+		rows5, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind `+
 				`FROM nodes WHERE archived_at IS NULL AND node_kind = 'transient' AND created_at < ?`,
 			cutoff7)
@@ -488,7 +488,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	cutoff30standing := time.Now().UTC().AddDate(0, 0, -30)
 	var rows6 *sql.Rows
 	if domain != "" {
-		rows6, err = s.db.Query(
+		rows6, err = st.db.Query(
 			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
 			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
 			        COUNT(e.id) AS inbound_count
@@ -502,7 +502,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 			 HAVING inbound_count < 2`,
 			cutoff30standing, domain)
 	} else {
-		rows6, err = s.db.Query(
+		rows6, err = st.db.Query(
 			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
 			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
 			        COUNT(e.id) AS inbound_count
@@ -520,22 +520,22 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	}
 	nodes6, err := scanRows(rows6, func(r *sql.Rows) (Node, error) {
 		var n Node
-		var oa, aa sql.NullTime
+		var occurredAt, archivedAt sql.NullTime
 		var inboundCount int
 		if err := r.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind, &inboundCount); err != nil {
+			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind, &inboundCount); err != nil {
 			return Node{}, err
 		}
-		n.OccurredAt = nullTimeToPtr(oa)
-		n.ArchivedAt = nullTimeToPtr(aa)
+		n.OccurredAt = nullTimeToPtr(occurredAt)
+		n.ArchivedAt = nullTimeToPtr(archivedAt)
 		return n, nil
 	})
 	rows6.Close()
 	if err != nil {
 		return nil, err
 	}
-	for _, n := range nodes6 {
-		add(n, nil, "standing rule with low connection count — may not be in use")
+	for _, node := range nodes6 {
+		add(node, nil, "standing rule with low connection count — may not be in use")
 	}
 
 	// ── Rule 8: connected placeholder whose target appears resolved ──────────────
@@ -563,7 +563,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 
 	var rows7 *sql.Rows
 	if domain != "" {
-		rows7, err = s.db.Query(
+		rows7, err = st.db.Query(
 			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
 			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind
 			 FROM nodes n
@@ -574,7 +574,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 			   AND `+hasResolvingOutbound,
 			domain)
 	} else {
-		rows7, err = s.db.Query(
+		rows7, err = st.db.Query(
 			`SELECT n.id, n.label, n.description, n.why_matters, n.domain,
 			        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind
 			 FROM nodes n
@@ -606,7 +606,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	// but no live node on the other end of any of those edges.
 	var rows8 *sql.Rows
 	if domain != "" {
-		rows8, err = s.db.Query(
+		rows8, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 			 FROM nodes n
 			 WHERE archived_at IS NULL
@@ -621,7 +621,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 			   )`,
 			domain)
 	} else {
-		rows8, err = s.db.Query(
+		rows8, err = st.db.Query(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 			 FROM nodes n
 			 WHERE archived_at IS NULL
@@ -652,7 +652,7 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 
 	// Post-filter by neighbourhood (memory_id scoping).
 	if memoryID != "" {
-		allowedIDs, _, err := s.neighbourhoodIDs(memoryID, depth)
+		allowedIDs, _, err := st.neighbourhoodIDs(memoryID, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -680,13 +680,13 @@ func (s *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, me
 	// Enrich each candidate with its total edge count (from + to).
 	if len(out) > 0 {
 		ids := mapSlice(out, func(c DriftCandidate) string { return c.Node.ID })
-		ph, phArgs := inClause(ids)
-		args := append(phArgs, phArgs...)
-		ecRows, ecErr := s.db.Query(
+		placeholders, placeholderArgs := inClause(ids)
+		args := append(placeholderArgs, placeholderArgs...)
+		ecRows, ecErr := st.db.Query(
 			`SELECT id_val, COUNT(*) FROM (`+
-				`SELECT from_node AS id_val FROM edges WHERE from_node IN (`+ph+`) `+
+				`SELECT from_node AS id_val FROM edges WHERE from_node IN (`+placeholders+`) `+
 				`UNION ALL `+
-				`SELECT to_node AS id_val FROM edges WHERE to_node IN (`+ph+`)`+
+				`SELECT to_node AS id_val FROM edges WHERE to_node IN (`+placeholders+`)`+
 				`) GROUP BY id_val`,
 			args...,
 		)
@@ -722,13 +722,13 @@ type PlaceholderCandidate struct {
 // they are unresolved placeholders, ordered by age descending.
 // staleIssueDays: issue node_kind with no occurred_at older than this many days.
 // staleGoalDays: goal node_kind with no resolution edge older than this many days.
-func (s *Store) FindPlaceholders(domain string, limit, staleIssueDays, staleGoalDays int, tags []string) ([]PlaceholderCandidate, error) {
+func (st *Store) FindPlaceholders(domain string, limit, staleIssueDays, staleGoalDays int, tags []string) ([]PlaceholderCandidate, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	domain = s.ResolveAlias(domain)
+	domain = st.ResolveAlias(domain)
 
-	q := `
+	query := `
 WITH edge_counts AS (
     SELECT node_id, COUNT(*) AS cnt
     FROM (
@@ -768,7 +768,7 @@ WHERE n.archived_at IS NULL
 ORDER BY age_days DESC
 LIMIT ?`
 
-	rows, err := s.db.Query(q, domain, domain, staleIssueDays, staleGoalDays, limit)
+	rows, err := st.db.Query(query, domain, domain, staleIssueDays, staleGoalDays, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -777,17 +777,17 @@ LIMIT ?`
 	var out []PlaceholderCandidate
 	for rows.Next() {
 		var n Node
-		var oa, aa sql.NullTime
+		var occurredAt, archivedAt sql.NullTime
 		var connCount, ageDays int
 		if err := rows.Scan(
 			&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain,
-			&n.CreatedAt, &n.UpdatedAt, &oa, &aa, &n.Tags, &n.NodeKind,
+			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind,
 			&connCount, &ageDays,
 		); err != nil {
 			return nil, err
 		}
-		n.OccurredAt = nullTimeToPtr(oa)
-		n.ArchivedAt = nullTimeToPtr(aa)
+		n.OccurredAt = nullTimeToPtr(occurredAt)
+		n.ArchivedAt = nullTimeToPtr(archivedAt)
 		reason := placeholderReason(n, ageDays, connCount)
 		out = append(out, PlaceholderCandidate{Node: n, AgeDays: ageDays, ConnectionCount: connCount, Reason: reason})
 	}
@@ -819,8 +819,8 @@ func placeholderReason(n Node, ageDays, connCount int) string {
 // CountStaleDrift returns the number of live nodes that would be surfaced by
 // audit(mode=stale) — i.e. the union of all FindDrift rules. Used to populate
 // the stale_count field in the orient response.
-func (s *Store) CountStaleDrift(domain string) (int, error) {
-	candidates, err := s.FindDrift(domain, 1000, nil, nil, "", 2)
+func (st *Store) CountStaleDrift(domain string) (int, error) {
+	candidates, err := st.FindDrift(domain, 1000, nil, nil, "", 2)
 	if err != nil {
 		return 0, err
 	}
@@ -830,11 +830,11 @@ func (s *Store) CountStaleDrift(domain string) (int, error) {
 // FindDisconnected returns live, non-transient nodes that have no edges
 // (neither as from_node nor as to_node), optionally scoped to a domain.
 // limit caps results (default 50 when limit <= 0); query fetches limit+1 rows.
-func (s *Store) FindDisconnected(domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
+func (st *Store) FindDisconnected(domain string, tags, nodeKinds []string, limit int) ([]Node, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	domain = s.ResolveAlias(domain)
+	domain = st.ResolveAlias(domain)
 
 	conds := []string{
 		"archived_at IS NULL",
@@ -851,10 +851,10 @@ func (s *Store) FindDisconnected(domain string, tags, nodeKinds []string, limit 
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 	args = append(args, limit+1)
 
-	q := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
+	query := "SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes WHERE " +
 		strings.Join(conds, " AND ") + " ORDER BY created_at DESC LIMIT ?"
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := st.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -905,14 +905,14 @@ func kindMigrationPatternSQL() string {
 
 // FindKindCoverage returns per-kind counts, legacy-dominance measure, and
 // migration candidates for nodes whose node_kind looks stale relative to text.
-func (s *Store) FindKindCoverage(domain string, limit int, tags, nodeKinds []string) (KindCoverageResult, error) {
+func (st *Store) FindKindCoverage(domain string, limit int, tags, nodeKinds []string) (KindCoverageResult, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if limit > 500 {
 		limit = 500
 	}
-	domain = s.ResolveAlias(domain)
+	domain = st.ResolveAlias(domain)
 
 	conds := []string{"archived_at IS NULL"}
 	args := []interface{}{}
@@ -923,7 +923,7 @@ func (s *Store) FindKindCoverage(domain string, limit int, tags, nodeKinds []str
 	conds, args = tagFilter("tags", tags, conds, args)
 	conds, args = nodeKindFilter("node_kind", nodeKinds, conds, args)
 
-	rows, err := s.db.Query(
+	rows, err := st.db.Query(
 		`SELECT node_kind, COUNT(*) FROM nodes WHERE `+strings.Join(conds, " AND ")+` GROUP BY node_kind`,
 		args...,
 	)
@@ -968,7 +968,7 @@ func (s *Store) FindKindCoverage(domain string, limit int, tags, nodeKinds []str
 	candidateArgs = append(candidateArgs, limit+1)
 	candidateQ := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
 		FROM nodes WHERE ` + strings.Join(candidateConds, " AND ") + ` ORDER BY updated_at DESC LIMIT ?`
-	cRows, err := s.db.Query(candidateQ, candidateArgs...)
+	cRows, err := st.db.Query(candidateQ, candidateArgs...)
 	if err != nil {
 		return KindCoverageResult{}, err
 	}
