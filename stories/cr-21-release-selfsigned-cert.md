@@ -1,6 +1,6 @@
 # CR-21: Remove self-signed cert fallback in release workflow
 
-**Status:** READY
+**Status:** DEFERRED — user decision 2026-09-09. Not doing the code-signed cert work unless it becomes necessary; Homebrew distribution works fine unsigned at present. Re-evaluate only if Windows-binary trust/AV warnings become a real problem.
 **Priority:** Medium
 
 `.github/workflows/release.yml:107-153` — Self-signed certificate with hardcoded
