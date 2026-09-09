@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/corbym/memoryweb/tools"
 )
@@ -358,5 +359,87 @@ func TestSearch_LeanFormat_OrdinaryDecisionNoLifecycleState(t *testing.T) {
 		if n.ID == id && n.LifecycleState != "" {
 			t.Errorf("ordinary decision must omit lifecycle_state; got %q", n.LifecycleState)
 		}
+	}
+}
+
+// TestSearch_LeanFormat_WhyMattersMultiByteTruncated: truncation of a long
+// multi-byte (emoji) why_matters must cut at a rune boundary and never leave
+// invalid or replacement-character-bearing UTF-8.
+func TestSearch_LeanFormat_WhyMattersMultiByteTruncated(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	longWhy := strings.Repeat("😀", 200)
+	addNode(t, h, "cjk trunc node", "search-lean-mb", map[string]any{
+		"why_matters": longWhy,
+	})
+
+	tr := call(t, h, "search", map[string]any{"query": "cjk trunc", "domain": "search-lean-mb"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			WhyMatters string `json:"why_matters"`
+			Truncated  bool   `json:"truncated"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected at least one search result")
+	}
+	why := resp.Nodes[0].WhyMatters
+	if !utf8.ValidString(why) {
+		t.Errorf("why_matters must remain valid UTF-8 after truncation; got invalid bytes: %q", why)
+	}
+	if strings.ContainsRune(why, '\ufffd') {
+		t.Errorf("why_matters must not contain U+FFFD replacement characters (byte-level split); got: %q", why)
+	}
+	if !resp.Nodes[0].Truncated {
+		t.Error("truncated must be true when why_matters was cut")
+	}
+	const minRunes = 140 // enough runes that the 150-rune cut (not a byte cut) is provable
+	if n := utf8.RuneCountInString(why); n < minRunes {
+		t.Errorf("why_matters: got %d runes — indicates a byte-level cut, want >= %d", n, minRunes)
+	}
+	if !strings.HasSuffix(why, "...") {
+		t.Errorf("hard-cut why_matters should end with '...'; got: %q", why)
+	}
+}
+
+// TestSearch_LeanFormat_WhyMattersMultiByteUnderLimit: a multi-byte why_matters
+// that is long in bytes but within the 150-rune budget must pass through intact
+// and untruncated.
+func TestSearch_LeanFormat_WhyMattersMultiByteUnderLimit(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	shortWhy := strings.Repeat("😀", 60) // 240 bytes but 60 runes → inside the rune budget
+	addNode(t, h, "cjk short node", "search-lean-mb-short", map[string]any{
+		"why_matters": shortWhy,
+	})
+
+	tr := call(t, h, "search", map[string]any{"query": "cjk short", "domain": "search-lean-mb-short"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			WhyMatters string `json:"why_matters"`
+			Truncated  bool   `json:"truncated"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected at least one search result")
+	}
+	if !utf8.ValidString(resp.Nodes[0].WhyMatters) {
+		t.Errorf("why_matters must remain valid UTF-8; got invalid bytes: %q", resp.Nodes[0].WhyMatters)
+	}
+	if resp.Nodes[0].Truncated {
+		t.Errorf("truncated must be false when why_matters fits within 150 runes; got: %q", resp.Nodes[0].WhyMatters)
+	}
+	if resp.Nodes[0].WhyMatters != shortWhy {
+		t.Error("multi-byte why_matters within the rune budget must pass through intact")
 	}
 }

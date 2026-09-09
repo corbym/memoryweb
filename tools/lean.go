@@ -52,20 +52,23 @@ func truncateWhy(s string) (string, bool) {
 	if len(s) <= limit {
 		return s, false
 	}
-	sub := s[:limit]
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s, false
+	}
 	lastBoundary := -1
-	for i := 0; i < len(sub); i++ {
-		if sub[i] == '.' || sub[i] == '!' || sub[i] == '?' {
+	for i := 0; i < limit; i++ {
+		if runes[i] == '.' || runes[i] == '!' || runes[i] == '?' {
 			next := i + 1
-			if next >= len(sub) || sub[next] == ' ' || sub[next] == '\n' || sub[next] == '\t' {
+			if next >= limit || runes[next] == ' ' || runes[next] == '\n' || runes[next] == '\t' {
 				lastBoundary = next
 			}
 		}
 	}
 	if lastBoundary > 0 {
-		return strings.TrimRight(s[:lastBoundary], " \t\n"), true
+		return strings.TrimRight(string(runes[:lastBoundary]), " \t\n"), true
 	}
-	return sub + "...", true
+	return string(runes[:limit]) + "...", true
 }
 
 // leanEntry is the shared lean-node shape used across all list-shaped retrieval

@@ -1,6 +1,6 @@
 # CR-12: Fix truncateWhy UTF-8 byte boundary split
 
-**Status:** READY
+**Status:** DONE — implemented this session. `truncateWhy` now operates on `[]rune(s)` with a rune-count budget and rune-safe boundary scan; no more byte-level splits of multi-byte UTF-8. New tests: `TestSearch_LeanFormat_WhyMattersMultiByteTruncated` and `TestSearch_LeanFormat_WhyMattersMultiByteUnderLimit` (both failed on the old byte-slice code). All tests pass.
 **Priority:** High
 
 `tools/lean.go:55` — `s[:150]` operates on bytes. For multi-byte UTF-8 characters
