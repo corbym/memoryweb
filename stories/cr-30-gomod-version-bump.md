@@ -1,6 +1,6 @@
 # CR-30: Bump go.mod minimum version
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `go.mod:3` — `go 1.22.5` with `toolchain go1.24.13`. The minimum directive is 14 minor

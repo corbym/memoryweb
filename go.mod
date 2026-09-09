@@ -1,8 +1,6 @@
 module github.com/corbym/memoryweb
 
-go 1.22.5
-
-toolchain go1.24.13
+go 1.24.13
 
 require github.com/mattn/go-sqlite3 v1.14.22
 

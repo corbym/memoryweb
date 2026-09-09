@@ -41,7 +41,7 @@ jobs:
           fi
 
       - name: Test
-        run: go test ./...
+        run: go test -race -timeout 120s -count=1 ./...
 
       - name: Verify semantic tests exist
         # go test -list exits non-zero and prints nothing when no tests match the

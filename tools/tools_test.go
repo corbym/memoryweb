@@ -70,7 +70,7 @@ func newEnvWithPath(t *testing.T) (string, *db.Store, *tools.Handler) {
 		t.Fatalf("db.New: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	return dbPath, store, tools.New(store, "dev", nil)
+	return dbPath, store, tools.New(store, "dev")
 }
 
 // newEnv creates an isolated Store+Handler. All existing tests use this.
@@ -289,17 +289,22 @@ func TestCallTool_MalformedParams_ReturnsError(t *testing.T) {
 
 const errOccurredAtRequiresWhyMatters = "occurred_at requires why_matters — explain why this decision is significant before filing it on the timeline."
 
-func newHandlerWithVersion(t *testing.T, version string, checker func() (string, error)) *tools.Handler {
-	t.Helper()
-	_, store, _ := newEnvWithPath(t)
-	return tools.New(store, version, checker)
-}
-
 func TestCheckForUpdates_IsUnknownTool(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "check_for_updates", map[string]any{})
 	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "unknown tool") {
 		t.Errorf("expected 'unknown tool'; got: %s", text(t, tr))
+	}
+}
+
+func TestUnpublishedHandlerNames_ReturnUnknownTool(t *testing.T) {
+	_, h := newEnv(t)
+	for _, name := range []string{"updateNodes", "checkForUpdates"} {
+		tr := call(t, h, name, map[string]any{})
+		mustError(t, tr)
+		if !strings.Contains(text(t, tr), "unknown tool") {
+			t.Errorf("%s: expected 'unknown tool'; got: %s", name, text(t, tr))
+		}
 	}
 }

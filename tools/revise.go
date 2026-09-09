@@ -331,25 +331,3 @@ func (hnd *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error)
 	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
-
-// updateNodes retains the old revise_all wire format for backward compat during transition (not exposed in ListTools).
-func (hnd *Handler) updateNodes(args json.RawMessage) (*ToolResult, error) {
-	var params struct {
-		Updates []struct {
-			ID          string  `json:"id"`
-			Label       *string `json:"label"`
-			Description *string `json:"description"`
-			WhyMatters  *string `json:"why_matters"`
-			Tags        *string `json:"tags"`
-			OccurredAt  *string `json:"occurred_at"`
-		} `json:"updates"`
-	}
-	if err := decodeParams(args, &params, "revise"); err != nil {
-		return nil, err
-	}
-	raw, err := json.Marshal(params.Updates)
-	if err != nil {
-		return nil, err
-	}
-	return hnd.updateNodesBatch(raw)
-}

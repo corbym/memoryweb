@@ -1,6 +1,6 @@
 # CR-29: Add race detector and test timeout to CI
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `ci.yml:44` — `go test ./...` without `-race` flag misses data races. Also no `-timeout`

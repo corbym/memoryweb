@@ -402,7 +402,7 @@ func seedRealisticDB(t *testing.T, dbPath string) {
 	}
 	defer store.Close()
 
-	h := tools.New(store, "dev", nil)
+	h := tools.New(store, "dev")
 
 	call := func(name string, args map[string]any) string {
 		t.Helper()

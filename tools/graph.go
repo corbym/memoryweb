@@ -42,31 +42,6 @@ func (hnd *Handler) findConnections(args json.RawMessage) (*ToolResult, error) {
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
-func (hnd *Handler) tracePath(args json.RawMessage) (*ToolResult, error) {
-	var params struct {
-		FromID string `json:"from_id"`
-		ToID   string `json:"to_id"`
-	}
-	if err := decodeParams(args, &params, "trace"); err != nil {
-		return nil, err
-	}
-	if params.FromID == "" || params.ToID == "" {
-		return nil, fmt.Errorf("from_id and to_id are required")
-	}
-	result, err := hnd.store.FindPath(params.FromID, params.ToID, 6)
-	if err != nil {
-		return nil, err
-	}
-	if len(result.Path) == 0 {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("No path found between %q and %q within 6 hops.", params.FromID, params.ToID)}}}, nil
-	}
-	b, err := marshalResponseIndent(result)
-	if err != nil {
-		return nil, err
-	}
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
-}
-
 // sanitiseMermaidLabel truncates to 40 runes and escapes characters that break
 // Mermaid node label syntax (double-quotes, newlines, square brackets).
 func sanitiseMermaidLabel(s string) string {

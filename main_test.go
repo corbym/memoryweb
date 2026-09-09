@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -1126,4 +1127,41 @@ func TestSetupRunRemovesStaleHookEntries(t *testing.T) {
 	}
 	assertHookEntries("Stop", "memoryweb_save_hook.sh")
 	assertHookEntries("PreCompact", "memoryweb_precompact_hook.sh")
+}
+
+func TestCIWorkflowTestCommand_HasRaceTimeoutAndCountOne(t *testing.T) {
+	path := filepath.Join(".github", "workflows", "ci.yml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	yml := string(raw)
+	step := "      - name: Test"
+	idx := strings.Index(yml, step)
+	if idx < 0 {
+		t.Fatalf("%s has no Test step", path)
+	}
+	cmd := yml[idx:]
+	for _, flag := range []string{"-race", "-timeout 120s", "-count=1"} {
+		if !strings.Contains(cmd, flag) {
+			t.Errorf("Test step in %s must contain %q", path, flag)
+		}
+	}
+}
+
+func TestGomodGoDirectiveMatchesToolchain(t *testing.T) {
+	raw, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	mod := string(raw)
+	goLine := regexp.MustCompile(`(?m)^go (\d+)\.(\d+)(?:\.\d+)?$`).FindStringSubmatch(mod)
+	if goLine == nil {
+		t.Fatal("go.mod has no 'go' directive")
+	}
+	toolLine := regexp.MustCompile(`(?m)^toolchain go(\d+)\.(\d+)(?:\.\d+)?$`).FindStringSubmatch(mod)
+	if toolLine != nil && (toolLine[1] > goLine[1] || (toolLine[1] == goLine[1] && toolLine[2] > goLine[2])) {
+		t.Errorf("go directive (%s.%s) must not lag the toolchain major.minor (%s.%s)",
+			goLine[1], goLine[2], toolLine[1], toolLine[2])
+	}
 }

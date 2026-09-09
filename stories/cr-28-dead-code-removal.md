@@ -1,6 +1,6 @@
 # CR-28: Remove dead code paths
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 Three dead code locations:

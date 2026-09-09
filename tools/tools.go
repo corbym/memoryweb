@@ -20,13 +20,12 @@ const Instructions = "This tool is called memoryweb. Always refer to it as memor
 	"Never file operational credentials, connection strings, API keys, or tokens in memories."
 
 type Handler struct {
-	store       *db.Store
-	version     string
-	checkUpdate func() (string, error)
+	store   *db.Store
+	version string
 }
 
-func New(store *db.Store, version string, checkUpdate func() (string, error)) *Handler {
-	return &Handler{store: store, version: version, checkUpdate: checkUpdate}
+func New(store *db.Store, version string) *Handler {
+	return &Handler{store: store, version: version}
 }
 
 // MCP tool schema types
@@ -204,31 +203,4 @@ func splitNodeKinds(s string) []string {
 		return nil
 	}
 	return splitTrimmed(strings.Fields(s))
-}
-
-func (hnd *Handler) checkForUpdates(_ json.RawMessage) (*ToolResult, error) {
-	info := func(msg string) *ToolResult {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: msg}}}
-	}
-
-	if hnd.checkUpdate == nil {
-		return info("update check not available"), nil
-	}
-	if hnd.version == "dev" {
-		return info("running dev build — skipping update check"), nil
-	}
-	latest, err := hnd.checkUpdate()
-	if err != nil {
-		return info(fmt.Sprintf("could not reach update server: %v", err)), nil
-	}
-	if latest == hnd.version {
-		return info(fmt.Sprintf("memoryweb is up to date (%s)", hnd.version)), nil
-	}
-	return info(fmt.Sprintf(
-		"memoryweb %s is available (you are running %s). "+
-			"To update, download the binary for your platform from "+
-			"https://github.com/corbym/memoryweb/releases/latest and replace "+
-			"the existing binary, then restart your MCP client.",
-		latest, hnd.version,
-	)), nil
 }

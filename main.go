@@ -125,7 +125,7 @@ func main() {
 	}
 	defer store.Close()
 
-	handler := tools.New(store, Version, checkLatestRelease)
+	handler := tools.New(store, Version)
 
 	// Stats recording — enabled when MEMORYWEB_STATS_FILE and/or
 	// MEMORYWEB_STATS_JSON_FILE are set.
