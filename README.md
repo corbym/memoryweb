@@ -93,7 +93,7 @@ Override with `MEMORYWEB_DB=/path/to/your.db`
 
 ## Tools
 
-18 MCP tools (v1.54.12). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
+18 MCP tools (v1.54.13). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
 
 ### Filing memories
 
