@@ -49,6 +49,13 @@ func (st *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error
 		return &PathResult{Path: []Node{node.Node}, Edges: nil}, nil
 	}
 
+	// Batch-fetch all edges between live (non-archived) nodes into an
+	// adjacency map. This replaces per-BFS-node queries with a single query.
+	adj, err := st.buildAdjacency()
+	if err != nil {
+		return nil, err
+	}
+
 	// BFS: each entry is a path (slice of node IDs) from fromID to the frontier.
 	type path struct {
 		nodes []string
@@ -66,54 +73,59 @@ func (st *Store) FindPath(fromID, toID string, maxDepth int) (*PathResult, error
 			continue // depth limit reached without finding target
 		}
 
-		// Fetch all edges from or to the current tail node (undirected traversal).
-		rows, err := st.db.Query(`
-			SELECT e.id, e.from_node, e.to_node, e.relationship, e.narrative, e.created_at
-			FROM edges e
-			JOIN nodes nf ON nf.id = e.from_node AND nf.archived_at IS NULL
-			JOIN nodes nt ON nt.id = e.to_node   AND nt.archived_at IS NULL
-			WHERE e.from_node = ? OR e.to_node = ?`, tail, tail)
-		if err != nil {
-			return nil, err
-		}
-		var neighbours []struct {
-			edge      Edge
-			neighbour string
-		}
-		for rows.Next() {
-			var edge Edge
-			if err := rows.Scan(&edge.ID, &edge.FromNode, &edge.ToNode, &edge.Relationship, &edge.Narrative, &edge.CreatedAt); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			next := edge.ToNode
-			if next == tail {
-				next = edge.FromNode
-			}
-			neighbours = append(neighbours, struct {
-				edge      Edge
-				neighbour string
-			}{edge, next})
-		}
-		rows.Close()
-
-		for _, nb := range neighbours {
-			if visited[nb.neighbour] {
+		for _, nb := range adj[tail] {
+			if visited[nb.node] {
 				continue
 			}
 			newPath := path{
-				nodes: append(append([]string{}, cur.nodes...), nb.neighbour),
+				nodes: append(append([]string{}, cur.nodes...), nb.node),
 				edges: append(append([]string{}, cur.edges...), nb.edge.ID),
 			}
-			if nb.neighbour == toID {
+			if nb.node == toID {
 				// Found it — materialise the result.
 				return st.materialisePath(newPath.nodes, newPath.edges)
 			}
-			visited[nb.neighbour] = true
+			visited[nb.node] = true
 			queue = append(queue, newPath)
 		}
 	}
 	return &PathResult{}, nil // no path found
+}
+
+// adjEntry is a neighbour entry in the adjacency map.
+type adjEntry struct {
+	node string
+	edge Edge
+}
+
+// buildAdjacency fetches all edges between live (non-archived) nodes and returns
+// an adjacency map keyed by node ID. Each node maps to its neighbours with the
+// connecting edge. The map is bidirectional — an edge A→B produces entries for
+// both A and B.
+func (st *Store) buildAdjacency() (map[string][]adjEntry, error) {
+	rows, err := st.db.Query(`
+		SELECT e.id, e.from_node, e.to_node, e.relationship, e.narrative, e.verdict, e.created_at
+		FROM edges e
+		JOIN nodes nf ON nf.id = e.from_node AND nf.archived_at IS NULL
+		JOIN nodes nt ON nt.id = e.to_node   AND nt.archived_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	adj := make(map[string][]adjEntry)
+	for rows.Next() {
+		e, err := scanEdge(rows)
+		if err != nil {
+			return nil, err
+		}
+		adj[e.FromNode] = append(adj[e.FromNode], adjEntry{node: e.ToNode, edge: e})
+		adj[e.ToNode] = append(adj[e.ToNode], adjEntry{node: e.FromNode, edge: e})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return adj, nil
 }
 
 // materialisePath fetches full Node structs for the path and all edges
@@ -166,20 +178,20 @@ type ConnectionResult struct {
 // bestMatch returns the first node whose label or description best matches the term.
 func (st *Store) bestMatch(term, domain string) (*Node, error) {
 	domain = st.ResolveAlias(domain)
-	q := "%" + term + "%"
+	q := "%" + escapeLike(term) + "%"
 	var row *sql.Row
 	if domain != "" {
 		row = st.db.QueryRow(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
-			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
-			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
+			 WHERE domain = ? AND archived_at IS NULL AND (label LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' OR why_matters LIKE ? ESCAPE '\' OR tags LIKE ? ESCAPE '\')
+			 ORDER BY CASE WHEN label LIKE ? ESCAPE '\' THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
 			domain, q, q, q, q, q,
 		)
 	} else {
 		row = st.db.QueryRow(
 			`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind FROM nodes
-			 WHERE archived_at IS NULL AND (label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)
-			 ORDER BY CASE WHEN label LIKE ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
+			 WHERE archived_at IS NULL AND (label LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' OR why_matters LIKE ? ESCAPE '\' OR tags LIKE ? ESCAPE '\')
+			 ORDER BY CASE WHEN label LIKE ? ESCAPE '\' THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`,
 			q, q, q, q, q,
 		)
 	}

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 )
@@ -26,6 +27,15 @@ type ollamaEmbedResponse struct {
 const defaultEmbeddingModel = "snowflake-arctic-embed"
 const embeddingDim = 1024
 const ollamaEndpoint = "http://localhost:11434/api/embed"
+
+// ollamaHTTPClient is a shared HTTP client with a timeout for Ollama requests.
+// Prevents a hung Ollama process from blocking the calling goroutine forever.
+var ollamaHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+// maxEmbeddingBodySize is the maximum response body size we'll read from Ollama.
+// A legitimate embedding response is well under 1 MB; this guards against a
+// misconfigured or malicious endpoint returning unbounded data.
+const maxEmbeddingBodySize = 1 << 20 // 1 MB
 
 // embeddingModel returns the Ollama model to use for embeddings.
 // Defaults to snowflake-arctic-embed. Override with MEMORYWEB_EMBED_MODEL.
@@ -60,13 +70,13 @@ func embed(text string) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.Post(endpoint, "application/json", bytes.NewReader(body))
+	resp, err := ollamaHTTPClient.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxEmbeddingBodySize))
 	if err != nil {
 		return nil, err
 	}
