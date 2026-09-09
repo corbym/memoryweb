@@ -1870,6 +1870,69 @@ func TestOrient_TrustDelta_AbsentWithoutPriorLog(t *testing.T) {
 	}
 }
 
+// TestOrient_Topic_LoadBearingLowTrustFieldPresent: orient with topic must
+// include load_bearing_low_trust in the response.
+func TestOrient_Topic_LoadBearingLowTrustFieldPresent(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "Topic trust node", "orient-topic-lbt", map[string]any{
+		"why_matters": "important for the domain",
+	})
+
+	tr := call(t, h, "orient", map[string]any{
+		"domain": "orient-topic-lbt",
+		"topic":  "trust",
+	})
+	mustNotError(t, tr)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if _, ok := raw["load_bearing_low_trust"]; !ok {
+		t.Error("orient with topic must include load_bearing_low_trust field")
+	}
+}
+
+// TestOrient_Topic_LoadBearingLowTrustNonZero: orient with topic must compute
+// load_bearing_low_trust from significant nodes in the domain, not hardcode 0.
+func TestOrient_Topic_LoadBearingLowTrustNonZero(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+
+	// Create a significant node (contradicted → low trust) to drive the count.
+	decID := addNode(t, h, "Topic low-trust decision", "orient-topic-lbt-nonzero", map[string]any{
+		"why_matters": "load-bearing decision in domain",
+		"node_kind":   "decision",
+	})
+	assID := addNode(t, h, "Topic contradicting assumption", "orient-topic-lbt-nonzero", map[string]any{
+		"why_matters": "assumption that contradicts the decision",
+		"node_kind":   "assumption",
+	})
+	call(t, h, "connect", map[string]any{
+		"from_memory":  assID,
+		"to_memory":    decID,
+		"relationship": "contradicts",
+		"narrative":    "undermines the decision",
+	})
+
+	tr := call(t, h, "orient", map[string]any{
+		"domain": "orient-topic-lbt-nonzero",
+		"topic":  "decision",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		LoadBearingLowTrust int `json:"load_bearing_low_trust"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse orient response: %v", err)
+	}
+	if resp.LoadBearingLowTrust == 0 {
+		t.Error("orient with topic must compute load_bearing_low_trust from significant nodes; expected > 0 for a contradicted significant node")
+	}
+}
+
 // TestOrient_RememberViaAliasVisibleOnOrient: filing with an alias domain name
 // must store the canonical domain so orient(domain=alias) finds the memory.
 func TestOrient_RememberViaAliasVisibleOnOrient(t *testing.T) {

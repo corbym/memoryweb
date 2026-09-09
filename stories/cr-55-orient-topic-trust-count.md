@@ -1,6 +1,6 @@
 # CR-55: Fix orient topic path missing trust count
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `tools/orient.go:240,336-353` — When `topic != ""`, `LoadBearingLowTrust` stays at 0.
@@ -11,5 +11,5 @@ trust warnings on relevant memories.
 
 ## Acceptance criteria
 
-- [ ] Compute `LoadBearingLowTrust` in the topic path
-- [ ] `TestOrient*Topic*` tests verify trust count
+- [x] Compute `LoadBearingLowTrust` in the topic path
+- [x] `TestOrient*Topic*` tests verify trust count

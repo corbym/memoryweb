@@ -46,7 +46,9 @@ jobs:
         run: ollama pull snowflake-arctic-embed
 
       - name: Install gcc and libc-dev (required for CGO/sqlite-vec)
-        run: sudo apt-get install -y gcc libc-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc libc-dev
 
       - name: Verify semantic tests exist
         # go test exits 0 even when no tests match the -run pattern.
@@ -60,5 +62,5 @@ jobs:
           echo "OK: found $count TestSearchSemantic_ test(s)"
 
       - name: Run semantic integration tests
-        run: CGO_ENABLED=1 go test ./... -run TestSearchSemantic_ -v -timeout 120s
+        run: CGO_ENABLED=1 go test ./tools/... -run TestSearchSemantic_ -v -timeout 120s
 

@@ -1,6 +1,6 @@
 # CR-52: Deduplicate integration test scope
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `integration.yml:63` — `go test ./... -run TestSearchSemantic_` runs ALL tests (non-matching
@@ -10,4 +10,4 @@ tests still compile and link). Should be `go test ./tools/... -run TestSearchSem
 
 ## Acceptance criteria
 
-- [ ] Narrow test scope to `./tools/...` matching the existence check
+- [x] Narrow test scope to `./tools/...` matching the existence check

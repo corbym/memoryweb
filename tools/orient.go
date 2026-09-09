@@ -205,6 +205,29 @@ func (hnd *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolRes
 		return nil, err
 	}
 
+	// Compute load_bearing_low_trust from domain's significant nodes (same as non-topic path).
+	sigResult, err := hnd.store.GetSignificance(domain, orientSignificantCap, 90, nil, nil, 0)
+	if err != nil {
+		return nil, err
+	}
+	sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
+	for i, scoredNode := range sigResult.Structural {
+		sigEntries[i] = scoredLeanEntry{
+			leanEntry:       toLeanEntry(scoredNode.Node),
+			ImportanceScore: scoredNode.ImportanceScore,
+		}
+	}
+	sigEntries, err = hnd.annotateSignificantTrust(sigEntries)
+	if err != nil {
+		return nil, err
+	}
+	lowTrustCount := 0
+	for _, sigEntry := range sigEntries {
+		if sigEntry.Trust != "" {
+			lowTrustCount++
+		}
+	}
+
 	var rulesField interface{}
 	if len(rulesNodes) > 0 {
 		rulesField, err = hnd.orientLeanSection(rulesNodes, digest)
@@ -243,7 +266,7 @@ func (hnd *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolRes
 		LiveNodes:           liveNodes,
 		ArchivedNodes:       archivedNodes,
 		StaleCount:          staleCount,
-		LoadBearingLowTrust: 0,
+		LoadBearingLowTrust: lowTrustCount,
 		Rules:               rulesField,
 		DeclaredSpine:       spineField,
 		Relevant:            relevantField,

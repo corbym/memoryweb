@@ -3,6 +3,7 @@
 **Reviewer:** external (downstream user preparing the binary for an internal AV-whitelisting request)
 **Repository:** https://github.com/corbym/memoryweb
 **Commit reviewed:** `0fe3391` (master, branch tip at time of review)
+**Re-reviewed at:** `7cfb0a8` (v1.54.14) — status column updated below
 **Scope:** full source tree (`main.go`, `db/`, `tools/`, `stats/`, `cmd/`, `hooks/`, `.github/workflows/`)
 **Out of scope:** the upstream `mattn/go-sqlite3` and `asg017/sqlite-vec-go-bindings` dependencies (treated as trusted third parties).
 
@@ -12,20 +13,20 @@ The codebase is in good shape overall. There is no SQL injection, no inbound net
 
 The findings below are nevertheless worth fixing. None are remotely exploitable on a single-user developer machine; the highest-impact ones (F-1, F-3) become more relevant as soon as `memoryweb` is run on a shared host or behind a corporate proxy.
 
-| ID | Severity | Area | Title |
-|----|----------|------|-------|
-| F-1 | Medium | `setup` subcommand | `curl &#124; sh` Ollama install with no integrity check |
-| F-2 | Medium | `db.New` | SQLite foreign keys are declared but never enforced |
-| F-3 | Medium | `setup`, `stats`, hook scripts, DB file | World-readable config / state files (`0644`) on multi-user hosts |
-| F-4 | Medium | `db.embed` | `http.Post` to Ollama uses `http.DefaultClient` (no timeout) |
-| F-5 | Low | hook scripts | `session_id` parsed by regex and interpolated into file paths |
-| F-6 | Low | hook scripts | Manual JSON escaping in `dream_digest` misses control chars |
-| F-7 | Low | tool handlers | `limit` parameters have no upper bound |
-| F-8 | Low | `db.embed` | `MEMORYWEB_OLLAMA_ENDPOINT` is unvalidated |
-| F-9 | Low | `setupStartOllama` | `ollama serve` is started detached with no lifecycle management |
-| F-10 | Low | `db.New` | DSN built by string concatenation of user-controlled path |
-| F-11 | Low | `stats`, `setup` | Non-atomic config / log writes can leave partial files on crash |
-| F-12 | Info | release workflow | Release artifacts are unsigned; no SLSA / SBOM provenance |
+| ID | Severity | Area | Title | Status at v1.54.14 |
+|----|----------|------|-------|---------------------|
+| F-1 | Medium | `setup` subcommand | `curl &#124; sh` Ollama install with no integrity check | Open |
+| F-2 | Medium | `db.New` | SQLite foreign keys are declared but never enforced | Open |
+| F-3 | Medium | `setup`, `stats`, hook scripts, DB file | World-readable config / state files (`0644`) on multi-user hosts | Partial — DB file now `chmod 0600` at `db.New`; stats/config files still `0644` |
+| F-4 | Medium | `db.embed` | `http.Post` to Ollama uses `http.DefaultClient` (no timeout) | Open |
+| F-5 | Low | hook scripts | `session_id` parsed by regex and interpolated into file paths | Open |
+| F-6 | Low | hook scripts | Manual JSON escaping in `dream_digest` misses control chars | Open |
+| F-7 | Low | tool handlers | `limit` parameters have no upper bound | Open |
+| F-8 | Low | `db.embed` | `MEMORYWEB_OLLAMA_ENDPOINT` is unvalidated | Open |
+| F-9 | Low | `setupStartOllama` | `ollama serve` is started detached with no lifecycle management | Open |
+| F-10 | Low | `db.New` | DSN built by string concatenation of user-controlled path | Open |
+| F-11 | Low | `stats`, `setup` | Non-atomic config / log writes can leave partial files on crash | Open |
+| F-12 | Info | release workflow | Release artifacts are unsigned; no SLSA / SBOM provenance | Open |
 
 ---
 
@@ -318,6 +319,6 @@ These together would cut the false-positive rate dramatically and make this exac
 - Targeted `grep` passes for known-risky patterns: `exec.`, `unsafe.`, `reflect.`, `cgo`, `http.`, `net.Listen`, `os.WriteFile`, `os.Setenv`, `0o644`/`0644`, `_foreign_keys`, `sql.Open`, string concatenation into SQL.
 - Read of `go.mod`, `go.sum`, all `.github/workflows/*.yml`, and the Homebrew formula.
 - Cross-checked against an independent second-pass review; severities recalibrated where the second review made a more defensible case (F-1, F-5), and two additional findings adopted (F-6, F-7).
-- No dynamic analysis; no fuzzing. A follow-up `go test ./...` + `govulncheck` + `gosec` pass would be a reasonable next step for the maintainer.
+- No dynamic analysis; no fuzzing. `govulncheck` and `gosec` (non-blocking) were added to CI at v1.54.15 per this recommendation.
 
 The findings are listed roughly in the order the maintainer would most usefully act on them; severities are calibrated for a single-developer machine and would all rise by one notch if `memoryweb` is ever deployed in a multi-tenant or server-side context.

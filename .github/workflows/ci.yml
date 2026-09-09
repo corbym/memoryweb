@@ -26,7 +26,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Install gcc (required for CGO/go-sqlite3)
-        run: sudo apt-get install -y gcc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc
 
       - name: Check formatting
         # Prevents "formatting" commits that accidentally delete or corrupt code.
@@ -54,6 +56,16 @@ jobs:
             exit 1
           fi
           echo "OK: found $count TestSearchSemantic_ test(s)"
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Run gosec (informational, non-blocking)
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -no-fail ./...
 
       - name: Build check
         run: go build ./...
