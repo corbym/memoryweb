@@ -107,7 +107,7 @@ func (hnd *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 			return nil, err
 		}
 		if len(nodes) == 0 {
-			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: `{"error":"no content found for domain"}`}}}, nil
+			return errorResult(`{"error":"no content found for domain"}`), nil
 		}
 	default:
 		return nil, fmt.Errorf("domain or memory_id is required")

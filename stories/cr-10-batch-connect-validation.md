@@ -1,6 +1,6 @@
 # CR-10: Validate from_memory/to_memory in batch connect
 
-**Status:** READY
+**Status:** DONE — implemented this session. Each batch item validates `from_memory`, `to_memory`, and `relationship`; rejected items surface in a `rejections` array (`error_class: "validation"`) while valid items still create edges. New `TestConnect_Batch_EmptyIDs` covers it. All tests pass.
 **Priority:** High
 
 `tools/connect.go:119-131` — Individual batch edge items are decoded and verdict is

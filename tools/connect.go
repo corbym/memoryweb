@@ -53,8 +53,9 @@ func (hnd *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 	if err := requireNonEmpty(map[string]string{
-		"from_memory": params.FromMemory,
-		"to_memory":   params.ToMemory,
+		"from_memory":  params.FromMemory,
+		"to_memory":    params.ToMemory,
+		"relationship": params.Relationship,
 	}); err != nil {
 		return nil, err
 	}
@@ -116,24 +117,62 @@ func (hnd *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	inputs := make([]db.EdgeInput, len(edgeList))
+	type rejection struct {
+		FromMemory string `json:"from_memory"`
+		ToMemory   string `json:"to_memory"`
+		ErrorClass string `json:"error_class"`
+		Message    string `json:"message"`
+	}
+	rejections := make([]rejection, 0)
+	inputs := make([]db.EdgeInput, 0, len(edgeList))
 	for i, edge := range edgeList {
 		if err := validateConnectVerdict(edge.Verdict); err != nil {
 			return errorResult(fmt.Sprintf("item %d: %s", i, err.Error())), nil
 		}
-		inputs[i] = db.EdgeInput{
+		if strings.TrimSpace(edge.FromMemory) == "" {
+			rejections = append(rejections, rejection{
+				FromMemory: edge.FromMemory,
+				ToMemory:   edge.ToMemory,
+				ErrorClass: "validation",
+				Message:    fmt.Sprintf("item %d: from_memory is required", i),
+			})
+			continue
+		}
+		if strings.TrimSpace(edge.ToMemory) == "" {
+			rejections = append(rejections, rejection{
+				FromMemory: edge.FromMemory,
+				ToMemory:   edge.ToMemory,
+				ErrorClass: "validation",
+				Message:    fmt.Sprintf("item %d: to_memory is required", i),
+			})
+			continue
+		}
+		if strings.TrimSpace(edge.Relationship) == "" {
+			rejections = append(rejections, rejection{
+				FromMemory: edge.FromMemory,
+				ToMemory:   edge.ToMemory,
+				ErrorClass: "validation",
+				Message:    fmt.Sprintf("item %d: relationship is required", i),
+			})
+			continue
+		}
+		inputs = append(inputs, db.EdgeInput{
 			FromNode:     edge.FromMemory,
 			ToNode:       edge.ToMemory,
 			Relationship: edge.Relationship,
 			Narrative:    edge.Narrative,
 			Verdict:      connectVerdictForRelationship(edge.Relationship, edge.Verdict),
-		}
+		})
 	}
 	edges, err := hnd.store.AddEdgesBatch(inputs)
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(map[string]int{"edges_created": len(edges)}, "", "  ")
+	resp := map[string]any{"edges_created": len(edges)}
+	if len(rejections) > 0 {
+		resp["rejections"] = rejections
+	}
+	b, _ := json.MarshalIndent(resp, "", "  ")
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 

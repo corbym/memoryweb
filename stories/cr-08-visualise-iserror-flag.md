@@ -1,6 +1,6 @@
 # CR-08: Fix missing IsError on visualise empty domain
 
-**Status:** READY
+**Status:** DONE — implemented this session. Empty-domain path now returns via `errorResult()` (`IsError: true`); `TestVisualiseEmptyDomain` updated to assert the error. All tests pass.
 **Priority:** High
 
 `tools/graph.go:110` — Error-like JSON string returned without `IsError: true`.

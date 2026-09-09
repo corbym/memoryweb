@@ -569,7 +569,7 @@ func TestVisualiseMermaidSyntax(t *testing.T) {
 func TestVisualiseEmptyDomain(t *testing.T) {
 	_, h := newEnv(t)
 	tr := call(t, h, "visualise", map[string]any{"domain": "no-such-domain"})
-	mustNotError(t, tr)
+	mustError(t, tr)
 	if !strings.Contains(text(t, tr), "no content") {
 		t.Errorf("empty domain should return 'no content' message; got:\n%s", text(t, tr))
 	}

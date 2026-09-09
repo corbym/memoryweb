@@ -566,6 +566,76 @@ func TestConnect_ArchivedToMemory_MentionsRestore(t *testing.T) {
 	}
 }
 
+// ── relationship validation ───────────────────────────────────────────────────
+
+// TestConnect_EmptyRelationship: single connect without a relationship must be
+// rejected as a validation error rather than creating an edge with an empty
+// relationship.
+func TestConnect_EmptyRelationship(t *testing.T) {
+	_, h := newEnv(t)
+	from := addNode(t, h, "rel from", "rel-test", nil)
+	to := addNode(t, h, "rel to", "rel-test", nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"from_memory": from,
+		"to_memory":   to,
+	})
+	mustError(t, tr)
+	if !strings.Contains(text(t, tr), "relationship is required") {
+		t.Errorf("expected 'relationship is required' error;\ngot: %s", text(t, tr))
+	}
+}
+
+// ── batch connect endpoint validation ─────────────────────────────────────────
+
+// TestConnect_Batch_EmptyIDs: items missing from_memory or to_memory must be
+// rejected with a descriptive rejection entry while valid items still create
+// edges.
+func TestConnect_Batch_EmptyIDs(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "batch-validate"
+	idA := addNode(t, h, "Batch validate A", domain, nil)
+	idB := addNode(t, h, "Batch validate B", domain, nil)
+
+	tr := call(t, h, "connect", map[string]any{
+		"items": []map[string]any{
+			{"from_memory": idA, "to_memory": idB, "relationship": "connects_to"},
+			{"from_memory": idA, "to_memory": "", "relationship": "connects_to"},
+			{"from_memory": "", "to_memory": idB, "relationship": "connects_to"},
+			{"from_memory": "   ", "to_memory": idB, "relationship": "connects_to"},
+			{"from_memory": idA, "to_memory": idB, "relationship": ""},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		EdgesCreated int `json:"edges_created"`
+		Rejections   []struct {
+			FromMemory string `json:"from_memory"`
+			ToMemory   string `json:"to_memory"`
+			ErrorClass string `json:"error_class"`
+			Message    string `json:"message"`
+		} `json:"rejections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse connect batch response: %v", err)
+	}
+	if resp.EdgesCreated != 1 {
+		t.Errorf("expected edges_created=1 (only the valid item), got %d", resp.EdgesCreated)
+	}
+	if len(resp.Rejections) != 4 {
+		t.Fatalf("expected 4 rejections, got %d", len(resp.Rejections))
+	}
+	for _, r := range resp.Rejections {
+		if r.ErrorClass != "validation" {
+			t.Errorf("rejection error_class should be 'validation'; got %q (%s)", r.ErrorClass, r.Message)
+		}
+		if r.Message == "" {
+			t.Error("rejection message should be descriptive, got empty")
+		}
+	}
+}
+
 // ── search memory_id scoping ──────────────────────────────────────────────────
 
 // TestSearch_MemoryID_ScopesResults: when memory_id is supplied, only nodes in

@@ -1,6 +1,6 @@
 # CR-09: Validate relationship in single connect
 
-**Status:** READY
+**Status:** DONE — implemented this session. `requireNonEmpty` now validates `relationship` in single connect; new `TestConnect_EmptyRelationship` covers it. All tests pass.
 **Priority:** High
 
 `tools/connect.go:55-60` — `from_memory` and `to_memory` are validated non-empty but
