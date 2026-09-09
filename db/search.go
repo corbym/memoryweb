@@ -220,10 +220,10 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 // searchNodesLike performs a full-phrase LIKE search with a multi-word fallback.
 // When allowedIDs is non-empty, results are restricted to nodes in that set.
 func (st *Store) searchNodesLike(query, domain string, limit int, allowedIDs, nodeKinds []string) (*SearchResult, error) {
-	pattern := "%" + query + "%"
+	pattern := "%" + escapeLike(query) + "%"
 	fetch := limit + 1
 
-	likeClause := "(label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)"
+	likeClause := "(label LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR why_matters LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')"
 	conds := []string{"archived_at IS NULL", likeClause}
 	args := []interface{}{pattern, pattern, pattern, pattern}
 	if domain != "" {
@@ -297,7 +297,7 @@ func (st *Store) searchByWords(words []string, domain string, limit int, nodeKin
 	// Build: (label LIKE ? OR desc LIKE ? OR why LIKE ? OR tags LIKE ?)
 	//        OR (label LIKE ? OR ...)   ... one group per word.
 	const fields = 4 // label, description, why_matters, tags
-	wordClause := "(label LIKE ? OR description LIKE ? OR why_matters LIKE ? OR tags LIKE ?)"
+	wordClause := "(label LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR why_matters LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')"
 	clauses := make([]string, len(words))
 	for i := range words {
 		clauses[i] = wordClause
@@ -315,7 +315,7 @@ func (st *Store) searchByWords(words []string, domain string, limit int, nodeKin
 	}
 	conds = append(conds, "("+combined+")")
 	for _, word := range words {
-		wordPattern := "%" + word + "%"
+		wordPattern := "%" + escapeLike(word) + "%"
 		for j := 0; j < fields; j++ {
 			args = append(args, wordPattern)
 		}

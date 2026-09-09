@@ -12,6 +12,16 @@ import (
 
 var nonAlpha = regexp.MustCompile(`[^a-z0-9]+`)
 
+// escapeLike escapes the SQL LIKE metacharacters % and _ in s so that they
+// are treated as literal characters. The result should be used with
+// ESCAPE '\' in the SQL clause.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 func slug(input string) string {
 	input = strings.ToLower(input)
 	input = nonAlpha.ReplaceAllString(input, "-")
@@ -39,9 +49,10 @@ func tagFilter(col string, tags []string, conds []string, args []interface{}) ([
 	var clauses []string
 	for _, tag := range tags {
 		low := strings.ToLower(tag)
+		escaped := escapeLike(low)
 		clauses = append(clauses,
-			"(LOWER("+col+") = ? OR LOWER("+col+") LIKE ? || ' %' OR LOWER("+col+") LIKE '% ' || ? OR LOWER("+col+") LIKE '% ' || ? || ' %')")
-		args = append(args, low, low, low, low)
+			"(LOWER("+col+") = ? OR LOWER("+col+") LIKE ? || ' %' ESCAPE '\\' OR LOWER("+col+") LIKE '% ' || ? ESCAPE '\\' OR LOWER("+col+") LIKE '% ' || ? || ' %' ESCAPE '\\')")
+		args = append(args, low, escaped, escaped, escaped)
 	}
 	conds = append(conds, "("+strings.Join(clauses, " OR ")+")")
 	return conds, args
