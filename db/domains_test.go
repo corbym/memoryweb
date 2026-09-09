@@ -313,3 +313,42 @@ func TestMergeDomains_TargetNoNodes_Error(t *testing.T) {
 		t.Errorf("error should mention rename_domain: %v", err)
 	}
 }
+
+func TestAddAlias_IdempotentWhenAlreadyMapped(t *testing.T) {
+	s := newStore(t)
+	if err := s.AddAlias("same", "target"); err != nil {
+		t.Fatalf("AddAlias: %v", err)
+	}
+	if err := s.AddAlias("same", "target"); err != nil {
+		t.Errorf("re-adding the identical alias mapping should be idempotent, got: %v", err)
+	}
+	aliases, err := s.ListAliases()
+	if err != nil {
+		t.Fatalf("ListAliases: %v", err)
+	}
+	if len(aliases) != 1 {
+		t.Errorf("expected exactly 1 alias, got %d", len(aliases))
+	}
+}
+
+func TestAddAlias_RejectsRepoint(t *testing.T) {
+	s := newStore(t)
+	if err := s.AddAlias("a", "one"); err != nil {
+		t.Fatalf("AddAlias: %v", err)
+	}
+	err := s.AddAlias("a", "two")
+	if err == nil {
+		t.Fatal("expected re-pointing an existing alias to be rejected")
+	}
+	if !strings.Contains(err.Error(), "two") {
+		t.Errorf("error should name the attempted target, got: %v", err)
+	}
+	// Original mapping must be untouched.
+	aliases, err := s.ListAliases()
+	if err != nil {
+		t.Fatalf("ListAliases: %v", err)
+	}
+	if len(aliases) != 1 || aliases[0].Domain != "one" {
+		t.Errorf("alias should still map to %q, got %+v", "one", aliases)
+	}
+}

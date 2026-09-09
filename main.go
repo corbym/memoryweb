@@ -123,7 +123,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to open db: %v", err)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[memoryweb] store close: %v", err)
+		}
+	}()
 
 	handler := tools.New(store, Version)
 
@@ -143,12 +147,14 @@ func main() {
 
 		// Also flush on SIGTERM / SIGINT so stats are written when the MCP
 		// host terminates the process rather than closing stdin cleanly.
+		// Closing stdin unblocks scanner.Scan so the main loop exits naturally
+		// and deferred cleanup (store.Close, stats flush) runs.
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		go func() {
 			<-sigCh
 			flushStats()
-			os.Exit(0)
+			os.Stdin.Close() //nolint:errcheck
 		}()
 	}
 
@@ -210,7 +216,11 @@ func dreamCmd() {
 		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[memoryweb] store close: %v", err)
+		}
+	}()
 
 	if err := runDream(store, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -302,7 +312,11 @@ func runSearchCmd(out io.Writer, dbPath, query, domain string, limit int, lean, 
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[memoryweb] store close: %v", err)
+		}
+	}()
 
 	var result *db.SearchResult
 	if exact {
@@ -372,7 +386,11 @@ func backfillCmd() {
 		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[memoryweb] store close: %v", err)
+		}
+	}()
 
 	if err := runBackfill(store, os.Stdout, *quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -1083,7 +1101,11 @@ func doctorCmd() {
 		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[memoryweb] store close: %v", err)
+		}
+	}()
 
 	home, _ := os.UserHomeDir()
 	if !runDoctor(store, os.Stdout, *dbFlag, home, *jsonFlag) {
@@ -1408,7 +1430,11 @@ func mergeDomainsCmd() {
 		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[memoryweb] store close: %v", err)
+		}
+	}()
 
 	if err := runMergeDomains(store, os.Stdout, *source, *target, *dryRun); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -1512,7 +1538,11 @@ func purgeCmd() {
 		fmt.Fprintf(os.Stderr, "error: open database: %v\n", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[memoryweb] store close: %v", err)
+		}
+	}()
 
 	result, err := store.Purge(*domainFlag, beforeTime, *dryRun, *includeLive)
 	if err != nil {
@@ -1577,7 +1607,9 @@ func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, 
 					Name      string          `json:"name"`
 					Arguments json.RawMessage `json:"arguments"`
 				}
-				json.Unmarshal(req.Params, &callReq)
+				if err := json.Unmarshal(req.Params, &callReq); err != nil {
+					log.Printf("[memoryweb] stats: failed to parse tool call params: %v", err)
+				}
 				rec.Record(callReq.Name, callReq.Arguments, text, toolResult.IsError)
 			}
 		}

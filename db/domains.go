@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -25,6 +26,10 @@ func (st *Store) ResolveAlias(name string) string {
 }
 
 // AddAlias registers alias as an alternative name for domain.
+// Re-registering the identical mapping is idempotent (the original created_at
+// is preserved); re-pointing an existing alias to a different domain is
+// rejected — unpick the old mapping first (unalias) rather than silently
+// overwriting it.
 func (st *Store) AddAlias(alias, domain string) error {
 	var liveCount int
 	if err := st.db.QueryRow(
@@ -35,8 +40,21 @@ func (st *Store) AddAlias(alias, domain string) error {
 	if liveCount > 0 {
 		return fmt.Errorf("cannot register alias %q: %d live node(s) already filed under that domain name — revise their domain to %q first", alias, liveCount, domain)
 	}
-	_, err := st.db.Exec(
-		`INSERT OR REPLACE INTO domain_aliases (alias, domain, created_at) VALUES (?, ?, ?)`,
+
+	var existing string
+	err := st.db.QueryRow(`SELECT domain FROM domain_aliases WHERE alias = ?`, alias).Scan(&existing)
+	if err == nil {
+		if existing == domain {
+			return nil // already mapped how the caller wants; keep original created_at
+		}
+		return fmt.Errorf("alias %q already maps to domain %q — remove it (alias/unalias) before re-pointing to %q", alias, existing, domain)
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+
+	_, err = st.db.Exec(
+		`INSERT INTO domain_aliases (alias, domain, created_at) VALUES (?, ?, ?)`,
 		alias, domain, time.Now().UTC(),
 	)
 	return err

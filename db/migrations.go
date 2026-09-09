@@ -147,16 +147,26 @@ var migrations = []migration{
 			// The default Ollama snowflake-arctic-embed model returns 1024-dimensional
 			// vectors, not 384. Drop and recreate; any stored embeddings are invalid
 			// anyway since they could not have been inserted into the 384-dim table.
+			//
+			// Probe for sqlite-vec first: if it is not loaded we skip the whole
+			// migration safely. Without the probe we would DROP the table and then
+			// fail the CREATE, leaving the DB with no embeddings table at all.
+			var vecVersion string
+			if err := tx.QueryRow("SELECT vec_version()").Scan(&vecVersion); err != nil {
+				log.Printf("[memoryweb] sqlite-vec not available, skipping v9 migration: %v", err)
+				return nil
+			}
 			if _, err := tx.Exec(`DROP TABLE IF EXISTS node_embeddings`); err != nil {
 				return err
 			}
-			_, err := tx.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS node_embeddings USING vec0(
+			if _, err := tx.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS node_embeddings USING vec0(
 				node_id   TEXT PRIMARY KEY,
 				embedding FLOAT[1024]
-			)`)
-			if err != nil {
-				log.Printf("[memoryweb] note: could not recreate node_embeddings table (sqlite-vec may not be loaded): %v", err)
-				return nil
+			)`); err != nil {
+				// DROP succeeded but CREATE failed — the embeddings table is gone.
+				// Return the error so the migration fails cleanly rather than silently
+				// leaving the DB in an inconsistent state.
+				return fmt.Errorf("recreate node_embeddings after drop: %w", err)
 			}
 			return nil
 		},

@@ -258,7 +258,7 @@ func TestSearchNodes_MemoryID_EmptyFallsBackToNormal(t *testing.T) {
 func TestListNodesByKind_DomainAndKindFilter(t *testing.T) {
 	s := newStore(t)
 	decision := mustAddNodeWithKind(t, s, "kind list decision", "proj", "decision")
-	mustAddNodeWithKind(t, s, "kind list note", "proj", "note")
+	mustAddNodeWithKind(t, s, "kind list finding", "proj", "finding")
 	mustAddNodeWithKind(t, s, "kind list other domain", "other", "decision")
 
 	res, err := s.SearchNodes("", "proj", 10, "", []string{"decision"})
@@ -316,7 +316,7 @@ func TestListNodesByKind_MemoryIDScopesNeighbourhood(t *testing.T) {
 func TestSearchNodes_NodeKindFilter_FillsLimitBeforeTruncating(t *testing.T) {
 	s := newStore(t)
 	for i := 0; i < 8; i++ {
-		mustAddNodeWithKind(t, s, "kindlimit note", "proj", "note")
+		mustAddNodeWithKind(t, s, "kindlimit finding", "proj", "finding")
 	}
 	for i := 0; i < 5; i++ {
 		mustAddNodeWithKind(t, s, "kindlimit decision", "proj", "decision")
@@ -360,9 +360,9 @@ func TestSearchNodes_MultiWordFallback_RespectsNodeKind(t *testing.T) {
 		"proj",
 		nil,
 		"parameterised",
-		"note",
+		"finding",
 	); err != nil {
-		t.Fatalf("AddNode note: %v", err)
+		t.Fatalf("AddNode finding: %v", err)
 	}
 
 	res, err := s.SearchNodes("testing approval parameterised", "proj", 10, "", []string{"decision"})

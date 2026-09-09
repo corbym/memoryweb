@@ -116,6 +116,7 @@ func (st *Store) Purge(domain string, before *time.Time, dryRun bool, includeLiv
 	}
 
 	now := time.Now().UTC()
+	ids := make([]interface{}, 0, len(candidates))
 	for _, cand := range candidates {
 		if _, err := tx.Exec(
 			`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -124,19 +125,33 @@ func (st *Store) Purge(domain string, before *time.Time, dryRun bool, includeLiv
 			tx.Rollback()
 			return PurgeResult{}, fmt.Errorf("write audit_log for %s: %w", cand.id, err)
 		}
+		ids = append(ids, cand.id)
+	}
 
-		res, err := tx.Exec(`DELETE FROM edges WHERE from_node = ? OR to_node = ?`, cand.id, cand.id)
-		if err != nil {
-			tx.Rollback()
-			return PurgeResult{}, fmt.Errorf("delete edges for %s: %w", cand.id, err)
-		}
-		deleted, _ := res.RowsAffected()
-		result.TotalEdges += int(deleted)
+	// Batch edge deletion: every edge touching a purged node (leaving or
+	// entering it) must go, in one statement instead of one per node.
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	edgeArgs := make([]interface{}, 0, len(ids)*2)
+	edgeArgs = append(edgeArgs, ids...)
+	edgeArgs = append(edgeArgs, ids...)
+	res, err := tx.Exec(
+		`DELETE FROM edges WHERE from_node IN (`+placeholders+`) OR to_node IN (`+placeholders+`)`,
+		edgeArgs...,
+	)
+	if err != nil {
+		tx.Rollback()
+		return PurgeResult{}, fmt.Errorf("delete edges: %w", err)
+	}
+	deleted, _ := res.RowsAffected()
+	result.TotalEdges += int(deleted)
 
-		if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, cand.id); err != nil {
-			tx.Rollback()
-			return PurgeResult{}, fmt.Errorf("delete node %s: %w", cand.id, err)
-		}
+	// Batch node deletion for the same set.
+	if _, err := tx.Exec(
+		`DELETE FROM nodes WHERE id IN (`+placeholders+`)`,
+		ids...,
+	); err != nil {
+		tx.Rollback()
+		return PurgeResult{}, fmt.Errorf("delete nodes: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

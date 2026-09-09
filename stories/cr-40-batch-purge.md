@@ -1,6 +1,6 @@
 # CR-40: Batch purge operations
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `db/purge.go:119-140` — Purge processes candidates one at a time. For large purges
@@ -10,5 +10,5 @@
 
 ## Acceptance criteria
 
-- [ ] Batch edge deletion before node deletion
-- [ ] `TestPurge*` tests pass
+- [x] Batch edge deletion before node deletion
+- [x] `TestPurge*` tests pass

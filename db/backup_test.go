@@ -119,3 +119,46 @@ func TestClose_CheckpointsWALIntoMainFile(t *testing.T) {
 		t.Fatalf("node missing from main file after Close — WAL was not checkpointed: %v", err)
 	}
 }
+
+// Backup must reject destination paths that could break out of the intended
+// target or smuggle extra SQL when the path is interpolated into VACUUM INTO.
+func TestBackup_RejectsUnsafeDestination(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src.db")
+	src, err := db.New(srcPath)
+	if err != nil {
+		t.Fatalf("db.New(src): %v", err)
+	}
+	defer src.Close()
+
+	for dest, reason := range map[string]string{
+		filepath.Join(dir, "clean;drop.db"): "semicolon",
+		filepath.Join(dir, "quote'.db"):     "single quote",
+		filepath.Join(dir, "..", "up.db"):   "path traversal",
+	} {
+		if err := db.Backup(srcPath, dest); err == nil {
+			t.Errorf("Backup(%q) should be rejected (%s), got nil", dest, reason)
+		}
+	}
+
+	ok := filepath.Join(dir, "legit-backup.db")
+	if err := db.Backup(srcPath, ok); err != nil {
+		t.Errorf("Backup with a safe destination should succeed, got: %v", err)
+	}
+}
+
+// Close must surface its error to callers (checkpoint + close), and a healthy
+// close closes cleanly. The compile-time assertion guarantees the signature
+// stays error-returning so nobody reintroduces the silently-discarded Close.
+var _ interface{ Close() error } = (*db.Store)(nil)
+
+func TestClose_HealthyStoreReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	s, err := db.New(filepath.Join(dir, "c.db"))
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Errorf("Close on a healthy store should return nil, got: %v", err)
+	}
+}

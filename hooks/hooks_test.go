@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/corbym/memoryweb/db"
+	"github.com/corbym/memoryweb/testutil"
 	"github.com/corbym/memoryweb/tools"
 )
 
@@ -19,24 +20,10 @@ var dreamBin string
 
 // TestMain builds the dream binary before running all hook tests.
 func TestMain(m *testing.M) {
-	// Locate repo root by walking up from the working directory.
-	dir, err := os.Getwd()
+	root, err := testutil.FindRepoRoot()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: cannot determine working directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
 		os.Exit(1)
-	}
-	root := ""
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			root = dir
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			fmt.Fprintln(os.Stderr, "FAIL: could not find repo root (go.mod not found)")
-			os.Exit(1)
-		}
-		dir = parent
 	}
 
 	exeSuffix := ""
@@ -59,24 +46,9 @@ func TestMain(m *testing.M) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func findRepoRoot(t *testing.T) string {
-	t.Helper()
-	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("could not find repo root (go.mod not found)")
-		}
-		dir = parent
-	}
-}
-
 func hooksDir(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(findRepoRoot(t), "hooks")
+	return filepath.Join(testutil.FindRepoRootOrFatal(t), "hooks")
 }
 
 // makeTranscript creates a JSONL transcript with numUser real user-prompt messages

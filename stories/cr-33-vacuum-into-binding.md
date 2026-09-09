@@ -1,6 +1,6 @@
 # CR-33: Fix VACUUM INTO bind parameter
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `db/store.go:70` — `VACUUM INTO ?` uses a bind parameter for the filename. SQLite's
@@ -10,6 +10,6 @@
 
 ## Acceptance criteria
 
-- [ ] String-interpolate the path after sanitization (not parameterized)
-- [ ] Validate path to prevent injection (no `;` or path traversal)
-- [ ] `TestBackup*` tests pass
+- [x] String-interpolate the path after sanitization (not parameterized)
+- [x] Validate path to prevent injection (no `;` or path traversal)
+- [x] `TestBackup*` tests pass

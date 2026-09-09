@@ -158,7 +158,11 @@ func (hnd *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) 
 	}
 
 	peerIDs := peerIDsFromEdges(nwe.Edges, params.ID)
-	labels := hnd.store.GetNodeLabels(peerIDs)
+	labels, err := hnd.store.GetNodeLabels(peerIDs)
+	if err != nil {
+		log.Printf("[memoryweb] node labels for connections of %s: %v", params.ID, err)
+		labels = map[string]string{}
+	}
 	connections := buildReviseConnections(nwe, labels)
 
 	suggestions, err := hnd.store.SuggestEdges(params.ID, 5)
@@ -307,7 +311,11 @@ func (hnd *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error)
 		}
 
 		peerIDs := peerIDsFromEdges(nwe.Edges, node.ID)
-		labels := hnd.store.GetNodeLabels(peerIDs)
+		labels, err := hnd.store.GetNodeLabels(peerIDs)
+		if err != nil {
+			log.Printf("[memoryweb] node labels for connections of %s: %v", node.ID, err)
+			labels = map[string]string{}
+		}
 		connections := buildReviseConnections(nwe, labels)
 
 		suggestions, _ := hnd.store.SuggestEdges(node.ID, 5)

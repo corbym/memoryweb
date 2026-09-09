@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -49,14 +50,28 @@ func New(path string) (*Store, error) {
 	return store, nil
 }
 
-func (st *Store) Close() {
+func (st *Store) Close() error {
 	// Checkpoint the WAL back into the main .db file before closing so the file
 	// is self-sufficient at rest. Without this, recently-written data can live
 	// in the -wal sidecar, making naive file-copy backups (which may miss or
 	// desync the -wal) lossy or corrupting. Best-effort: a failed checkpoint
 	// must not prevent the connection from closing.
 	st.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`) //nolint:errcheck
-	st.db.Close()
+	return st.db.Close()
+}
+
+// validateBackupDest rejects destination paths that would inject SQL into
+// the VACUUM INTO statement or escape the source database's directory.
+func validateBackupDest(srcPath, destPath string) error {
+	if strings.ContainsAny(destPath, ";'") {
+		return fmt.Errorf("backup destination path must not contain ; or '")
+	}
+	srcDir := filepath.Dir(filepath.Clean(srcPath))
+	destDir := filepath.Dir(filepath.Clean(destPath))
+	if destDir != srcDir {
+		return fmt.Errorf("backup destination must be in the same directory as the source database")
+	}
+	return nil
 }
 
 // Backup writes a transactionally-consistent standalone snapshot of the database
@@ -64,6 +79,9 @@ func (st *Store) Close() {
 // file with no -wal/-shm sidecars, safe to copy or sync even while the source DB
 // is in use. It refuses to overwrite an existing destination.
 func Backup(srcPath, destPath string) error {
+	if err := validateBackupDest(srcPath, destPath); err != nil {
+		return err
+	}
 	if _, err := os.Stat(destPath); err == nil {
 		return fmt.Errorf("destination already exists: %s", destPath)
 	} else if !os.IsNotExist(err) {
@@ -74,9 +92,11 @@ func Backup(srcPath, destPath string) error {
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck
 
-	if _, err := s.db.Exec(`VACUUM INTO ?`, destPath); err != nil {
+	// VACUUM INTO does not support bind parameters in all SQLite versions; the
+	// destination path is sanitized above before being interpolated.
+	if _, err := s.db.Exec(`VACUUM INTO '` + destPath + `'`); err != nil {
 		return fmt.Errorf("vacuum into %s: %w", destPath, err)
 	}
 	return nil

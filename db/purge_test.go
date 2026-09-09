@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -480,5 +481,67 @@ func mustArchive(t *testing.T, s *db.Store, id string) {
 	t.Helper()
 	if err := s.ArchiveNode(id, "stale"); err != nil {
 		t.Fatalf("ArchiveNode(%s): %v", id, err)
+	}
+}
+
+// TestPurge_BatchDeletesAllEdgesForManyNodes proves the batch deletion path:
+// a large purge must delete every edge touching each purged node (whether the
+// edge leaves it or enters it) in batched statements, and report the total
+// count accurately.
+func TestPurge_BatchDeletesAllEdgesForManyNodes(t *testing.T) {
+	dbPath, s := newStoreAtPath(t)
+
+	const n = 20
+	var nodes []*db.Node
+	for i := 0; i < n; i++ {
+		nodes = append(nodes, mustAddNode(t, s, fmt.Sprintf("bulk batch node %d", i), "domain-bulk"))
+	}
+	// Chain edges produce a mix of from_node/tO_node references into the set.
+	expectedEdges := 0
+	for i := 0; i < n-1; i++ {
+		if _, err := s.AddEdge(nodes[i].ID, nodes[i+1].ID, "connects_to", "chain"); err != nil {
+			t.Fatalf("AddEdge: %v", err)
+		}
+		expectedEdges++
+	}
+	// A stray edge INTO a purged node from an outside (live) node must also go.
+	outside := mustAddNode(t, s, "outside node", "other-domain")
+	if _, err := s.AddEdge(outside.ID, nodes[0].ID, "connects_to", "into set"); err != nil {
+		t.Fatalf("AddEdge (outside→set): %v", err)
+	}
+	expectedEdges++
+	if _, err := s.AddEdge(outside.ID, nodes[n-1].ID, "connects_to", "into set 2"); err != nil {
+		t.Fatalf("AddEdge (outside→set 2): %v", err)
+	}
+	expectedEdges++
+
+	for _, nd := range nodes {
+		mustArchive(t, s, nd.ID)
+	}
+
+	result, err := s.Purge("domain-bulk", nil, false, false)
+	if err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	if len(result.Nodes) != n {
+		t.Fatalf("expected %d nodes purged, got %d", n, len(result.Nodes))
+	}
+	if result.TotalEdges != expectedEdges {
+		t.Errorf("TotalEdges = %d, want %d", result.TotalEdges, expectedEdges)
+	}
+
+	if rawCount(t, dbPath, `SELECT COUNT(*) FROM edges`) != 0 {
+		t.Error("BUG: edges remain after batch purge")
+	}
+	for _, nd := range nodes {
+		if rawNodeExists(t, dbPath, nd.ID) {
+			t.Errorf("node %s should have been purged", nd.ID)
+		}
+	}
+	if rawCount(t, dbPath, `SELECT COUNT(*) FROM nodes WHERE domain = 'domain-bulk'`) != 0 {
+		t.Error("BUG: purged-domain nodes remain in the nodes table")
+	}
+	if !rawNodeExists(t, dbPath, outside.ID) {
+		t.Error("live outside node must survive the purge")
 	}
 }

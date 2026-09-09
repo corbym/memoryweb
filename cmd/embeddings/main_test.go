@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/corbym/memoryweb/db"
+	"github.com/corbym/memoryweb/testutil"
 )
 
 // ── test setup ────────────────────────────────────────────────────────────────
@@ -21,7 +22,11 @@ var backfillBin string
 
 // TestMain compiles the memoryweb binary once before all tests run.
 func TestMain(m *testing.M) {
-	root := findRepoRoot()
+	root, err := testutil.FindRepoRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
+		os.Exit(1)
+	}
 
 	exeSuffix := ""
 	if runtime.GOOS == "windows" {
@@ -39,21 +44,6 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.Remove(bin)
 	os.Exit(code)
-}
-
-// findRepoRoot walks up from the working directory to locate go.mod.
-func findRepoRoot() string {
-	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			panic("could not find repo root (go.mod not found)")
-		}
-		dir = parent
-	}
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

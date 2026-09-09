@@ -45,6 +45,9 @@ func (st *Store) AddNode(label, description, whyMatters, domain string, occurred
 	if nodeKind == "" {
 		nodeKind = "decision"
 	}
+	if !isValidNodeKind(nodeKind) {
+		return nil, fmt.Errorf("invalid node_kind %q — must be one of %v", nodeKind, ValidNodeKinds)
+	}
 
 	// Atomically insert the node and (when occurred_at is set) its audit row.
 	tx, err := st.db.Begin()
@@ -94,9 +97,9 @@ func (st *Store) AddNode(label, description, whyMatters, domain string, occurred
 
 // GetNodeLabels returns a map of id → label for the given node IDs.
 // Missing or archived nodes are omitted from the result.
-func (st *Store) GetNodeLabels(ids []string) map[string]string {
+func (st *Store) GetNodeLabels(ids []string) (map[string]string, error) {
 	if len(ids) == 0 {
-		return map[string]string{}
+		return map[string]string{}, nil
 	}
 	clause, args := inClause(ids)
 	rows, err := st.db.Query(
@@ -104,20 +107,21 @@ func (st *Store) GetNodeLabels(ids []string) map[string]string {
 		args...,
 	)
 	if err != nil {
-		return map[string]string{}
+		return nil, err
 	}
 	defer rows.Close()
 	out := make(map[string]string, len(ids))
 	for rows.Next() {
 		var id, label string
-		if rows.Scan(&id, &label) == nil {
-			out[id] = label
+		if err := rows.Scan(&id, &label); err != nil {
+			return nil, err
 		}
+		out[id] = label
 	}
 	if rows.Err() != nil {
-		return map[string]string{}
+		return nil, rows.Err()
 	}
-	return out
+	return out, nil
 }
 
 func (st *Store) GetNode(id string) (*NodeWithEdges, error) {
@@ -157,7 +161,8 @@ func (st *Store) GetNodeEdges(id string) ([]Edge, error) {
 	}
 	defer rows.Close()
 
-	var edges []Edge
+	// A stored node with no edges renders as [] rather than null in JSON.
+	edges := []Edge{}
 	for rows.Next() {
 		e, err := scanEdge(rows)
 		if err != nil {
@@ -461,6 +466,10 @@ func (st *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 		nodeKind := inp.NodeKind
 		if nodeKind == "" {
 			nodeKind = "decision"
+		}
+		if !isValidNodeKind(nodeKind) {
+			tx.Rollback()
+			return nil, fmt.Errorf("node %d: invalid node_kind %q — must be one of %v", i, nodeKind, ValidNodeKinds)
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO nodes (id, label, description, why_matters, domain, created_at, updated_at, occurred_at, tags, node_kind)

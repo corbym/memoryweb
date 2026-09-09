@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -798,5 +799,71 @@ func TestFindPossibleDuplicates_BoundedResults(t *testing.T) {
 	}
 	if len(nodes) == 0 {
 		t.Fatal("expected at least one duplicate candidate")
+	}
+}
+
+func TestAddNode_RejectsInvalidNodeKind(t *testing.T) {
+	s := newStore(t)
+	_, err := s.AddNode("invalid kind", "d", "w", "nk-reject", nil, "", "not-a-real-kind")
+	if err == nil {
+		t.Fatal("expected invalid node_kind to be rejected, got nil error")
+	}
+	if !strings.Contains(err.Error(), "not-a-real-kind") {
+		t.Errorf("error should name the offending kind, got: %v", err)
+	}
+}
+
+func TestAddNodesBatch_RejectsInvalidNodeKind(t *testing.T) {
+	s := newStore(t)
+	inputs := []db.NodeInput{{
+		Label:    "invalid batch kind",
+		Domain:   "nk-reject-batch",
+		NodeKind: "banana",
+	}}
+	if _, err := s.AddNodesBatch(inputs); err == nil {
+		t.Fatal("expected invalid node_kind to be rejected, got nil error")
+	}
+}
+
+func TestAddNode_AcceptsEveryValidNodeKind(t *testing.T) {
+	s := newStore(t)
+	for _, kind := range db.ValidNodeKinds {
+		n, err := s.AddNode("kind "+kind, "d", "w", "nk-valid", nil, "", kind)
+		if err != nil {
+			t.Fatalf("AddNode(kind %q): %v", kind, err)
+		}
+		if n.NodeKind != kind {
+			t.Errorf("NodeKind = %q, want %q", n.NodeKind, kind)
+		}
+	}
+}
+
+func TestGetNodeLabels_ReturnsErrorOnDBFailure(t *testing.T) {
+	s := newStore(t)
+	s.Close()
+	_, err := s.GetNodeLabels([]string{"some-id"})
+	if err == nil {
+		t.Fatal("expected GetNodeLabels to surface a database error, got nil")
+	}
+}
+
+func TestGetNodeEdges_EmptySliceNotNil(t *testing.T) {
+	s := newStore(t)
+	n := mustAddNode(t, s, "no edges here", "edges-none")
+
+	nwe, err := s.GetNode(n.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	// Internal slice must be non-nil so JSON renders [] rather than null.
+	if nwe.Edges == nil {
+		t.Error("Edges is nil; want non-nil empty slice")
+	}
+	raw, err := json.Marshal(nwe)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(raw), `"edges":null`) {
+		t.Errorf("JSON should render [] not null: %s", raw)
 	}
 }

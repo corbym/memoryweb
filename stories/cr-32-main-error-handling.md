@@ -1,6 +1,6 @@
 # CR-32: Handle ignored errors in main.go
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `main.go:1559` — `json.Unmarshal(req.Params, &callReq)` error discarded. Blank tool
@@ -12,5 +12,5 @@ name recorded in stats on malformed params.
 
 ## Acceptance criteria
 
-- [ ] `json.Unmarshal` error logged or returns parse error to client
-- [ ] Signal handler sets a flag; main loop exits cleanly on next iteration
+- [x] `json.Unmarshal` error logged or returns parse error to client
+- [x] Signal handler closes stdin; main loop exits cleanly and defers run
