@@ -93,7 +93,7 @@ Override with `MEMORYWEB_DB=/path/to/your.db`
 
 ## Tools
 
-16 MCP tools (v1.43.0). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
+18 MCP tools (v1.54.8). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
 
 ### Filing memories
 
@@ -255,7 +255,7 @@ memoryweb doctor --json                              # machine-readable JSON out
 Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[i]` informational. The command exits with code 1 if any check fails. Example output:
 
 ```
-[✓] Database:        ~/.memoryweb.db (WAL, schema v11)
+[✓] Database:        ~/.memoryweb.db (WAL, schema v15)
 [✓] sqlite-vec:      v0.1.6 — 142/145 nodes embedded (98%)
 [✗] Ollama binary:   not found in PATH — install from https://ollama.com/download
 [!] Ollama server:   skipped (Ollama binary not found)

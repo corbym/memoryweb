@@ -156,8 +156,8 @@ type Node struct {
     CreatedAt   time.Time  `json:"created_at"`
     UpdatedAt   time.Time  `json:"updated_at"`
     OccurredAt  *time.Time `json:"occurred_at,omitempty"`
-    ArchivedAt  *time.Time `json:"archived_at,omitempty"`  // nil = live
-    Transient   bool       `json:"transient,omitempty"`    // true = short-lived; audit(mode=stale) flags after 7 days
+    ArchivedAt  *time.Time `json:"archived_at,omitempty"` // nil = live
+    NodeKind    string     `json:"node_kind,omitempty"`   // one of 9 kinds; "decision" is the legacy default
 }
 ```
 
@@ -327,7 +327,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.52.0)
+## What's implemented (v1.54.8)
 
 All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 

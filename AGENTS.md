@@ -270,7 +270,7 @@ the binary directly — it will be overwritten on the next `brew upgrade`.
 
 ---
 
-## What is available now (v1.43.0 — 16 MCP tools)
+## What is available now (v1.54.8 — 18 MCP tools)
 
 | Tool | Status |
 |------|--------|

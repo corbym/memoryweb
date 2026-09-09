@@ -1,33 +1,38 @@
 # typed: false
 # frozen_string_literal: true
 
+# NOTE: This source formula's version and SHA256 hashes are maintained
+# automatically by `.github/workflows/update-homebrew.yml` on each release.
+# If the hashes are empty, run that workflow (or `brew audit`) to refresh
+# them before publishing — stale hashes cause `brew install` failures.
+
 class Memoryweb < Formula
   desc "Persistent knowledge graph MCP server for AI agents"
   homepage "https://github.com/corbym/memoryweb"
-  version "1.4.3"
+  version "1.54.8"
   license "MIT"
 
   on_macos do
     on_intel do
       url "https://github.com/corbym/memoryweb/releases/download/v#{version}/memoryweb_v#{version}_darwin_amd64.tar.gz"
-      sha256 "f9c042313880bb49082c49f155f6348af69284df45d2ef22252b8158a97cf824"
+      sha256 ""
     end
 
     on_arm do
       url "https://github.com/corbym/memoryweb/releases/download/v#{version}/memoryweb_v#{version}_darwin_arm64.tar.gz"
-      sha256 "c6c67c21677b0310924fee32f843636f0ccdfc6124936b31af381f154f5771a5"
+      sha256 ""
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/corbym/memoryweb/releases/download/v#{version}/memoryweb_v#{version}_linux_amd64.tar.gz"
-      sha256 "4e51a05cb227795b0c7a7b6e89faab49a542ec95ebfa2d0dcf44c0c0cce6e5bf"
+      sha256 ""
     end
 
     on_arm do
       url "https://github.com/corbym/memoryweb/releases/download/v#{version}/memoryweb_v#{version}_linux_arm64.tar.gz"
-      sha256 "f8c6d010d94b509359b01e133d1599b0b79d34f7f2f3363fa898ec393236b414"
+      sha256 ""
     end
   end
 
