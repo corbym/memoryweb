@@ -93,7 +93,7 @@ Override with `MEMORYWEB_DB=/path/to/your.db`
 
 ## Tools
 
-18 MCP tools (v1.54.11). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
+18 MCP tools (v1.54.12). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
 
 ### Filing memories
 
@@ -460,7 +460,7 @@ Your database is forward-compatible — the binary runs any pending migrations a
 go build -o memoryweb .
 ```
 
-Requires Go 1.22+. Uses `github.com/mattn/go-sqlite3` and [sqlite-vec](https://github.com/asg017/sqlite-vec) for semantic search — CGO must be available. To deploy safely when the binary is already running:
+Requires Go 1.24+. Uses `github.com/mattn/go-sqlite3` and [sqlite-vec](https://github.com/asg017/sqlite-vec) for semantic search — CGO must be available. To deploy safely when the binary is already running:
 
 ```bash
 go build -o memoryweb.tmp . && mv memoryweb.tmp memoryweb

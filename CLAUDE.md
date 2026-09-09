@@ -268,7 +268,7 @@ convention, no exceptions. There is no top-level `tests/` directory.
 | File | Package | What it tests |
 |------|---------|---------------|
 | `db/*_test.go` | `db_test` | DB-layer unit tests: all Store methods, one test file per production file (e.g. `nodes_test.go` tests `nodes.go`). `db_test.go` itself holds only the shared helpers (`newStore`, `mustAddNode`, ...) |
-| `tools/*_test.go` | `tools_test` | Outside-in agent-style tests via `CallTool`, one test file per production file (e.g. `remember_test.go` tests `remember.go`). `tools_test.go` itself holds only the shared helpers (`call`, `newEnv`, `mustNotError`, ...) plus the handful of tests that exercise `tools.go` directly (`CallTool` dispatch, `getNode`, `checkForUpdates`) |
+| `tools/*_test.go` | `tools_test` | Outside-in agent-style tests via `CallTool`, one test file per production file (e.g. `remember_test.go` tests `remember.go`). `tools_test.go` itself holds only the shared helpers (`call`, `newEnv`, `mustNotError`, ...) plus the handful of tests that exercise `tools.go` directly (`CallTool` dispatch, `getNode`, retired/unpublished tool-name guards) |
 | `cmd/purge/main_test.go` | `main_test` | CLI integration tests via `exec.Command` |
 | `main_test.go` | `main_test` | Wire-layer tests for setup and subcommand dispatch |
 
@@ -327,7 +327,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.54.11)
+## What's implemented (v1.54.12)
 
 All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
