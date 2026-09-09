@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+    env:
+      OS_FILTER: ${{ inputs.os_filter }}
     steps:
       - name: Set build matrix
         id: set-matrix
@@ -37,7 +39,7 @@ jobs:
             {"os":"windows-latest","goos":"windows","goarch":"amd64","cc":"gcc","ext":".exe"},
             {"os":"ubuntu-latest","goos":"windows","goarch":"386","cc":"i686-w64-mingw32-gcc","ext":".exe"}
           ]'
-          FILTER="${{ inputs.os_filter }}"
+          FILTER="$OS_FILTER"
           if [ -z "$FILTER" ]; then
             MATRIX="$FULL"
           else

@@ -24,10 +24,11 @@ jobs:
       - name: Trigger release workflow for all tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           failed=""
-          if [ -n "${{ inputs.tag }}" ]; then
-            tags="${{ inputs.tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+            tags="$INPUT_TAG"
           else
             tags=$(git tag --list 'v*' --sort=version:refname)
           fi
