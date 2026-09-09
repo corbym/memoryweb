@@ -123,8 +123,11 @@ func (hnd *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, erro
 			Domains:          domains,
 			ResultsTruncated: resultsTruncated,
 		}
-		b, _ := json.MarshalIndent(resp, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(resp)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 
 	type domainEntry struct {
@@ -154,8 +157,11 @@ func (hnd *Handler) orientCrossDomain(limit int, digest bool) (*ToolResult, erro
 		Domains:          domains,
 		ResultsTruncated: resultsTruncated,
 	}
-	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 func (hnd *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolResult, error) {
@@ -250,8 +256,11 @@ func (hnd *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolRes
 		},
 	}
 
-	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 // orientDomainEntry builds the full orient data for one domain. Used by the
@@ -549,8 +558,11 @@ func (hnd *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		},
 	}
 
-	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 // orientMultiDomain handles orient(domains=[2..5 items], topic?, digest?).
@@ -573,6 +585,9 @@ func (hnd *Handler) orientMultiDomain(domains []string, topic string, digest boo
 		Orientations:  entries,
 		ServerVersion: hnd.version,
 	}
-	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }

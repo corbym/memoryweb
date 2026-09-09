@@ -32,8 +32,11 @@ func (hnd *Handler) searchNodes(args json.RawMessage) (*ToolResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		b, _ := json.MarshalIndent(result, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(result)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 
 	result, err := hnd.store.SearchNodes(params.Query, params.Domain, params.Limit, params.MemoryID, nodeKinds)

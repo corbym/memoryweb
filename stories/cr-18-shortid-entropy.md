@@ -1,6 +1,6 @@
 # CR-18: Increase shortID entropy
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `db/nodes.go:42` — `shortID()` generates 4 random bytes (2^32 space). With slug truncated

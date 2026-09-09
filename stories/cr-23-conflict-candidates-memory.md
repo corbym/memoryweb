@@ -1,6 +1,6 @@
 # CR-23: Fix FindConflictCandidates memory load
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `db/audit.go:34` — Loads ALL nodes with embeddings into memory, then filters in Go.

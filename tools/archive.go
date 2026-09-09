@@ -25,11 +25,8 @@ func (hnd *Handler) forgetNode(args json.RawMessage) (*ToolResult, error) {
 		Reason  string `json:"reason"`
 		Restore bool   `json:"restore"`
 	}
-	if err := decodeParams(args, &params, "forget"); err != nil {
+	if err := decodeParams(args, &params, "forget", "id"); err != nil {
 		return nil, err
-	}
-	if params.ID == "" {
-		return errorResult("id is required"), nil
 	}
 	if params.Restore {
 		if err := hnd.store.RestoreNode(params.ID); err != nil {
@@ -73,8 +70,11 @@ func (hnd *Handler) listArchived(params auditArgs) (*ToolResult, error) {
 			nodesField = []string{}
 		}
 		out := auditArchivedResult{Nodes: nodesField, ResultsTruncated: false}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 	resultsTruncated := len(nodes) > params.Limit
 	if resultsTruncated {
@@ -88,8 +88,11 @@ func (hnd *Handler) listArchived(params auditArgs) (*ToolResult, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 // forgetAll archives multiple nodes in a single atomic transaction.
@@ -101,7 +104,7 @@ func (hnd *Handler) forgetAll(args json.RawMessage) (*ToolResult, error) {
 			Reason string `json:"reason"`
 		} `json:"items"`
 	}
-	if err := decodeParams(args, &params, "forget_all"); err != nil {
+	if err := decodeParams(args, &params, "forget_all", "items"); err != nil {
 		return nil, err
 	}
 	if len(params.Items) == 0 {
@@ -132,7 +135,7 @@ func (hnd *Handler) restoreAll(args json.RawMessage) (*ToolResult, error) {
 			ID string `json:"id"`
 		} `json:"items"`
 	}
-	if err := decodeParams(args, &params, "restore_all"); err != nil {
+	if err := decodeParams(args, &params, "restore_all", "items"); err != nil {
 		return nil, err
 	}
 	if len(params.Items) == 0 {
@@ -148,14 +151,17 @@ func (hnd *Handler) restoreAll(args json.RawMessage) (*ToolResult, error) {
 	if err := hnd.store.RestoreNodesBatch(ids); err != nil {
 		return errorResult(err.Error()), nil
 	}
-	b, _ := json.Marshal(map[string]any{"restored": len(ids), "ids": ids})
+	b, err := json.Marshal(map[string]any{"restored": len(ids), "ids": ids})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tool response: %w", err)
+	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
 
 // auditTool dispatches mode=stale/orphans/archived/conflicts.
 func (hnd *Handler) auditTool(args json.RawMessage) (*ToolResult, error) {
 	var params auditArgs
-	if err := decodeParams(args, &params, "audit"); err != nil {
+	if err := decodeParams(args, &params, "audit", "mode"); err != nil {
 		return nil, err
 	}
 	switch params.Mode {
@@ -225,8 +231,11 @@ func (hnd *Handler) findConflictCandidates(params auditArgs) (*ToolResult, error
 	}
 	if len(candidates) == 0 {
 		out := ConflictCandidatesResult{Candidates: []db.ConflictCandidate{}, ResultsTruncated: false}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 
 	truncated := len(candidates) > params.Limit
@@ -239,8 +248,11 @@ func (hnd *Handler) findConflictCandidates(params auditArgs) (*ToolResult, error
 		ResultsTruncated: truncated,
 		Truncated:        truncated,
 	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 func (hnd *Handler) drift(params auditArgs) (*ToolResult, error) {
@@ -293,8 +305,11 @@ func (hnd *Handler) drift(params auditArgs) (*ToolResult, error) {
 			PlaceholderLines:      digestLinesFromPlaceholders(placeholders),
 			PlaceholdersTruncated: plTruncated,
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 	out := auditStaleResult{
 		Candidates:            candidates,
@@ -302,8 +317,11 @@ func (hnd *Handler) drift(params auditArgs) (*ToolResult, error) {
 		Placeholders:          placeholders,
 		PlaceholdersTruncated: plTruncated,
 	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 func (hnd *Handler) findDisconnected(params auditArgs) (*ToolResult, error) {
@@ -321,8 +339,11 @@ func (hnd *Handler) findDisconnected(params auditArgs) (*ToolResult, error) {
 	}
 	if len(nodes) == 0 {
 		out := auditOrphansResult{Nodes: []db.Node{}, ResultsTruncated: false}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 	resultsTruncated := len(nodes) > params.Limit
 	if resultsTruncated {
@@ -337,12 +358,18 @@ func (hnd *Handler) findDisconnected(params auditArgs) (*ToolResult, error) {
 			Lines:            lines,
 			ResultsTruncated: resultsTruncated,
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 	out := auditOrphansResult{Nodes: nodes, ResultsTruncated: resultsTruncated}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 type auditKindCoverageResult struct {
@@ -377,6 +404,9 @@ func (hnd *Handler) findKindCoverage(params auditArgs) (*ToolResult, error) {
 		MigrationCandidates: migrationCandidates,
 		ResultsTruncated:    result.ResultsTruncated,
 	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }

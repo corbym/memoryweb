@@ -1,6 +1,6 @@
 # CR-22: O(N²) pairwise distance in FindConflictCandidates
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `db/audit.go:118` — For each node, a separate SQL query runs against all other nodes.

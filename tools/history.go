@@ -111,13 +111,19 @@ func (hnd *Handler) timeline(args json.RawMessage) (*ToolResult, error) {
 			Lines            []string `json:"lines"`
 			ResultsTruncated bool     `json:"results_truncated"`
 		}{Lines: digestLinesFromEntries(entries), ResultsTruncated: resultsTruncated}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 	out := struct {
 		Nodes            []leanEntry `json:"nodes"`
 		ResultsTruncated bool        `json:"results_truncated"`
 	}{Nodes: entries, ResultsTruncated: resultsTruncated}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }

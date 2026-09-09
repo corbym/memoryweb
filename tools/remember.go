@@ -117,8 +117,11 @@ func (hnd *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		resp.SuggestedDomain = misdomain.SuggestedDomain
 		resp.SuggestedMemoryID = misdomain.SuggestedMemoryID
 	}
-	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 type skippedConnection struct {
@@ -284,8 +287,11 @@ func (hnd *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		OrphanWarning string  `json:"orphan_warning,omitempty"`
 	}
 	out := response{Nodes: result, OrphanWarning: orphanWarning}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 // addNodes retains the old remember_all wire format for backward compat during transition (not exposed in ListTools).

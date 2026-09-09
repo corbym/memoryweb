@@ -43,50 +43,48 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 		return []ConflictCandidate{}, nil
 	}
 
-	conds := []string{"n.archived_at IS NULL"}
-	args := []interface{}{}
+	// Compute pairwise distances in a single SQL statement (a self-join over
+	// node_embeddings normalised to unordered pairs via e2.node_id > e1.node_id),
+	// so SQLite streams only pairs below the floor instead of issuing one query
+	// per node and loading every embedded node into Go memory. Scope filters
+	// live at the SQL level: tags and node_kind must match on BOTH sides of a
+	// pair (mirroring the previous per-node inner queries); a domain scope
+	// requires at least one side to be in the domain.
+	subConds := []string{
+		"n1.archived_at IS NULL",
+		"n2.archived_at IS NULL",
+		"length(e1.embedding) > 0",
+		"length(e2.embedding) > 0",
+	}
+	subArgs := []interface{}{}
+	subConds, subArgs = tagFilter("n1.tags", tags, subConds, subArgs)
+	subConds, subArgs = tagFilter("n2.tags", tags, subConds, subArgs)
+	subConds, subArgs = nodeKindFilter("n1.node_kind", nodeKinds, subConds, subArgs)
+	subConds, subArgs = nodeKindFilter("n2.node_kind", nodeKinds, subConds, subArgs)
 	if domain != "" {
-		conds = append(conds, "n.domain = ?")
-		args = append(args, domain)
-	}
-	conds, args = tagFilter("n.tags", tags, conds, args)
-	conds, args = nodeKindFilter("n.node_kind", nodeKinds, conds, args)
-
-	nodeQ := `SELECT n.id, n.label, n.domain, e.embedding
-	FROM node_embeddings e
-	JOIN nodes n ON n.id = e.node_id
-	WHERE ` + strings.Join(conds, " AND ") + `
-	ORDER BY n.id`
-
-	rows, err := st.db.Query(nodeQ, args...)
-	if err != nil {
-		return []ConflictCandidate{}, nil
-	}
-	defer rows.Close()
-
-	type embNode struct {
-		id        string
-		label     string
-		domain    string
-		embedding []byte
-	}
-	var nodes []embNode
-	for rows.Next() {
-		var n embNode
-		if err := rows.Scan(&n.id, &n.label, &n.domain, &n.embedding); err != nil {
-			return []ConflictCandidate{}, nil
-		}
-		nodes = append(nodes, n)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return []ConflictCandidate{}, nil
-	}
-	if len(nodes) < 2 {
-		return []ConflictCandidate{}, nil
+		subConds = append(subConds, "(n1.domain = ? OR n2.domain = ?)")
+		subArgs = append(subArgs, domain, domain)
 	}
 
-	// Build a set of pairs to exclude: already-contradicting pairs, and pairs
+	// Pool more pairs than the final limit so exclusions (already-contradicting
+	// pairs) don't starve the result; Go applies the cross-domain threshold and
+	// pair exclusions over the closest pool the SQL ORDER BY draws.
+	pool := limit * 4
+	pairQ := `SELECT id1, label1, domain1, id2, label2, domain2, dist FROM (
+		SELECT e1.node_id AS id1, n1.label AS label1, n1.domain AS domain1,
+		       e2.node_id AS id2, n2.label AS label2, n2.domain AS domain2,
+		       vec_distance_cosine(e1.embedding, e2.embedding) AS dist
+		FROM node_embeddings e1
+		JOIN nodes n1 ON n1.id = e1.node_id
+		JOIN node_embeddings e2 ON e2.node_id > e1.node_id
+		JOIN nodes n2 ON n2.id = e2.node_id
+		WHERE ` + strings.Join(subConds, " AND ") + `
+	) pairs
+	WHERE dist <= ?
+	ORDER BY dist ASC
+	LIMIT ?`
+
+	// Build the set of pairs to exclude: already-contradicting pairs, and pairs
 	// already resolved via a resolved/resolved_by/supersedes edge directly
 	// between the two nodes (checked in either direction).
 	type pairKey struct{ a, b string }
@@ -97,7 +95,7 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 		for edgeRows.Next() {
 			var fn, tn string
 			if edgeRows.Scan(&fn, &tn) == nil {
-				// Normalise: always store smaller-ID first.
+				// Normalise: always store the smaller id first.
 				if fn > tn {
 					fn, tn = tn, fn
 				}
@@ -110,85 +108,37 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 		}
 	}
 
-	// Compute pairwise distances using vec_distance_cosine via SQLite.
-	// For N nodes this is O(N²) queries — bounded by the domain scope and limit.
+	args := append(subArgs, CandidateSimilarityFloor, pool)
+	rows, err := st.db.Query(pairQ, args...)
+	if err != nil {
+		return []ConflictCandidate{}, nil
+	}
+	defer rows.Close()
+
 	candidates := []ConflictCandidate{}
-	seen := make(map[pairKey]bool)
-
-	for i := 0; i < len(nodes) && len(candidates) < limit*2; i++ {
-		na := nodes[i]
-		if len(na.embedding) == 0 {
-			continue
-		}
-		// Query distance from na to all other nodes with embeddings, applying
-		// the same tags/node_kind scoping as the outer candidate query so a
-		// scoped audit(mode=conflicts) call doesn't pair a matching node with
-		// an unrelated one that fails the caller's own filter.
-		innerConds := []string{"n.id != ?", "n.archived_at IS NULL"}
-		innerArgs := []interface{}{na.id}
-		innerConds, innerArgs = tagFilter("n.tags", tags, innerConds, innerArgs)
-		innerConds, innerArgs = nodeKindFilter("n.node_kind", nodeKinds, innerConds, innerArgs)
-
-		distQ := `SELECT n.id, n.label, n.domain,
-			vec_distance_cosine(e.embedding, ?) AS dist
-			FROM node_embeddings e
-			JOIN nodes n ON n.id = e.node_id
-			WHERE ` + strings.Join(innerConds, " AND ") + `
-			ORDER BY dist ASC`
-
-		distArgs := append([]interface{}{na.embedding}, innerArgs...)
-		dRows, err := st.db.Query(distQ, distArgs...)
-		if err != nil {
-			continue
-		}
-		for dRows.Next() {
-			var bID, bLabel, bDomain string
-			var dist float64
-			if err := dRows.Scan(&bID, &bLabel, &bDomain, &dist); err != nil {
-				continue
-			}
-			// Hard floor.
-			if dist > CandidateSimilarityFloor {
-				break // ordered by dist ASC
-			}
-			// Domain scope filter for cross-domain.
-			if na.domain != bDomain && dist > conflictsDomainThreshold {
-				continue
-			}
-			// If a domain was requested, at least one node must be in it.
-			if domain != "" && na.domain != domain && bDomain != domain {
-				continue
-			}
-
-			// Normalise pair key: smaller ID first.
-			var pAID, pALabel, pBID, pBLabel string
-			if na.id <= bID {
-				pAID, pALabel, pBID, pBLabel = na.id, na.label, bID, bLabel
-			} else {
-				pAID, pALabel, pBID, pBLabel = bID, bLabel, na.id, na.label
-			}
-
-			pk := pairKey{pAID, pBID}
-			if seen[pk] || contradicting[pk] {
-				continue
-			}
-			seen[pk] = true
-			candidates = append(candidates, ConflictCandidate{
-				AID:              pAID,
-				ALabel:           pALabel,
-				BID:              pBID,
-				BLabel:           pBLabel,
-				SemanticDistance: dist,
-				Reason:           "semantically adjacent — agent adjudicates whether these conflict",
-			})
-			if len(candidates) >= limit*2 {
-				break
-			}
-		}
-		dRows.Close()
-		if err := dRows.Err(); err != nil {
+	for rows.Next() {
+		var aID, aLabel, aDomain, bID, bLabel, bDomain string
+		var dist float64
+		if err := rows.Scan(&aID, &aLabel, &aDomain, &bID, &bLabel, &bDomain, &dist); err != nil {
 			return []ConflictCandidate{}, nil
 		}
+		// Cross-domain pairs are surfaced only when very semantically close;
+		// same-domain pairs ride the full floor. (The self-join never pairs a
+		// node with itself and yields the smaller id first.)
+		if aDomain != bDomain && dist > conflictsDomainThreshold {
+			continue
+		}
+		if contradicting[pairKey{aID, bID}] {
+			continue
+		}
+		candidates = append(candidates, ConflictCandidate{
+			AID:              aID,
+			ALabel:           aLabel,
+			BID:              bID,
+			BLabel:           bLabel,
+			SemanticDistance: dist,
+			Reason:           "semantically adjacent — agent adjudicates whether these conflict",
+		})
 	}
 
 	// Sort by distance ascending and cap at limit.

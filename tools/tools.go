@@ -158,18 +158,18 @@ func (hnd *Handler) getNode(args json.RawMessage) (*ToolResult, error) {
 	var params struct {
 		ID string `json:"id"`
 	}
-	if err := decodeParams(args, &params, "recall"); err != nil {
-		return nil, err
-	}
-	if err := requireNonEmpty(map[string]string{"id": params.ID}); err != nil {
+	if err := decodeParams(args, &params, "recall", "id"); err != nil {
 		return nil, err
 	}
 	nwe, err := hnd.store.GetNode(params.ID)
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(nwe, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(nwe)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 func errorResult(msg string) *ToolResult {

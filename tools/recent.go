@@ -89,8 +89,11 @@ func (hnd *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 				Groups           []digestGroupedRecent `json:"groups"`
 				ResultsTruncated bool                  `json:"results_truncated"`
 			}{Groups: groups, ResultsTruncated: resultsTruncated}
-			b, _ := json.MarshalIndent(out, "", "  ")
-			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+			b, err := marshalResponseIndent(out)
+			if err != nil {
+				return nil, err
+			}
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 		}
 		type groupedResult struct {
 			Domain string      `json:"domain"`
@@ -108,8 +111,11 @@ func (hnd *Handler) recentChanges(args json.RawMessage) (*ToolResult, error) {
 			Groups           []groupedResult `json:"groups"`
 			ResultsTruncated bool            `json:"results_truncated"`
 		}{Groups: groups, ResultsTruncated: resultsTruncated}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 
 	nodes, err := hnd.store.RecentChanges(params.Domain, params.Limit+1, nodeKinds)
@@ -126,13 +132,19 @@ func marshalRecentList(entries []leanEntry, resultsTruncated bool, digest bool) 
 			Lines            []string `json:"lines"`
 			ResultsTruncated bool     `json:"results_truncated"`
 		}{Lines: digestLinesFromEntries(entries), ResultsTruncated: resultsTruncated}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	}
 	out := struct {
 		Nodes            []leanEntry `json:"nodes"`
 		ResultsTruncated bool        `json:"results_truncated"`
 	}{Nodes: entries, ResultsTruncated: resultsTruncated}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }

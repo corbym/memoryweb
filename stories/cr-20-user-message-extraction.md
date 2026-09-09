@@ -1,6 +1,6 @@
 # CR-20: Fix user message extraction truncation
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `hooks/userpromptsubmit_hook.sh:90-92` — grep regex `"\"message\"..."` matches only

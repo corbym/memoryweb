@@ -756,3 +756,47 @@ func TestListArchived_TagsFilter(t *testing.T) {
 		t.Error("other-tagged archived node should be excluded")
 	}
 }
+
+func TestFindPossibleDuplicates_NormalisesPunctuationAndCase(t *testing.T) {
+	s := newStore(t)
+	dup := mustAddNode(t, s, "Boot Crash!", "dup-domain")
+	mustAddNode(t, s, "unrelated node", "dup-domain")
+	excluded := mustAddNode(t, s, "boot crash", "dup-domain")
+	mustAddNode(t, s, "boot crash", "other-domain")
+
+	nodes, err := s.FindPossibleDuplicates("boot crash", "dup-domain", excluded.ID)
+	if err != nil {
+		t.Fatalf("FindPossibleDuplicates: %v", err)
+	}
+	ids := nodeIDs(nodes)
+	if !contains(ids, dup.ID) {
+		t.Errorf("'Boot Crash!' should match normalised 'boot crash'; got %v", ids)
+	}
+	for _, id := range ids {
+		if id == excluded.ID {
+			t.Error("excluded node appeared in result")
+		}
+	}
+	if _, err := s.FindPossibleDuplicates("", "dup-domain", excluded.ID); err != nil {
+		t.Errorf("empty label should return empty, got error: %v", err)
+	}
+}
+
+func TestFindPossibleDuplicates_BoundedResults(t *testing.T) {
+	s := newStore(t)
+	seed := mustAddNode(t, s, "many dup candidate", "dup-bound")
+	for i := 0; i < 55; i++ {
+		mustAddNode(t, s, "many dup candidate", "dup-bound")
+	}
+
+	nodes, err := s.FindPossibleDuplicates("many dup candidate", "dup-bound", seed.ID)
+	if err != nil {
+		t.Fatalf("FindPossibleDuplicates: %v", err)
+	}
+	if len(nodes) > 50 {
+		t.Errorf("result set should be bounded by LIMIT; got %d nodes", len(nodes))
+	}
+	if len(nodes) == 0 {
+		t.Fatal("expected at least one duplicate candidate")
+	}
+}

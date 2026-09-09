@@ -35,8 +35,11 @@ func (hnd *Handler) findConnections(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
-	b, _ := json.MarshalIndent(result, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(result)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 func (hnd *Handler) tracePath(args json.RawMessage) (*ToolResult, error) {
@@ -57,8 +60,11 @@ func (hnd *Handler) tracePath(args json.RawMessage) (*ToolResult, error) {
 	if len(result.Path) == 0 {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("No path found between %q and %q within 6 hops.", params.FromID, params.ToID)}}}, nil
 	}
-	b, _ := json.MarshalIndent(result, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(result)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 // sanitiseMermaidLabel truncates to 40 runes and escapes characters that break
@@ -180,6 +186,9 @@ func (hnd *Handler) visualise(args json.RawMessage) (*ToolResult, error) {
 		Nodes:      nodeList,
 		Edges:      edgeList,
 	}
-	b, _ := json.MarshalIndent(result, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(result)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }

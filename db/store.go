@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	sqlite3 "github.com/mattn/go-sqlite3"
 
 	vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 )
@@ -18,6 +18,15 @@ func init() {
 	// Register sqlite-vec extension for all future SQLite3 connections.
 	// Called once at process start, before any connection is opened.
 	vec.Auto()
+
+	// Register a custom driver whose connections gain the
+	// memoryweb_normalise_label scalar function, so label matching can run
+	// inside SQL instead of loading whole tables into memory.
+	sql.Register("sqlite3_memoryweb", &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return conn.RegisterFunc("memoryweb_normalise_label", normaliseLabel, true)
+		},
+	})
 }
 
 type Store struct {
@@ -27,7 +36,7 @@ type Store struct {
 
 func New(path string) (*Store, error) {
 	dsn := "file:" + url.PathEscape(path) + "?_journal_mode=WAL&_foreign_keys=on"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite3_memoryweb", dsn)
 	if err != nil {
 		return nil, err
 	}

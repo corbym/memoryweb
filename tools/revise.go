@@ -141,10 +141,11 @@ func (hnd *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) 
 		return nil, err
 	}
 
-	nwe, err := hnd.store.GetNode(params.ID)
+	edges, err := hnd.store.GetNodeEdges(params.ID)
 	if err != nil {
 		return nil, err
 	}
+	nwe := &db.NodeWithEdges{Node: *node, Edges: edges}
 
 	var trustNudge string
 	if contentTouched {
@@ -183,8 +184,11 @@ func (hnd *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) 
 		PossibleDuplicates:   duplicates,
 		TrustNudge:           trustNudge,
 	}
-	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 // updateNodesBatch handles the batch mode of revise: items is the raw JSON array of update objects.
@@ -286,10 +290,11 @@ func (hnd *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error)
 	}
 	updated := make([]updatedEntry, len(nodes))
 	for i, node := range nodes {
-		nwe, err := hnd.store.GetNode(node.ID)
+		edges, err := hnd.store.GetNodeEdges(node.ID)
 		if err != nil {
 			return nil, err
 		}
+		nwe := &db.NodeWithEdges{Node: *node, Edges: edges}
 
 		var trustNudge string
 		if contentTouched[i] {
@@ -320,8 +325,11 @@ func (hnd *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error)
 	resp := struct {
 		Updated []updatedEntry `json:"updated"`
 	}{Updated: updated}
-	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 // updateNodes retains the old revise_all wire format for backward compat during transition (not exposed in ListTools).

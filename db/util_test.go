@@ -2,6 +2,7 @@ package db
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +88,32 @@ func TestTagFilter_CaseInsensitiveExcludesOtherTags(t *testing.T) {
 	}
 	if len(nodes) > 0 {
 		t.Errorf("expected no results for tag 'sch' when no node has that tag; got %d", len(nodes))
+	}
+}
+
+// ── shortID ───────────────────────────────────────────────────────────────────
+
+// TestShortID_Format: shortID must return 16 hex characters (8 random bytes).
+func TestShortID_Format(t *testing.T) {
+	id := shortID()
+	if len(id) != 16 {
+		t.Errorf("shortID() = %q, want 16 hex chars", id)
+	}
+	for _, c := range id {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			t.Errorf("shortID() = %q contains non-hex char %q", id, c)
+		}
+	}
+}
+
+// TestShortID_Uniqueness: 10K IDs must contain no duplicates.
+func TestShortID_Uniqueness(t *testing.T) {
+	seen := make(map[string]struct{}, 10000)
+	for i := 0; i < 10000; i++ {
+		id := shortID()
+		if _, dup := seen[id]; dup {
+			t.Fatalf("duplicate shortID %q at iteration %d", id, i)
+		}
+		seen[id] = struct{}{}
 	}
 }

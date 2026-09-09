@@ -136,6 +136,18 @@ func (st *Store) GetNode(id string) (*NodeWithEdges, error) {
 	n.OccurredAt = nullTimeToPtr(occurredAt)
 	n.ArchivedAt = nullTimeToPtr(archivedAt)
 
+	edges, err := st.GetNodeEdges(id)
+	if err != nil {
+		return nil, err
+	}
+
+	return &NodeWithEdges{Node: n, Edges: edges}, nil
+}
+
+// GetNodeEdges returns all edges incident to the given node, in either direction.
+// Used by revise to build the connections envelope without re-fetching the node,
+// which UpdateNode already returns.
+func (st *Store) GetNodeEdges(id string) ([]Edge, error) {
 	rows, err := st.db.Query(
 		`SELECT `+edgeSelectColumns+` FROM edges
 		 WHERE from_node = ? OR to_node = ?`, id, id,
@@ -153,8 +165,7 @@ func (st *Store) GetNode(id string) (*NodeWithEdges, error) {
 		}
 		edges = append(edges, e)
 	}
-
-	return &NodeWithEdges{Node: n, Edges: edges}, nil
+	return edges, rows.Err()
 }
 
 // ── update ────────────────────────────────────────────────────────────────────
@@ -676,29 +687,37 @@ func (st *Store) CountArchived(domain string) (int, error) {
 
 // ── possible duplicates ───────────────────────────────────────────────────────
 
+// possibleDuplicatesLimit caps the duplicate-candidate result set so a
+// pathological domain cannot force an unbounded response.
+const possibleDuplicatesLimit = 50
+
 // FindPossibleDuplicates returns live nodes in the same domain whose normalised
 // label closely matches the given label (lowercased, punctuation stripped).
 // The node with the given excludeID is excluded (used to avoid self-match).
+// The normalisation comparison runs inside SQL via the
+// memoryweb_normalise_label scalar function, so only matching rows are loaded.
 func (st *Store) FindPossibleDuplicates(label, domain, excludeID string) ([]Node, error) {
-	domain = st.ResolveAlias(domain)
+	dmn := st.ResolveAlias(domain)
 	norm := normaliseLabel(label)
 	if norm == "" {
 		return []Node{}, nil
 	}
 	rows, err := st.db.Query(
 		`SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
-		 FROM nodes WHERE domain = ? AND archived_at IS NULL AND id != ?`,
-		domain, excludeID,
+		 FROM nodes
+		 WHERE domain = ? AND archived_at IS NULL AND id != ?
+		   AND memoryweb_normalise_label(label) = ?
+		 LIMIT ?`,
+		dmn, excludeID, norm, possibleDuplicatesLimit,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	all, err := scanNodeRows(rows)
+	results, err := scanNodeRows(rows)
 	if err != nil {
 		return nil, err
 	}
-	results := filter(all, func(n Node) bool { return normaliseLabel(n.Label) == norm })
 	if results == nil {
 		results = []Node{}
 	}

@@ -862,6 +862,58 @@ func TestRevise_SingleResponse_HasEnvelope(t *testing.T) {
 	}
 }
 
+// TestRevise_SingleResponseNodeMatchesStored: the node returned in the revise
+// response must equal a fresh recall of the same memory — guards the CR-24
+// change that drops the post-update GetNode and reuses UpdateNode's returned node.
+func TestRevise_SingleResponseNodeMatchesStored(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	id := addNode(t, h, "match stored", "proj", map[string]any{
+		"occurred_at": "2026-01-15",
+		"why_matters": "guard the envelope",
+	})
+	tr := call(t, h, "revise", map[string]any{
+		"id":          id,
+		"label":       "match stored revised",
+		"description": "updated description",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		Node struct {
+			ID          string `json:"id"`
+			Label       string `json:"label"`
+			Domain      string `json:"domain"`
+			Description string `json:"description"`
+			OccurredAt  string `json:"occurred_at"`
+		} `json:"node"`
+		Connections []map[string]any `json:"connections"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	if resp.Connections == nil {
+		t.Error("expected connections field in revise response")
+	}
+
+	rec := call(t, h, "recall", map[string]any{"id": id})
+	mustNotError(t, rec)
+	var nwe struct {
+		Node struct {
+			ID          string `json:"id"`
+			Label       string `json:"label"`
+			Domain      string `json:"domain"`
+			Description string `json:"description"`
+			OccurredAt  string `json:"occurred_at"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(text(t, rec)), &nwe); err != nil {
+		t.Fatalf("parse recall response: %v", err)
+	}
+	if resp.Node != nwe.Node {
+		t.Errorf("revise response node does not match stored node:\nrevise: %+v\nrecall: %+v", resp.Node, nwe.Node)
+	}
+}
+
 func TestRevise_BatchResponse_HasPerItemEnvelope(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)

@@ -1,6 +1,6 @@
 # CR-19: Escape JSON in shell hooks domain/topic handling
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `hooks/postcompact_hook.sh:51-53`, `hooks/userpromptsubmit_hook.sh:75,77`,

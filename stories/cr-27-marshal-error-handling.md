@@ -1,6 +1,6 @@
 # CR-27: Discard json.MarshalIndent errors properly
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 All tools files — `json.MarshalIndent` errors silently discarded. If marshalling fails

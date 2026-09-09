@@ -33,7 +33,7 @@ func slug(input string) string {
 }
 
 func shortID() string {
-	buf := make([]byte, 4)
+	buf := make([]byte, 8)
 	rand.Read(buf)
 	return hex.EncodeToString(buf)
 }

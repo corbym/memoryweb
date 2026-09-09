@@ -179,6 +179,39 @@ func TestFindConflictCandidates_ReturnsEmptySliceNotNilWhenNothingQualifies(t *t
 	}
 }
 
+// TestFindConflictCandidates_Performance guards against the pair-distance scan
+// degrading back into one SQL query per node (CR-22): pairwise distances must
+// be computed in a single SQL statement, so a 200-node domain completes well
+// under half a second.
+func TestFindConflictCandidates_Performance(t *testing.T) {
+	s := newStore(t)
+	const n = 200
+	sharedVec := makeDenseVector(1234)
+	vecs := make(map[string][]float32, n)
+	for i := 0; i < n; i++ {
+		marker := fmt.Sprintf("conf-perf-%03d", i)
+		mustAddNode(t, s, marker+" marker", "conf-perf-domain")
+		vecs[marker] = sharedVec // identical embeddings → every pair is distance 0
+	}
+	withFakeEmbeddings(t, vecs)
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	start := time.Now()
+	candidates, err := s.FindConflictCandidates("conf-perf-domain", 10, nil, nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("FindConflictCandidates: %v", err)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("200-node conflicts scan took %s — candidates should be computed in a single SQL query, not one query per node", elapsed)
+	}
+	if len(candidates) > 10 {
+		t.Errorf("expected at most 10 candidates, got %d", len(candidates))
+	}
+}
+
 // TestFindDrift_ContradictsPair_ExcludedWhenResolvedByReverseDirection guards
 // against Rule 1's exclusion only checking one direction of the resolution
 // edge between the two contradicting nodes — "B supersedes A" (from=B, to=A)

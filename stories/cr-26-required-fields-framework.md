@@ -1,6 +1,6 @@
 # CR-26: Enforce required fields in decodeParams framework
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `tools/util.go:44-49` — `decodeParams` only checks for unknown fields. It never inspects

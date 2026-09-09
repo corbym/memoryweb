@@ -1,6 +1,6 @@
 # CR-24: Reduce redundant GetNode calls in revise
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `tools/revise.go:99,144,223,289` — Single revise does 2 extra `GetNode` round-trips

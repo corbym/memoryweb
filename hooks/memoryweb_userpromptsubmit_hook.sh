@@ -71,10 +71,18 @@ if [ "${capture}" = true ] && [ -n "${session_id}" ]; then
   # detected, so PostCompact and SubagentStart re-orient into the domain and
   # topic the session currently works in. Never persist an empty domain.
   if "${orient_found}" && [ -n "${domain_seen}" ]; then
+    # The values are raw JSON text off a transcript line (grepped, not parsed),
+    # so they may carry characters that are invalid unescaped in JSON — a quote
+    # truncates the grep match and leaves a trailing backslash. Escape before
+    # embedding so no later JSON consumer reads a corrupted ctx file.
+    memoryweb_json_escape "${domain_seen}"
+    escaped_domain="${_esc}"
     if [ -n "${topic_seen}" ]; then
-      printf '{"domain":"%s","topic":"%s"}\n' "${domain_seen}" "${topic_seen}" > "${ctx_file}"
+      memoryweb_json_escape "${topic_seen}"
+      escaped_topic="${_esc}"
+      printf '{"domain":"%s","topic":"%s"}\n' "${escaped_domain}" "${escaped_topic}" > "${ctx_file}"
     else
-      printf '{"domain":"%s"}\n' "${domain_seen}" > "${ctx_file}"
+      printf '{"domain":"%s"}\n' "${escaped_domain}" > "${ctx_file}"
     fi
   fi
 
@@ -86,10 +94,18 @@ fi
 # ── Auto-recall ───────────────────────────────────────────────────────────────
 if memoryweb_option_enabled "auto_recall" "false" \
    && command -v "${MEMORYWEB_BIN}" >/dev/null 2>&1; then
-  # Extract user message from payload (field: "message").
-  user_msg=$(printf '%s' "${json}" \
-    | grep -o '"message"[[:space:]]*:[[:space:]]*"[^"]*"' \
-    | head -1 | grep -o '"[^"]*"$' | tr -d '"' || true)
+  # Extract user message from payload (field: "message"). jq gives an exact
+  # JSON decode (a message may legally start with, or embed, escaped quotes).
+  # The jq-less fallback regex + sed handles embedded \" and \\ but cannot
+  # survive control-char escapes — a documented limitation, not silent data loss.
+  if command -v jq >/dev/null 2>&1; then
+    user_msg=$(printf '%s' "${json}" \
+      | jq -r '.message | if type == "string" then . else empty end' 2>/dev/null || true)
+  else
+    user_msg=$(printf '%s' "${json}" \
+      | grep -oE '"message"[[:space:]]*:[[:space:]]*"((\\.|[^"\\])*)"' | head -1 \
+      | sed -E 's/^"message"[[:space:]]*:[[:space:]]*"//; s/"$//; s/\\\\/\\/g; s/\\"/"/g' || true)
+  fi
   # Take first 8 words as search query.
   query=$(printf '%s' "${user_msg}" | tr -s ' \t' '\n' | head -8 | tr '\n' ' ' \
     | sed 's/[[:space:]]*$//' || true)

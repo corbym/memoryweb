@@ -1376,6 +1376,102 @@ func TestUserPromptSubmitHook_BothNudgeAndRecall(t *testing.T) {
 	}
 }
 
+func TestUserPromptSubmitHook_ContextFileEscapesDomainQuote(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "ups-ctx-domain-quote"
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+	// A quote in the domain is escaped in the transcript (\"). Naive grep
+	// extraction truncates the value at the escape, and the unescaped ctx-file
+	// write then produces invalid JSON; the ctx file must stay parseable.
+	makeMCPOrientTranscript(t, projectsDir, sessionID, `frob"bar`)
+
+	_, code := runUPSHook(t, sessionID, stateDir, projectsDir, "next task",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited non-zero: %d", code)
+	}
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	data, err := os.ReadFile(ctxFile)
+	if err != nil {
+		t.Fatalf("expected context file written: %v", err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("ctx file must be valid JSON when the domain contains a quote; got %s: %v", data, err)
+	}
+	if m["domain"] == "" {
+		t.Errorf("expected a domain value in ctx file; got: %s", data)
+	}
+}
+
+func TestUserPromptSubmitHook_ContextFileEscapesTopicQuote(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "ups-ctx-topic-quote"
+	writeConfig(t, home, map[string]interface{}{"session_orient_enabled": true})
+
+	appendTranscriptLines(t, projectsDir, sessionID,
+		orientAssistantLineTopic("toolu_topic_quote", "deep-game", `a"b`),
+	)
+
+	_, code := runUPSHook(t, sessionID, stateDir, projectsDir, "next task",
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited non-zero: %d", code)
+	}
+
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	data, err := os.ReadFile(ctxFile)
+	if err != nil {
+		t.Fatalf("expected context file written: %v", err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("ctx file must be valid JSON when the topic contains a quote; got %s: %v", data, err)
+	}
+	if m["domain"] == "" {
+		t.Errorf("expected a domain value in ctx file; got: %s", data)
+	}
+}
+
+func TestUserPromptSubmitHook_AutoRecallMessageLeadingQuote(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "recall_quote.db")
+
+	seedRealisticDB(t, dbPath)
+	writeConfig(t, home, map[string]interface{}{
+		"session_orient_enabled": true,
+		"auto_recall":            true,
+	})
+
+	// The message begins with a quote; the payload keeps it escaped as \" in
+	// the JSON. The naive regex truncates the message at that escape, so the
+	// auto-recall query degrades and no memories are injected.
+	out, code := runUPSHook(t, "ups-recall-quote", stateDir, projectsDir,
+		`"WebGL renderer architecture decision"`,
+		"HOME="+home,
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, "memoryweb relevant memories") {
+		t.Errorf("expected recall section despite leading quote in message; got:\n%s", out)
+	}
+}
+
 // ── SubagentStart hook tests ──────────────────────────────────────────────────
 
 func TestSubagentStartHook_NoMemoryweb(t *testing.T) {

@@ -1,6 +1,6 @@
 # CR-25: Fix FindPossibleDuplicates full table load
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Medium
 
 `db/nodes.go:682-706` — Loads ALL live non-archived nodes in the domain into memory,

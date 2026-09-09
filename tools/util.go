@@ -40,10 +40,37 @@ func strictDecode(raw json.RawMessage, dst any) error {
 }
 
 // decodeParams strict-decodes tool arguments and returns a validation error that
-// names unknown fields and points callers at tools/list.
-func decodeParams(raw json.RawMessage, dst any, toolName string) error {
+// names unknown fields and points callers at tools/list. Fields listed in
+// required are enforced before the handler runs: they must be present and, when
+// string-typed, non-empty.
+func decodeParams(raw json.RawMessage, dst any, toolName string, required ...string) error {
 	if err := strictDecode(raw, dst); err != nil {
 		return formatDecodeError(err, toolName)
+	}
+	for _, name := range required {
+		if err := requireParamField(raw, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// requireParamField reports whether the named field is present in raw and not
+// an empty string. Non-string values (booleans, numbers) count as present.
+func requireParamField(raw json.RawMessage, name string) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return err
+	}
+	v, ok := keys[name]
+	if !ok || string(v) == "null" {
+		return fmt.Errorf("%s is required", name)
+	}
+	var s string
+	if err := json.Unmarshal(v, &s); err == nil {
+		if strings.TrimSpace(s) == "" {
+			return fmt.Errorf("%s is required", name)
+		}
 	}
 	return nil
 }
@@ -135,6 +162,16 @@ func decodeBatchItems[T any](items json.RawMessage, toolName string) ([]T, error
 		}
 	}
 	return out, nil
+}
+
+// marshalResponseIndent marshals v as indented JSON for a tool response,
+// wrapping a descriptive error instead of silently discarding the failure.
+func marshalResponseIndent(v any) (string, error) {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal tool response: %w", err)
+	}
+	return string(b), nil
 }
 
 // trimWithTruncation caps items at limit and reports whether more existed.

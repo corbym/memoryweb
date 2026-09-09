@@ -60,8 +60,11 @@ func (hnd *Handler) domainsTool(args json.RawMessage) (*ToolResult, error) {
 			"nodes_renamed": result.NodesRenamed,
 			"alias_created": result.OldDomain + " → " + result.NewDomain,
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+		b, err := marshalResponseIndent(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 	default:
 		return errorResult(fmt.Sprintf("unknown domains action %q — use list, add_alias, remove_alias, resolve, or rename", params.Action)), nil
 	}
@@ -80,6 +83,9 @@ func (hnd *Handler) domainsList() (*ToolResult, error) {
 		"domains": domains,
 		"aliases": aliases,
 	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }

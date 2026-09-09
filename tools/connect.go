@@ -66,8 +66,11 @@ func (hnd *Handler) addEdgeSingle(args json.RawMessage) (*ToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.MarshalIndent(edge, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(edge)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 // detectLegacyEdgeKeys inspects raw JSON for retired connect parameter names
@@ -172,8 +175,11 @@ func (hnd *Handler) addEdgesBatch(items json.RawMessage) (*ToolResult, error) {
 	if len(rejections) > 0 {
 		resp["rejections"] = rejections
 	}
-	b, _ := json.MarshalIndent(resp, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 func (hnd *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
@@ -181,11 +187,8 @@ func (hnd *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 		ID    string `json:"id"`
 		Limit int    `json:"limit"`
 	}
-	if err := decodeParams(args, &params, "suggest_connections"); err != nil {
+	if err := decodeParams(args, &params, "suggest_connections", "id"); err != nil {
 		return nil, err
-	}
-	if params.ID == "" {
-		return nil, fmt.Errorf("id is required")
 	}
 	if params.Limit <= 0 {
 		params.Limit = 5
@@ -197,19 +200,19 @@ func (hnd *Handler) suggestEdges(args json.RawMessage) (*ToolResult, error) {
 	if suggestions == nil {
 		suggestions = []db.EdgeSuggestion{}
 	}
-	b, _ := json.MarshalIndent(suggestions, "", "  ")
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
+	b, err := marshalResponseIndent(suggestions)
+	if err != nil {
+		return nil, err
+	}
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
 }
 
 func (hnd *Handler) disconnect(args json.RawMessage) (*ToolResult, error) {
 	var params struct {
 		ID string `json:"id"`
 	}
-	if err := decodeParams(args, &params, "disconnect"); err != nil {
+	if err := decodeParams(args, &params, "disconnect", "id"); err != nil {
 		return nil, err
-	}
-	if params.ID == "" {
-		return nil, fmt.Errorf("id is required")
 	}
 	if err := hnd.store.DeleteEdge(params.ID); err != nil {
 		return errorResult(err.Error()), nil
@@ -224,7 +227,7 @@ func (hnd *Handler) disconnectAll(args json.RawMessage) (*ToolResult, error) {
 			EdgeID string `json:"edge_id"`
 		} `json:"items"`
 	}
-	if err := decodeParams(args, &params, "disconnect_all"); err != nil {
+	if err := decodeParams(args, &params, "disconnect_all", "items"); err != nil {
 		return nil, err
 	}
 	if len(params.Items) == 0 {
@@ -240,6 +243,9 @@ func (hnd *Handler) disconnectAll(args json.RawMessage) (*ToolResult, error) {
 	if err := hnd.store.DeleteEdgesBatch(ids); err != nil {
 		return errorResult(err.Error()), nil
 	}
-	b, _ := json.Marshal(map[string]any{"removed": len(ids)})
+	b, err := json.Marshal(map[string]any{"removed": len(ids)})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tool response: %w", err)
+	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(b)}}}, nil
 }
