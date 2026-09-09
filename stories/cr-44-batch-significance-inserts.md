@@ -1,6 +1,6 @@
 # CR-44: Batch significance_log inserts
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `db/significance.go:212-233` — `GetSignificance` writes one `INSERT` per node to
@@ -10,5 +10,5 @@
 
 ## Acceptance criteria
 
-- [ ] Use multi-row `INSERT INTO ... VALUES (...), (...), ...`
-- [ ] `TestGetSignificance*` tests pass
+- [x] Use multi-row `INSERT INTO ... VALUES (...), (...), ...` via `logSignificanceBatch`
+- [x] `TestGetSignificance*` tests pass

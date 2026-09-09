@@ -135,6 +135,7 @@ func TestBackup_RejectsUnsafeDestination(t *testing.T) {
 		filepath.Join(dir, "clean;drop.db"): "semicolon",
 		filepath.Join(dir, "quote'.db"):     "single quote",
 		filepath.Join(dir, "..", "up.db"):   "path traversal",
+		filepath.Join(dir, "x--drop.db"):    "SQL comment (--)",
 	} {
 		if err := db.Backup(srcPath, dest); err == nil {
 			t.Errorf("Backup(%q) should be rejected (%s), got nil", dest, reason)

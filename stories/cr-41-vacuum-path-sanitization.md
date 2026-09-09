@@ -1,6 +1,6 @@
 # CR-41: Add VACUUM INTO path sanitization
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `db/store.go:70` — When switching from bind parameter to string interpolation for
@@ -10,5 +10,5 @@
 
 ## Acceptance criteria
 
-- [ ] Validate path contains no `;`, `--`, or path traversal sequences
-- [ ] Quote the path in the SQL string
+- [x] Validate path contains no `;`, `--`, or path traversal sequences
+- [x] Quote the path in the SQL string

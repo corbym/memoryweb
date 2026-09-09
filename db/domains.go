@@ -271,23 +271,51 @@ func (st *Store) DomainExists(domain string) (bool, error) {
 }
 
 func (st *Store) ListDomains() ([]string, error) {
-	rows, err := st.db.Query(
-		`SELECT DISTINCT domain FROM nodes WHERE archived_at IS NULL ORDER BY domain ASC`,
-	)
+	domains, _, err := st.ListDomainsLimited(0)
+	return domains, err
+}
+
+// ListDomainsLimited returns up to limit distinct live domains, plus a
+// results_truncated flag when more exist. Pass limit=0 for unbounded.
+// Callers that need the truncation signal should pass a positive limit.
+func (st *Store) ListDomainsLimited(limit int) ([]string, bool, error) {
+	fetchLimit := -1
+	if limit > 0 {
+		fetchLimit = limit + 1
+	}
+	var rows *sql.Rows
+	var err error
+	if fetchLimit > 0 {
+		rows, err = st.db.Query(
+			`SELECT DISTINCT domain FROM nodes WHERE archived_at IS NULL ORDER BY domain ASC LIMIT ?`,
+			fetchLimit,
+		)
+	} else {
+		rows, err = st.db.Query(
+			`SELECT DISTINCT domain FROM nodes WHERE archived_at IS NULL ORDER BY domain ASC`,
+		)
+	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	var domains []string
 	for rows.Next() {
 		var domain string
-		if err := rows.Scan(&domain); err != nil {
-			return nil, err
+		if scanErr := rows.Scan(&domain); scanErr != nil {
+			return nil, false, scanErr
 		}
 		domains = append(domains, domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
 	}
 	if domains == nil {
 		domains = []string{}
 	}
-	return domains, nil
+	truncated := limit > 0 && len(domains) > limit
+	if truncated {
+		domains = domains[:limit]
+	}
+	return domains, truncated, nil
 }

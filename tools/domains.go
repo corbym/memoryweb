@@ -70,8 +70,10 @@ func (hnd *Handler) domainsTool(args json.RawMessage) (*ToolResult, error) {
 	}
 }
 
+const domainsListLimit = 200
+
 func (hnd *Handler) domainsList() (*ToolResult, error) {
-	domains, err := hnd.store.ListDomains()
+	domains, truncated, err := hnd.store.ListDomainsLimited(domainsListLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -80,8 +82,9 @@ func (hnd *Handler) domainsList() (*ToolResult, error) {
 		return nil, err
 	}
 	out := map[string]interface{}{
-		"domains": domains,
-		"aliases": aliases,
+		"domains":           domains,
+		"aliases":           aliases,
+		"results_truncated": truncated,
 	}
 	b, err := marshalResponseIndent(out)
 	if err != nil {

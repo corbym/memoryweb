@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"strings"
 
@@ -100,7 +101,11 @@ func (st *Store) listNodesByKind(domain string, nodeKinds []string, limit int, m
 		nodes = nodes[:limit]
 	}
 	results := wrapNodes(nodes)
-	return &SearchResult{Nodes: results, Edges: collectEdges(st.db, nodes), Truncated: truncated}, nil
+	edges, err := collectEdges(st, nodes)
+	if err != nil {
+		return nil, fmt.Errorf("collectEdges: %w", err)
+	}
+	return &SearchResult{Nodes: results, Edges: edges, Truncated: truncated}, nil
 }
 
 // SearchNodesExact performs a pure substring (LIKE) search, bypassing semantic
@@ -214,7 +219,11 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 	}
 
 	nodes := extractNodes(results)
-	return &SearchResult{Nodes: results, Edges: collectEdges(st.db, nodes), Truncated: truncated}, nil
+	edges, err := collectEdges(st, nodes)
+	if err != nil {
+		return nil, fmt.Errorf("collectEdges: %w", err)
+	}
+	return &SearchResult{Nodes: results, Edges: edges, Truncated: truncated}, nil
 }
 
 // searchNodesLike performs a full-phrase LIKE search with a multi-word fallback.
@@ -275,7 +284,11 @@ func (st *Store) searchNodesLike(query, domain string, limit int, allowedIDs, no
 	}
 
 	results := wrapNodes(nodes)
-	return &SearchResult{Nodes: results, Edges: collectEdges(st.db, nodes), Truncated: truncated}, nil
+	edges, err := collectEdges(st, nodes)
+	if err != nil {
+		return nil, fmt.Errorf("collectEdges: %w", err)
+	}
+	return &SearchResult{Nodes: results, Edges: edges, Truncated: truncated}, nil
 }
 
 // extractNodes extracts the embedded Node from each NodeResult.

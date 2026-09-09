@@ -3,7 +3,6 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -183,27 +182,22 @@ func (st *Store) DeleteEdgesBatch(ids []string) error {
 }
 
 // collectEdges returns edges whose both endpoints appear in nodes.
-func collectEdges(db *sql.DB, nodes []Node) []Edge {
+func collectEdges(st *Store, nodes []Node) ([]Edge, error) {
 	if len(nodes) <= 1 {
-		return nil
+		return nil, nil
 	}
 	nodeIDs := mapSlice(nodes, func(n Node) string { return n.ID })
 	ph, ids := inClause(nodeIDs)
 	edgeQ := "SELECT " + edgeSelectColumns + " FROM edges WHERE from_node IN (" +
 		ph + ") AND to_node IN (" + ph + ")"
-	eRows, err := db.Query(edgeQ, append(ids, ids...)...)
+	eRows, err := st.db.Query(edgeQ, append(ids, ids...)...)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer eRows.Close()
-	var edges []Edge
-	for eRows.Next() {
-		e, err := scanEdge(eRows)
-		if err != nil {
-			log.Printf("[memoryweb] collectEdges scan: %v", err)
-			continue
-		}
-		edges = append(edges, e)
+	edges, err := scanRows(eRows, func(r *sql.Rows) (Edge, error) { return scanEdge(r) })
+	if err != nil {
+		return nil, err
 	}
-	return edges
+	return edges, nil
 }

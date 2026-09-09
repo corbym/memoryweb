@@ -81,16 +81,23 @@ func (st *Store) LifecycleStates(nodeIDs []string) (map[string]LifecycleState, e
 		return nil, err
 	}
 
-	hasResolutionBetween := func(a, b string) bool {
-		for _, edge := range edges {
-			if !resolutionRelationships[edge.rel] {
-				continue
+	resolvedPairs := make(map[string]bool, len(edges))
+	for _, edge := range edges {
+		if resolutionRelationships[edge.rel] {
+			var a, b string
+			if edge.from < edge.to {
+				a, b = edge.from, edge.to
+			} else {
+				a, b = edge.to, edge.from
 			}
-			if (edge.from == a && edge.to == b) || (edge.from == b && edge.to == a) {
-				return true
-			}
+			resolvedPairs[a+"\x00"+b] = true
 		}
-		return false
+	}
+	hasResolutionBetween := func(a, b string) bool {
+		if a > b {
+			a, b = b, a
+		}
+		return resolvedPairs[a+"\x00"+b]
 	}
 
 	contested := make(map[string]bool)

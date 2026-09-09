@@ -546,46 +546,58 @@ func (st *Store) suggestEdgesSemanticEnriched(id, label, domain, description, wh
 	}
 	// Enrich each result's reason with keyword overlap information.
 	keywords := suggestKeywords(label, tags)
-	for i := range results {
-		var matchedTags, matchedLabels []string
-		cLabelLower := strings.ToLower(results[i].Label)
-		seen := map[string]bool{}
-		for _, kw := range keywords {
-			if seen[kw] {
-				continue
-			}
-			if strings.Contains(cLabelLower, kw) {
-				matchedLabels = append(matchedLabels, kw)
-				seen[kw] = true
-			}
-		}
-		// Fetch candidate tags from DB for tag overlap check.
-		var cTags string
-		st.db.QueryRow(`SELECT tags FROM nodes WHERE id = ?`, results[i].ID).Scan(&cTags)
-		cTagsLower := strings.ToLower(cTags)
-		for _, kw := range keywords {
-			if seen[kw] {
-				continue
-			}
-			if strings.Contains(cTagsLower, kw) {
-				matchedTags = append(matchedTags, kw)
-				seen[kw] = true
+
+	// Fetch tags for all candidates in a single query (replaces N+1 per-candidate SELECTs).
+	candidateIDs := mapSlice(results, func(r EdgeSuggestion) string { return r.ID })
+	ph, phArgs := inClause(candidateIDs)
+	tagRows, err := st.db.Query(`SELECT id, tags FROM nodes WHERE id IN (`+ph+`)`, phArgs...)
+	if err == nil {
+		tagsByID := make(map[string]string, len(results))
+		for tagRows.Next() {
+			var nodeID, nodeTags string
+			if scanErr := tagRows.Scan(&nodeID, &nodeTags); scanErr == nil {
+				tagsByID[nodeID] = nodeTags
 			}
 		}
-		if len(matchedTags) > 0 || len(matchedLabels) > 0 {
-			var parts []string
-			if strings.Contains(results[i].Reason, "cross-domain") {
-				parts = append(parts, "semantically similar (cross-domain)")
-			} else {
-				parts = append(parts, "semantically similar")
+		tagRows.Close()
+		for i := range results {
+			var matchedTags, matchedLabels []string
+			cLabelLower := strings.ToLower(results[i].Label)
+			seen := map[string]bool{}
+			for _, kw := range keywords {
+				if seen[kw] {
+					continue
+				}
+				if strings.Contains(cLabelLower, kw) {
+					matchedLabels = append(matchedLabels, kw)
+					seen[kw] = true
+				}
 			}
-			if len(matchedTags) > 0 {
-				parts = append(parts, "shares tags: "+strings.Join(matchedTags, " "))
+			cTagsLower := strings.ToLower(tagsByID[results[i].ID])
+			for _, kw := range keywords {
+				if seen[kw] {
+					continue
+				}
+				if strings.Contains(cTagsLower, kw) {
+					matchedTags = append(matchedTags, kw)
+					seen[kw] = true
+				}
 			}
-			if len(matchedLabels) > 0 {
-				parts = append(parts, "similar label words: "+strings.Join(matchedLabels, " "))
+			if len(matchedTags) > 0 || len(matchedLabels) > 0 {
+				var parts []string
+				if strings.Contains(results[i].Reason, "cross-domain") {
+					parts = append(parts, "semantically similar (cross-domain)")
+				} else {
+					parts = append(parts, "semantically similar")
+				}
+				if len(matchedTags) > 0 {
+					parts = append(parts, "shares tags: "+strings.Join(matchedTags, " "))
+				}
+				if len(matchedLabels) > 0 {
+					parts = append(parts, "similar label words: "+strings.Join(matchedLabels, " "))
+				}
+				results[i].Reason = strings.Join(parts, "; ")
 			}
-			results[i].Reason = strings.Join(parts, "; ")
 		}
 	}
 	return results, true, nil

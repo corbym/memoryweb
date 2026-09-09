@@ -2,6 +2,7 @@ package tools_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,31 @@ func TestListDomains_EmptyDB(t *testing.T) {
 	json.Unmarshal([]byte(text(t, tr)), &resp)
 	if len(resp.Domains) != 0 {
 		t.Errorf("expected empty list, got %v", resp.Domains)
+	}
+}
+
+func TestDomainsList_TruncationSignal(t *testing.T) {
+	_, h := newEnv(t)
+	// Create more domains than the internal limit (200) by using the internal
+	// constant via a wrapper: add 201 distinct domains and verify results_truncated.
+	for i := 0; i < 201; i++ {
+		addNode(t, h, fmt.Sprintf("node-%d", i), fmt.Sprintf("domain-%03d", i), nil)
+	}
+	tr := call(t, h, "domains", map[string]any{})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Domains          []string `json:"domains"`
+		ResultsTruncated bool     `json:"results_truncated"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse domains response: %v", err)
+	}
+	if !resp.ResultsTruncated {
+		t.Errorf("expected results_truncated=true with 201 domains, got false")
+	}
+	if len(resp.Domains) > 200 {
+		t.Errorf("expected at most 200 domains in truncated response, got %d", len(resp.Domains))
 	}
 }
 

@@ -87,7 +87,7 @@ func (hnd *Handler) ListTools() (interface{}, error) {
 					"memory_id":       {Type: "string", Description: "Optional — scope to the neighbourhood of this memory (depth 2 by default, domain-clipped). Takes precedence over domain if both are supplied."},
 					"depth":           {Type: "integer", Description: "Neighbourhood depth when using memory_id (default 2)."},
 					"order":           {Type: "string", Description: "Sort order. effective (default): by COALESCE(occurred_at, created_at). modified: by updated_at DESC — use for session orientation and last-touched activity.", Enum: []string{"effective", "modified"}},
-					"group_by_domain": {Type: "boolean", Description: "When true and order=modified with no domain, group results by domain (up to limit entries per domain). Ignored when memory_id is set."},
+					"group_by_domain": {Type: "boolean", Description: "When true and order=modified with no domain, group results by domain (up to limit entries per domain). Ignored when memory_id is set. Cannot be combined with node_kind — returns an error if both are set."},
 					"important_only":  {Type: "boolean", Description: "effective order only. When true, return only memories with occurred_at explicitly set."},
 					"tags":            {Type: "string", Description: "Optional comma-separated list of tags to filter by. Only memories matching at least one tag are returned."},
 					"node_kind":       {Type: "string", Description: "Optional filter by node_kind. Space-separated for OR match."},

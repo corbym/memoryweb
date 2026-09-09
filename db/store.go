@@ -45,7 +45,9 @@ func New(path string) (*Store, error) {
 	if err := store.migrate(); err != nil {
 		return nil, err
 	}
-	os.Chmod(path, 0600) //nolint:errcheck
+	if err := os.Chmod(path, 0600); err != nil {
+		log.Printf("[memoryweb] chmod %s: %v", path, err)
+	}
 	store.checkVecAvailable()
 	return store, nil
 }
@@ -63,8 +65,8 @@ func (st *Store) Close() error {
 // validateBackupDest rejects destination paths that would inject SQL into
 // the VACUUM INTO statement or escape the source database's directory.
 func validateBackupDest(srcPath, destPath string) error {
-	if strings.ContainsAny(destPath, ";'") {
-		return fmt.Errorf("backup destination path must not contain ; or '")
+	if strings.ContainsAny(destPath, ";'") || strings.Contains(destPath, "--") {
+		return fmt.Errorf("backup destination path must not contain ;, ', or --")
 	}
 	srcDir := filepath.Dir(filepath.Clean(srcPath))
 	destDir := filepath.Dir(filepath.Clean(destPath))

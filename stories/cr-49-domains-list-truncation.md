@@ -1,6 +1,6 @@
 # CR-49: Add domainsList truncation signal
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `tools/domains.go:70-84` — `domainsList` returns unbounded results. No truncation
@@ -10,6 +10,6 @@ mechanism for workspaces with hundreds of domains.
 
 ## Acceptance criteria
 
-- [ ] Fetch `limit+1` domains
-- [ ] Return `results_truncated` boolean in response
-- [ ] Existing `TestDomains*` tests pass
+- [x] `ListDomainsLimited(limit)` fetches `limit+1` domains from DB
+- [x] Return `results_truncated` boolean in `domainsList` response (default limit 200)
+- [x] Existing `TestDomains*` tests pass; `TestDomainsList_TruncationSignal` added

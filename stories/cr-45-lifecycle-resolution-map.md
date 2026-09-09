@@ -1,6 +1,6 @@
 # CR-45: Use index map for lifecycle resolution check
 
-**Status:** READY
+**Status:** DONE
 **Priority:** Low
 
 `db/lifecycle.go:84-94` — `hasResolutionBetween` is O(E) per call, called once per
@@ -10,6 +10,6 @@ contradicts edge. Total O(C × E). An index map `pair → bool` would make it O(
 
 ## Acceptance criteria
 
-- [ ] Build `resolvedPairs` map once before the loop
-- [ ] `hasResolutionBetween` looks up in the map
-- [ ] `TestLifecycle*` tests pass
+- [x] Build `resolvedPairs` map once before the loop
+- [x] `hasResolutionBetween` looks up in the map
+- [x] `TestLifecycle*` tests pass

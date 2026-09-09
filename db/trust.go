@@ -259,11 +259,13 @@ func (st *Store) finishTrust(accum map[string]*trustAccum, order []string, domai
 
 	callID := shortID()
 	calledAt := time.Now().UTC()
-	for _, n := range nodes {
-		score := n.TrustScore
-		if err := st.logSignificance(callID, calledAt, domain, limit, n.ID, n.Label, "trust", &score); err != nil {
-			return TrustResult{}, fmt.Errorf("log trust: %w", err)
-		}
+	logEntries := make([]significanceLogEntry, len(nodes))
+	for i, n := range nodes {
+		s := n.TrustScore
+		logEntries[i] = significanceLogEntry{n.ID, n.Label, "trust", &s}
+	}
+	if err := st.logSignificanceBatch(callID, calledAt, domain, limit, logEntries); err != nil {
+		return TrustResult{}, fmt.Errorf("log trust: %w", err)
 	}
 
 	return TrustResult{Nodes: nodes, CallID: callID}, nil
