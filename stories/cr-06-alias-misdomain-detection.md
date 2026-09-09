@@ -1,6 +1,6 @@
 # CR-06: Fix alias misdomain detection in remember_extras
 
-**Status:** READY
+**Status:** DONE — no code change needed; finding was stale. `Store.DomainExists` has resolved aliases internally since it was introduced (`db/domains.go:248-249`, commit `d0eecf8`, v1.41.0), so `snapshotDomainExistence` calling `DomainExists(domain)` already checks the canonical domain. Storage also canonicalizes: `AddNodesBatch`/`AddNode` resolve aliases on write, and `FindMisdomainCandidate` resolves the requested domain and skips same-domain candidates — so alias writes can never false-positive the misdomain warning regardless of the existence snapshot. New regression test `TestRemember_Batch_AliasDomain_NoFalseMisdomain` passes on current code.
 **Priority:** High
 
 `tools/remember_extras.go:48` — `DomainExists(domain)` called with the original unresolved

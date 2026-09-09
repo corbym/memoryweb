@@ -384,7 +384,10 @@ func backfillCmd() {
 // update in place. format: "  [=========>          ] 45/100 (45%)"
 func drawProgressBar(out io.Writer, done, total int) {
 	const width = 30
-	pct := float64(done) / float64(total)
+	pct := 0.0
+	if total > 0 {
+		pct = float64(done) / float64(total)
+	}
 	filled := int(pct * float64(width))
 	var bar string
 	if filled >= width {
@@ -712,20 +715,23 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 
 	// ── Ollama ────────────────────────────────────────────────────────────────
 
-	setupOllama(out, reader, dryRun)
+	if err := setupOllama(out, reader, dryRun); err != nil {
+		return err
+	}
 	return nil
 }
 
 // setupOllama checks whether Ollama is installed and whether the configured
 // embedding model is pulled, prompting the user to install/pull as needed.
-// In dry-run mode it reports what would happen without prompting.
-func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) {
+// In dry-run mode it reports what would happen without prompting. Returns an
+// error when the server could not be started.
+func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) error {
 	_, err := exec.LookPath("ollama")
 	if err != nil {
 		// Ollama not installed.
 		if dryRun {
 			fmt.Fprintln(out, "[dry-run] Ollama not found — would prompt to install via https://ollama.com/install.sh")
-			return
+			return nil
 		}
 		fmt.Fprint(out, "Semantic search requires Ollama. Install it? [y/N] ")
 		if setupReadYN(in) {
@@ -738,11 +744,14 @@ func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) {
 		} else {
 			fmt.Fprintln(out, "Advisory: Install Ollama from https://ollama.com/download to enable semantic search.")
 		}
-		return
+		return nil
 	}
 
 	// Ollama is installed; ensure the server is running.
-	setupStartOllama(out, dryRun)
+	if err := setupStartOllama(out, dryRun); err != nil {
+		fmt.Fprintf(out, "error: %v\n", err)
+		return err
+	}
 
 	// Check if the model is pulled.
 	model := db.EmbeddingModel()
@@ -751,7 +760,7 @@ func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) {
 	if err != nil || !strings.Contains(string(listOut), model) {
 		if dryRun {
 			fmt.Fprintf(out, "[dry-run] %s not found — would pull automatically\n", model)
-			return
+			return nil
 		}
 		fmt.Fprintf(out, "Pulling %s model for semantic search...\n", model)
 		cmd := exec.Command("ollama", "pull", model)
@@ -760,26 +769,28 @@ func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) {
 		if err := cmd.Run(); err != nil {
 			fmt.Fprintf(out, "Pull failed: %v\n", err)
 		}
-		return
+		return nil
 	}
 
 	fmt.Fprintf(out, "Ollama: %s is ready.\n", model)
+	return nil
 }
 
 // setupStartOllama ensures the Ollama server is running. It checks whether
 // localhost:11434 is already accepting connections; if not, it starts
 // "ollama serve" as a detached background process and polls until ready.
-func setupStartOllama(out io.Writer, dryRun bool) {
+// Returns a non-nil error if the server never becomes ready.
+func setupStartOllama(out io.Writer, dryRun bool) error {
 	conn, err := net.DialTimeout("tcp", "localhost:11434", time.Second)
 	if err == nil {
 		conn.Close()
 		fmt.Fprintln(out, "Ollama: server already running.")
-		return
+		return nil
 	}
 
 	if dryRun {
 		fmt.Fprintln(out, "[dry-run] Ollama server not running — would start via 'ollama serve'")
-		return
+		return nil
 	}
 
 	fmt.Fprint(out, "Starting Ollama server... ")
@@ -788,21 +799,31 @@ func setupStartOllama(out io.Writer, dryRun bool) {
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(out, "failed: %v\n", err)
-		return
+		return err
 	}
 
 	// Poll until the HTTP API responds, up to 30 seconds.
 	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(30 * time.Second)
+	if waitForOllamaReady(client, "http://localhost:11434/api/tags", time.Now().Add(30*time.Second)) {
+		fmt.Fprintln(out, "started.")
+		return nil
+	}
+	fmt.Fprintf(out, "failed: Ollama server did not become ready within 30s; check 'ollama serve'.\n")
+	return fmt.Errorf("Ollama server did not become ready within 30s")
+}
+
+// waitForOllamaReady polls url until it returns any HTTP response or deadline
+// passes. Returns true only when the endpoint answered.
+func waitForOllamaReady(client *http.Client, url string, deadline time.Time) bool {
 	for time.Now().Before(deadline) {
-		resp, err := client.Get("http://localhost:11434/api/tags")
+		resp, err := client.Get(url)
 		if err == nil {
 			resp.Body.Close()
-			break
+			return true
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	fmt.Fprintln(out, "started.")
+	return false
 }
 
 // setupReadYN reads one line from in and returns true if the answer is "y".

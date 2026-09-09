@@ -646,6 +646,38 @@ func TestVisualiseLabelSanitisation(t *testing.T) {
 	}
 }
 
+// CR-07: labels containing [ or ] must be escaped so they don't break Mermaid
+// node-square syntax ("Task [v2] done" must render as text, not open a nested
+// shape). The nodes array keeps the raw label.
+func TestVisualise_MermaidLabelBrackets(t *testing.T) {
+	_, h := newEnv(t)
+	domain := "test-vis-brackets"
+	label := "Task [v2] done"
+	addNode(t, h, label, domain, nil)
+
+	tr := call(t, h, "visualise", map[string]any{"domain": domain})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Mermaid string `json:"mermaid"`
+		Nodes   []struct {
+			Label string `json:"label"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if !strings.Contains(resp.Mermaid, `Task \[v2\] done`) {
+		t.Errorf("Mermaid label must escape [ and ]; got mermaid:\n%s", resp.Mermaid)
+	}
+	if strings.Contains(resp.Mermaid, `["Task [v2] done"]`) {
+		t.Errorf("raw brackets must not appear unescaped inside a Mermaid node label; got:\n%s", resp.Mermaid)
+	}
+	if len(resp.Nodes) != 1 || resp.Nodes[0].Label != label {
+		t.Errorf("nodes array must carry the raw label %q; got: %+v", label, resp.Nodes)
+	}
+}
+
 // ── visualise neighbourhood tests ─────────────────────────────────────────────
 
 func TestVisualiseNeighbourhood_MultipleConnections(t *testing.T) {

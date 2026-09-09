@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/corbym/memoryweb/db"
 )
@@ -130,6 +134,51 @@ func TestDrawProgressBar_First(t *testing.T) {
 	// Should contain the '>' cursor marker
 	if !strings.Contains(got, ">") {
 		t.Errorf("in-progress bar should contain '>'; got %q", got)
+	}
+}
+
+// CR-14: drawProgressBar with total=0 must not divide by zero (NaN %).
+func TestDrawProgressBar_ZeroTotal(t *testing.T) {
+	var buf bytes.Buffer
+	drawProgressBar(&buf, 0, 0)
+	got := buf.String()
+
+	if strings.Contains(got, "NaN") {
+		t.Errorf("zero-total bar must not emit NaN; got %q", got)
+	}
+	if !strings.Contains(got, "0/0") {
+		t.Errorf("zero-total bar should show '0/0'; got %q", got)
+	}
+	if !strings.Contains(got, "0%") {
+		t.Errorf("zero-total bar should show 0%%; got %q", got)
+	}
+}
+
+// CR-13: waitForOllamaReady must report ready when the endpoint answers.
+func TestWaitForOllamaReady_Reachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "ok")
+	}))
+	defer srv.Close()
+
+	if !waitForOllamaReady(srv.Client(), srv.URL, time.Now().Add(5*time.Second)) {
+		t.Error("expected ready=true for a reachable endpoint")
+	}
+}
+
+// CR-13: waitForOllamaReady must report not-ready without hanging when the
+// endpoint never answers and the deadline has already passed.
+func TestWaitForOllamaReady_UnreachableExpiredDeadline(t *testing.T) {
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	deadline := time.Now().Add(-time.Second)
+
+	start := time.Now()
+	ready := waitForOllamaReady(client, "http://127.0.0.1:1/api/tags", deadline)
+	if ready {
+		t.Error("expected ready=false for an unreachable endpoint")
+	}
+	if since := time.Since(start); since > 3*time.Second {
+		t.Errorf("expired deadline must return immediately; took %v", since)
 	}
 }
 

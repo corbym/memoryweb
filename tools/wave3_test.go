@@ -575,3 +575,47 @@ func TestAudit_KindCoverageTruncation(t *testing.T) {
 		t.Errorf("expected results_truncated with limit=1 and multiple candidates; got:\n%s", text(t, tr))
 	}
 }
+
+// CR-06 regression: writing to an alias of an existing domain must not raise a
+// false possible_misdomain warning. Store.DomainExists resolves aliases internally
+// (db/domains.go) and snapshotDomainExistence keys the snapshot by the resolved
+// canonical name, so alias-targeted writes are treated as an existing domain.
+func TestRemember_Batch_AliasDomain_NoFalseMisdomain(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	addNode(t, h, "anchor engine node", "deep-engine", nil)
+	mustNotError(t, call(t, h, "domains", map[string]any{
+		"action": "add_alias", "alias": "engine", "domain": "deep-engine",
+	}))
+
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{"label": "written via engine alias", "domain": "engine", "why_matters": "cr-06 alias regression"},
+		},
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		Nodes []struct {
+			Node *struct {
+				Domain string `json:"domain"`
+			} `json:"node"`
+			PossibleMisdomain bool   `json:"possible_misdomain"`
+			SuggestedDomain   string `json:"suggested_domain"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text(t, tr))
+	}
+	if len(resp.Nodes) != 1 {
+		t.Fatalf("expected 1 batch node; got %d", len(resp.Nodes))
+	}
+	if resp.Nodes[0].Node == nil {
+		t.Fatalf("expected node in batch response:\n%s", text(t, tr))
+	}
+	if resp.Nodes[0].Node.Domain != "deep-engine" {
+		t.Errorf("node stored under domain %q, want canonical %q", resp.Nodes[0].Node.Domain, "deep-engine")
+	}
+	if resp.Nodes[0].PossibleMisdomain {
+		t.Errorf("false misdomain warning when writing to an alias of an existing domain:\n%s", text(t, tr))
+	}
+}

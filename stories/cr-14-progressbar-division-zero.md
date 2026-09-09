@@ -1,6 +1,6 @@
 # CR-14: Fix drawProgressBar division by zero
 
-**Status:** READY
+**Status:** DONE — implemented this session. `drawProgressBar` guards `total > 0` before dividing; `total == 0` renders `[>   ...] 0/0 (0%)` with zero percentage (no NaN). New `TestDrawProgressBar_ZeroTotal` (fails on old NaN output, passes now); `TestDrawProgressBar_Format/Complete/First` unchanged and passing.
 **Priority:** High
 
 `main.go:387` — `drawProgressBar` computes `float64(done) / float64(total)` with no

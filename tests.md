@@ -5,7 +5,7 @@ version 1.0 — first baseline
 
 Before running any test:
 
-1. Confirm memoryweb is connected in Claude Desktop (check the tools sidebar shows `add_node`, `search_nodes` etc.)
+1. Confirm memoryweb is connected in Claude Desktop (check the tools sidebar shows `remember`, `search` etc.)
 2. Open a **fresh session window** with no prior context in that window
 3. Do NOT prime the session with any project context — let the tools do the work
 4. Record the full response for each test, not just a summary
@@ -27,7 +27,7 @@ For this session, please only answer questions about the Deep game project using
 Without me telling you anything about the Deep game project, what is currently blocking the demo from booting, and what is the agreed fix?
 ```
 
-**Pass:** Names the RST $10 crash, names direct ULA memory writes as the fix, explains why the fix works (bypasses ROM, keeps interrupts under control). Tool call to `search_nodes` or `get_node` should be visible.
+**Pass:** Names the RST $10 crash, names direct ULA memory writes as the fix, explains why the fix works (bypasses ROM, keeps interrupts under control). Tool call to `search` or `recall` should be visible.
 
 **Fail:** Vague answer, wrong answer, asks you to explain the situation first, or answers purely from userMemories summary without a tool call.
 
@@ -63,20 +63,20 @@ It took three iterations to get the tool description right, and record the three
 
 ## Test C — Cold session orientation
 
-**What it tests:** Does Claude proactively use `recent_changes` to orient at session start, without being asked?
+**What it tests:** Does Claude proactively use `history(order=modified)` to orient at session start, without being asked?
 
 **Prompt:**
 ```
 I'm starting a new Deep game session. What are we currently working on?
 ```
 
-**Pass:** Claude calls `recent_changes` with domain `deep-game` unprompted before answering. Response reflects the actual filed nodes, not just the userMemories summary.
+**Pass:** Claude calls `history` with `order=modified` and domain `deep-game` unprompted before answering. Response reflects the actual filed nodes, not just the userMemories summary.
 
-**Fail:** Answers purely from userMemories without a tool call. Or calls `search_nodes` with a guess rather than `recent_changes` for orientation.
+**Fail:** Answers purely from userMemories without a tool call. Or calls `search` with a guess rather than `history(order=modified)` for orientation.
 
 **Bonus pass:** Claude identifies the RST $10 crash as the current critical path blocker by walking the blocked_by edge from straitjacket tutorial.
 
-**Source of truth:** `recent_changes` tool, domain `deep-game`.
+**Source of truth:** `history` tool with `order=modified`, domain `deep-game`.
 
 **Result:** [X] Pass  [ ] Fail  [ ] Partial
 

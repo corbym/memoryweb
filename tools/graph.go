@@ -62,7 +62,7 @@ func (hnd *Handler) tracePath(args json.RawMessage) (*ToolResult, error) {
 }
 
 // sanitiseMermaidLabel truncates to 40 runes and escapes characters that break
-// Mermaid node label syntax (double-quotes, newlines).
+// Mermaid node label syntax (double-quotes, newlines, square brackets).
 func sanitiseMermaidLabel(s string) string {
 	runes := []rune(s)
 	if len(runes) > 40 {
@@ -71,6 +71,8 @@ func sanitiseMermaidLabel(s string) string {
 		s = string(runes)
 	}
 	s = strings.ReplaceAll(s, "\"", "#quot;")
+	s = strings.ReplaceAll(s, "[", "\\[")
+	s = strings.ReplaceAll(s, "]", "\\]")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return s
 }
