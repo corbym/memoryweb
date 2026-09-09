@@ -9,7 +9,7 @@
 class Memoryweb < Formula
   desc "Persistent knowledge graph MCP server for AI agents"
   homepage "https://github.com/corbym/memoryweb"
-  version "1.54.9"
+  version "1.54.10"
   license "MIT"
 
   on_macos do
