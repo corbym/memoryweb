@@ -161,8 +161,8 @@ type Node struct {
 }
 ```
 
-Node IDs are `slug(label) + "-" + shortID()` where `shortID()` is 4 random
-bytes as lowercase hex (8 chars).
+Node IDs are `slug(label) + "-" + shortID()` where `shortID()` is 8 random
+bytes as lowercase hex (16 chars).
 
 ---
 
@@ -327,7 +327,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.54.10)
+## What's implemented (v1.54.11)
 
 All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
