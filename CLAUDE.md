@@ -327,7 +327,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.54.15)
+## What's implemented (v1.54.16)
 
 All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 

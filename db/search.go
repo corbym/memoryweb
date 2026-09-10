@@ -50,7 +50,7 @@ func (st *Store) SearchNodes(query, domain string, limit int, memoryID string, n
 		}
 	}
 
-	return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
+	return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds, true)
 }
 
 // listNodesByKind returns live nodes filtered by node_kind, ordered by updated_at DESC.
@@ -129,7 +129,7 @@ func (st *Store) SearchNodesExact(query, domain string, limit int, memoryID stri
 		allowedIDs = ids
 	}
 
-	return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
+	return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds, false)
 }
 
 // semanticDistanceThreshold is the maximum cosine distance for a node to be
@@ -210,7 +210,7 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 
 	if len(results) == 0 {
 		// No embeddings within threshold (or all filtered out); fall back to literal search.
-		return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds)
+		return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds, true)
 	}
 
 	truncated := len(results) > limit
@@ -226,9 +226,11 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 	return &SearchResult{Nodes: results, Edges: edges, Truncated: truncated}, nil
 }
 
-// searchNodesLike performs a full-phrase LIKE search with a multi-word fallback.
+// searchNodesLike performs a full-phrase LIKE search. When wordFallback is true
+// and the full-phrase LIKE returns no results, it retries with individual words
+// OR'd together. Pass wordFallback=false (the exact path) to skip the fallback.
 // When allowedIDs is non-empty, results are restricted to nodes in that set.
-func (st *Store) searchNodesLike(query, domain string, limit int, allowedIDs, nodeKinds []string) (*SearchResult, error) {
+func (st *Store) searchNodesLike(query, domain string, limit int, allowedIDs, nodeKinds []string, wordFallback bool) (*SearchResult, error) {
 	pattern := "%" + escapeLike(query) + "%"
 	fetch := limit + 1
 
@@ -270,7 +272,9 @@ func (st *Store) searchNodesLike(query, domain string, limit int, allowedIDs, no
 	// whose fields collectively cover the query words are still surfaced.
 	// Neighbourhood scoping is not applied to the word fallback — it already
 	// returned nothing within the neighbourhood.
-	if len(nodes) == 0 && !truncated && len(allowedIDs) == 0 {
+	// The fallback is disabled for the exact path (wordFallback=false) because
+	// OR semantics would return false positives for identifier lookups.
+	if wordFallback && len(nodes) == 0 && !truncated && len(allowedIDs) == 0 {
 		words := strings.Fields(query)
 		if len(words) > 1 {
 			log.Printf("[memoryweb] search: no results for %q (domain=%q), falling back to individual-word search", query, domain)

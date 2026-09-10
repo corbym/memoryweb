@@ -339,6 +339,51 @@ func TestSearchNodes_NodeKindFilter_FillsLimitBeforeTruncating(t *testing.T) {
 	}
 }
 
+// TestSearchNodesExact_UnderscoreNotWildcard: an underscore in the query must
+// be treated as a literal character, not a SQL LIKE wildcard.
+func TestSearchNodesExact_UnderscoreNotWildcard(t *testing.T) {
+	s := newStore(t)
+	dashNode := mustAddNode(t, s, "STORY-070 title", "proj")
+	underscoreNode := mustAddNode(t, s, "STORY_070 title", "proj")
+
+	res, err := s.SearchNodesExact("STORY_070", "proj", 10, "", nil)
+	if err != nil {
+		t.Fatalf("SearchNodesExact: %v", err)
+	}
+	for _, nr := range res.Nodes {
+		if nr.ID == dashNode.ID {
+			t.Error("dash node matched — underscore in query was treated as wildcard")
+		}
+	}
+	found := false
+	for _, nr := range res.Nodes {
+		if nr.ID == underscoreNode.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("underscore node was not found by exact search")
+	}
+}
+
+// TestSearchNodesExact_NoMultiWordFallback: exact search must not fall back to
+// an OR of individual words — that would return false positives for multi-word
+// queries where no node contains the full phrase.
+func TestSearchNodesExact_NoMultiWordFallback(t *testing.T) {
+	s := newStore(t)
+	wrongNode := mustAddNode(t, s, "some feature request", "proj")
+
+	res, err := s.SearchNodesExact("PROJ_123 feature", "proj", 10, "", nil)
+	if err != nil {
+		t.Fatalf("SearchNodesExact: %v", err)
+	}
+	for _, nr := range res.Nodes {
+		if nr.ID == wrongNode.ID {
+			t.Error("word-fallback false positive: returned node that only contains one query word")
+		}
+	}
+}
+
 func TestSearchNodes_MultiWordFallback_RespectsNodeKind(t *testing.T) {
 	s := newStore(t)
 	decision, err := s.AddNode(
