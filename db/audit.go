@@ -210,6 +210,11 @@ func (st *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, m
 	// shared recordari skill document — accepted here alongside memoryweb's
 	// own resolved_by/supersedes so the same skill guidance works on both
 	// products.
+	// Timestamp guard: the resolution edge only suppresses the pair when it was
+	// created at or after the last update to both nodes (r.created_at >= a/b.updated_at).
+	// If either node is revised after the resolution, the anti-join returns no rows,
+	// re-surfacing the pair for re-review. Accepted false-positive: any revise() call
+	// (including tag-only) bumps updated_at and lifts suppression.
 	rows, err := st.db.Query(`
 		SELECT a.id, a.label, a.description, a.why_matters, a.domain,
 		       a.created_at, a.updated_at, a.occurred_at, a.archived_at, a.tags, a.node_kind,
@@ -226,6 +231,8 @@ func (st *Store) FindDrift(domain string, limit int, tags, nodeKinds []string, m
 		             (r.from_node = a.id AND r.to_node = b.id) OR
 		             (r.from_node = b.id AND r.to_node = a.id)
 		         )
+		         AND r.created_at >= a.updated_at
+		         AND r.created_at >= b.updated_at
 		  )`)
 	if err != nil {
 		return nil, err

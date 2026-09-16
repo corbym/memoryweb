@@ -1298,6 +1298,213 @@ func TestFindDrift_ConnectedStale(t *testing.T) {
 	}
 }
 
+// TestFindDrift_ResolvedPair_NotSurfaced: a contradicts pair whose resolution
+// edge was created after both nodes' last update must remain suppressed.
+func TestFindDrift_ResolvedPair_NotSurfaced(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	nA := mustAddNode(t, s, "approach X", "rp-suppressed")
+	nB := mustAddNode(t, s, "approach Y", "rp-suppressed")
+
+	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", "conflict"); err != nil {
+		t.Fatalf("AddEdge contradicts: %v", err)
+	}
+
+	// Both nodes last updated at T-10s; resolution edge will be created at T (now).
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	past := time.Now().UTC().Add(-10 * time.Second)
+	for _, id := range []string{nA.ID, nB.ID} {
+		if _, err := rawDB.Exec(`UPDATE nodes SET updated_at = ? WHERE id = ?`, past, id); err != nil {
+			rawDB.Close()
+			t.Fatalf("backdate updated_at: %v", err)
+		}
+	}
+	rawDB.Close()
+
+	if _, err := s.AddEdge(nA.ID, nB.ID, "resolved", "agreed on approach X"); err != nil {
+		t.Fatalf("AddEdge resolved: %v", err)
+	}
+
+	drift, err := s.FindDrift("rp-suppressed", 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, d := range drift {
+		if d.ConflictsWith != nil &&
+			((d.Node.ID == nA.ID && d.ConflictsWith.ID == nB.ID) ||
+				(d.Node.ID == nB.ID && d.ConflictsWith.ID == nA.ID)) {
+			t.Errorf("resolved pair should remain suppressed when resolution is newer than both nodes; got: %+v", d)
+		}
+	}
+}
+
+// TestFindDrift_ResolvedPair_RevivedAfterResolution: a contradicts pair where
+// one node was revised after the resolution edge was created must be re-surfaced.
+func TestFindDrift_ResolvedPair_RevivedAfterResolution(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	nA := mustAddNode(t, s, "approach P", "rp-revived")
+	nB := mustAddNode(t, s, "approach Q", "rp-revived")
+
+	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", "conflict"); err != nil {
+		t.Fatalf("AddEdge contradicts: %v", err)
+	}
+	resEdge, err := s.AddEdge(nA.ID, nB.ID, "resolved", "agreed on P")
+	if err != nil {
+		t.Fatalf("AddEdge resolved: %v", err)
+	}
+
+	// Backdate resolution edge and B to T-10s; A's updated_at stays at T (now).
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	past := time.Now().UTC().Add(-10 * time.Second)
+	if _, err := rawDB.Exec(`UPDATE edges SET created_at = ? WHERE id = ?`, past, resEdge.ID); err != nil {
+		rawDB.Close()
+		t.Fatalf("backdate edge created_at: %v", err)
+	}
+	if _, err := rawDB.Exec(`UPDATE nodes SET updated_at = ? WHERE id = ?`, past, nB.ID); err != nil {
+		rawDB.Close()
+		t.Fatalf("backdate B updated_at: %v", err)
+	}
+	rawDB.Close()
+
+	// A's updated_at is "now" (after the resolution edge) — simulates a revision.
+
+	drift, err := s.FindDrift("rp-revived", 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, d := range drift {
+		if d.ConflictsWith != nil &&
+			((d.Node.ID == nA.ID && d.ConflictsWith.ID == nB.ID) ||
+				(d.Node.ID == nB.ID && d.ConflictsWith.ID == nA.ID)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("contradicts pair must be re-surfaced when node A was revised after the resolution edge")
+	}
+}
+
+// TestFindDrift_ResolvedPair_BothRevisedAfterResolution: both nodes revised
+// after the resolution must also re-surface the pair.
+func TestFindDrift_ResolvedPair_BothRevisedAfterResolution(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	nA := mustAddNode(t, s, "approach R", "rp-both-revised")
+	nB := mustAddNode(t, s, "approach S", "rp-both-revised")
+
+	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", "conflict"); err != nil {
+		t.Fatalf("AddEdge contradicts: %v", err)
+	}
+	resEdge, err := s.AddEdge(nA.ID, nB.ID, "resolved", "agreed on R")
+	if err != nil {
+		t.Fatalf("AddEdge resolved: %v", err)
+	}
+
+	// Backdate resolution edge to T-10s; both nodes' updated_at remain at T (now).
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	past := time.Now().UTC().Add(-10 * time.Second)
+	if _, err := rawDB.Exec(`UPDATE edges SET created_at = ? WHERE id = ?`, past, resEdge.ID); err != nil {
+		rawDB.Close()
+		t.Fatalf("backdate edge created_at: %v", err)
+	}
+	rawDB.Close()
+
+	drift, err := s.FindDrift("rp-both-revised", 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	found := false
+	for _, d := range drift {
+		if d.ConflictsWith != nil &&
+			((d.Node.ID == nA.ID && d.ConflictsWith.ID == nB.ID) ||
+				(d.Node.ID == nB.ID && d.ConflictsWith.ID == nA.ID)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("contradicts pair must be re-surfaced when both nodes were revised after the resolution edge")
+	}
+}
+
+// TestFindDrift_ResolvedPair_RevisionBeforeResolution: a node revised before
+// the resolution was created must leave the pair suppressed.
+func TestFindDrift_ResolvedPair_RevisionBeforeResolution(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	nA := mustAddNode(t, s, "approach T", "rp-before-res")
+	nB := mustAddNode(t, s, "approach U", "rp-before-res")
+
+	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", "conflict"); err != nil {
+		t.Fatalf("AddEdge contradicts: %v", err)
+	}
+
+	// Both nodes updated at T-10s (before the resolution edge, which will be at T).
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	past := time.Now().UTC().Add(-10 * time.Second)
+	for _, id := range []string{nA.ID, nB.ID} {
+		if _, err := rawDB.Exec(`UPDATE nodes SET updated_at = ? WHERE id = ?`, past, id); err != nil {
+			rawDB.Close()
+			t.Fatalf("backdate updated_at: %v", err)
+		}
+	}
+	rawDB.Close()
+
+	// Resolution created at T (after both node revisions at T-10s).
+	if _, err := s.AddEdge(nA.ID, nB.ID, "resolved", "agreed on T"); err != nil {
+		t.Fatalf("AddEdge resolved: %v", err)
+	}
+
+	drift, err := s.FindDrift("rp-before-res", 100, nil, nil, "", 2)
+	if err != nil {
+		t.Fatalf("FindDrift: %v", err)
+	}
+	for _, d := range drift {
+		if d.ConflictsWith != nil &&
+			((d.Node.ID == nA.ID && d.ConflictsWith.ID == nB.ID) ||
+				(d.Node.ID == nB.ID && d.ConflictsWith.ID == nA.ID)) {
+			t.Errorf("resolved pair must remain suppressed when resolution was created after both node revisions; got: %+v", d)
+		}
+	}
+}
+
 // TestFindDrift_ConnectedStale_LiveNeighbourExcluded verifies that a node with
 // even one live neighbour is NOT returned as connected-stale.
 func TestFindDrift_ConnectedStale_LiveNeighbourExcluded(t *testing.T) {
