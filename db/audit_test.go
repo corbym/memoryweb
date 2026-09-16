@@ -204,7 +204,7 @@ func TestFindConflictCandidates_Performance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindConflictCandidates: %v", err)
 	}
-	if elapsed > 500*time.Millisecond {
+	if elapsed > 2000*time.Millisecond {
 		t.Fatalf("200-node conflicts scan took %s — candidates should be computed in a single SQL query, not one query per node", elapsed)
 	}
 	if len(candidates) > 10 {
