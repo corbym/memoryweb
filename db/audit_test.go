@@ -1455,9 +1455,10 @@ func TestFindDrift_ResolvedPair_BothRevisedAfterResolution(t *testing.T) {
 	}
 }
 
-// TestFindDrift_ResolvedPair_RevisionBeforeResolution: a node revised before
-// the resolution was created must leave the pair suppressed.
-func TestFindDrift_ResolvedPair_RevisionBeforeResolution(t *testing.T) {
+// TestFindDrift_ResolvedPair_SupersedesRevived: the timestamp guard applies to
+// the 'supersedes' relationship too — a pair revived after a supersedes edge
+// must be re-surfaced.
+func TestFindDrift_ResolvedPair_SupersedesRevived(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	s, err := db.New(dbPath)
@@ -1466,42 +1467,43 @@ func TestFindDrift_ResolvedPair_RevisionBeforeResolution(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	nA := mustAddNode(t, s, "approach T", "rp-before-res")
-	nB := mustAddNode(t, s, "approach U", "rp-before-res")
+	nA := mustAddNode(t, s, "approach V", "rp-supersedes-revived")
+	nB := mustAddNode(t, s, "approach W", "rp-supersedes-revived")
 
 	if _, err := s.AddEdge(nA.ID, nB.ID, "contradicts", "conflict"); err != nil {
 		t.Fatalf("AddEdge contradicts: %v", err)
 	}
+	resEdge, err := s.AddEdge(nB.ID, nA.ID, "supersedes", "B supersedes A")
+	if err != nil {
+		t.Fatalf("AddEdge supersedes: %v", err)
+	}
 
-	// Both nodes updated at T-10s (before the resolution edge, which will be at T).
+	// Backdate supersedes edge to T-10s; both nodes' updated_at remain at T (now).
 	rawDB, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatalf("open raw db: %v", err)
 	}
 	past := time.Now().UTC().Add(-10 * time.Second)
-	for _, id := range []string{nA.ID, nB.ID} {
-		if _, err := rawDB.Exec(`UPDATE nodes SET updated_at = ? WHERE id = ?`, past, id); err != nil {
-			rawDB.Close()
-			t.Fatalf("backdate updated_at: %v", err)
-		}
+	if _, err := rawDB.Exec(`UPDATE edges SET created_at = ? WHERE id = ?`, past, resEdge.ID); err != nil {
+		rawDB.Close()
+		t.Fatalf("backdate edge created_at: %v", err)
 	}
 	rawDB.Close()
 
-	// Resolution created at T (after both node revisions at T-10s).
-	if _, err := s.AddEdge(nA.ID, nB.ID, "resolved", "agreed on T"); err != nil {
-		t.Fatalf("AddEdge resolved: %v", err)
-	}
-
-	drift, err := s.FindDrift("rp-before-res", 100, nil, nil, "", 2)
+	drift, err := s.FindDrift("rp-supersedes-revived", 100, nil, nil, "", 2)
 	if err != nil {
 		t.Fatalf("FindDrift: %v", err)
 	}
+	found := false
 	for _, d := range drift {
 		if d.ConflictsWith != nil &&
 			((d.Node.ID == nA.ID && d.ConflictsWith.ID == nB.ID) ||
 				(d.Node.ID == nB.ID && d.ConflictsWith.ID == nA.ID)) {
-			t.Errorf("resolved pair must remain suppressed when resolution was created after both node revisions; got: %+v", d)
+			found = true
 		}
+	}
+	if !found {
+		t.Errorf("contradicts pair must be re-surfaced when both nodes were revised after the supersedes resolution edge")
 	}
 }
 
