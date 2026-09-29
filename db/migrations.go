@@ -243,6 +243,32 @@ CREATE INDEX IF NOT EXISTS idx_significance_log_call_id ON significance_log(call
 			return err
 		},
 	},
+	{
+		version: 16,
+		desc:    "add node_label_embeddings and node_whymatters_embeddings virtual tables for per-field embeddings",
+		up: func(tx *sql.Tx) error {
+			var vecVersion string
+			if err := tx.QueryRow("SELECT vec_version()").Scan(&vecVersion); err != nil {
+				log.Printf("[memoryweb] sqlite-vec not available, skipping v16 migration: %v", err)
+				return nil
+			}
+			for _, stmt := range []string{
+				`CREATE VIRTUAL TABLE IF NOT EXISTS node_label_embeddings USING vec0(
+					node_id   TEXT PRIMARY KEY,
+					embedding float[1024]
+				)`,
+				`CREATE VIRTUAL TABLE IF NOT EXISTS node_whymatters_embeddings USING vec0(
+					node_id   TEXT PRIMARY KEY,
+					embedding float[1024]
+				)`,
+			} {
+				if _, err := tx.Exec(stmt); err != nil {
+					return fmt.Errorf("create per-field embedding table: %w", err)
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // migrate creates the schema_migrations tracking table (if needed) then applies

@@ -105,6 +105,7 @@ Current migrations:
 | 13 | nodes: rename decision_type column to node_kind |
 | 14 | edges: add verdict TEXT column |
 | 15 | Add config key-value table |
+| 16 | Add `node_label_embeddings` and `node_whymatters_embeddings` virtual tables for per-field embeddings |
 
 ---
 

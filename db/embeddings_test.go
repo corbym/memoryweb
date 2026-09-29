@@ -12,6 +12,105 @@ import (
 	"github.com/corbym/memoryweb/db"
 )
 
+// TestEmbedFieldsForNode_ReturnsLabelAndWhyMatters verifies the per-field
+// embedding input map excludes description.
+func TestEmbedFieldsForNode_ReturnsLabelAndWhyMatters(t *testing.T) {
+	fields := db.EmbedFieldsForNode("my label", "my description", "why it matters")
+	if len(fields) != 2 {
+		t.Fatalf("expected 2 fields, got %d: %v", len(fields), fields)
+	}
+	if fields["label"] != "my label" {
+		t.Errorf("label field: got %q, want %q", fields["label"], "my label")
+	}
+	if fields["why_matters"] != "why it matters" {
+		t.Errorf("why_matters field: got %q, want %q", fields["why_matters"], "why it matters")
+	}
+	if _, ok := fields["description"]; ok {
+		t.Error("description should not be included in per-field embedding inputs")
+	}
+}
+
+// TestAddNode_StoresFieldEmbeddings verifies that AddNode writes rows to
+// node_label_embeddings and node_whymatters_embeddings when the tables exist.
+func TestAddNode_StoresFieldEmbeddings(t *testing.T) {
+	var count atomic.Int32
+	srv := fakeEmbedServer(t, &count)
+	defer srv.Close()
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+
+	s := newStore(t)
+	if !s.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+
+	n, err := s.AddNode("my label", "my description", "why it matters", "proj", nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	// AddNode should call embed 3 times: concat + label + why_matters.
+	if count.Load() < 3 {
+		t.Errorf("expected at least 3 embed requests (concat+label+wm); got %d", count.Load())
+	}
+
+	var labelCount, wmCount int
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_label_embeddings WHERE node_id = ?`, n.ID).Scan(&labelCount)
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_whymatters_embeddings WHERE node_id = ?`, n.ID).Scan(&wmCount)
+
+	if labelCount != 1 {
+		t.Errorf("node_label_embeddings: expected 1 row, got %d", labelCount)
+	}
+	if wmCount != 1 {
+		t.Errorf("node_whymatters_embeddings: expected 1 row, got %d", wmCount)
+	}
+}
+
+// TestSearchNodesSemantic_PerFieldMinDistance verifies that per-field search
+// finds a node whose why_matters embedding is close to the query, even when
+// its label and concatenated embeddings are distant — covering the case where
+// only why_matters is the relevant field.
+func TestSearchNodesSemantic_PerFieldMinDistance(t *testing.T) {
+	s := newStore(t)
+	if !s.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+
+	// queryVec and closeVec will match; farVec is orthogonal to them.
+	queryVec := makeDenseVector(1)
+	farVec := makeDenseVector(100)
+
+	// Node: label is far from query, why_matters is identical to query vector.
+	// The concatenated embed text contains "pf-label-far" which maps to farVec,
+	// so the legacy node_embeddings entry is distant.  Only the why_matters
+	// entry (mapped to queryVec) is close.
+	withFakeEmbeddings(t, map[string][]float32{
+		"pf-label-far": farVec,
+		"pf-wm-close":  queryVec,
+	})
+
+	n, err := s.AddNode("pf-label-far", "desc", "pf-wm-close", "proj", nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	// Searching for "pf-wm-close" embeds the query as queryVec (distance 0
+	// from node_whymatters_embeddings entry), so the node must appear in results.
+	result, err := s.SearchNodes("pf-wm-close", "proj", 10, "", nil)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+
+	found := false
+	for _, nr := range result.Nodes {
+		if nr.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected node %s in results (why_matters embedding matches query)", n.ID)
+	}
+}
+
 func TestEmbedTextForNode_MatchesRememberConcatenation(t *testing.T) {
 	got := db.EmbedTextForNode("my label", "my desc", "why it matters")
 	want := "my label my desc why it matters"

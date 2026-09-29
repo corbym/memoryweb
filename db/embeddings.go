@@ -112,6 +112,65 @@ func EmbedTextForNode(label, description, whyMatters string) string {
 	return embedTextForNode(label, description, whyMatters)
 }
 
+// embedFieldsForNode returns the per-field embedding inputs: label and why_matters
+// are embedded separately so each fits within the model's context window.
+// description is excluded — it is the longest field and adds no meaningful recall
+// improvement beyond label and why_matters.
+func embedFieldsForNode(label, _, whyMatters string) map[string]string {
+	return map[string]string{
+		"label":       label,
+		"why_matters": whyMatters,
+	}
+}
+
+// EmbedFieldsForNode is the exported form of embedFieldsForNode, for use in tests.
+func EmbedFieldsForNode(label, description, whyMatters string) map[string]string {
+	return embedFieldsForNode(label, description, whyMatters)
+}
+
+// storeFieldEmbeddings stores per-field embeddings for a node in the
+// node_label_embeddings and node_whymatters_embeddings virtual tables.
+// Each field is stored independently; a failure in one does not affect the other.
+// Returns true only when all supplied embeddings are stored successfully.
+func (st *Store) storeFieldEmbeddings(id string, fields map[string][]float32) bool {
+	if !st.vecFieldsAvailable {
+		return false
+	}
+	tableFor := map[string]string{
+		"label":       "node_label_embeddings",
+		"why_matters": "node_whymatters_embeddings",
+	}
+	ok := true
+	for field, emb := range fields {
+		table, known := tableFor[field]
+		if !known || len(emb) == 0 {
+			continue
+		}
+		if len(emb) != embeddingDim {
+			log.Printf(
+				"[memoryweb] field embedding dim mismatch for %s/%s: got %d, want %d",
+				id, field, len(emb), embeddingDim,
+			)
+			ok = false
+			continue
+		}
+		blob, err := vec.SerializeFloat32(emb)
+		if err != nil {
+			log.Printf("[memoryweb] serialize field embedding for %s/%s: %v", id, field, err)
+			ok = false
+			continue
+		}
+		if _, err := st.db.Exec(
+			`INSERT OR REPLACE INTO `+table+`(node_id, embedding) VALUES (?, ?)`,
+			id, blob,
+		); err != nil {
+			log.Printf("[memoryweb] store field embedding for %s/%s: %v", id, field, err)
+			ok = false
+		}
+	}
+	return ok
+}
+
 // storedEmbeddingModel reads the embedding model recorded in the config table.
 // Returns "" if no model has been recorded yet.
 func (st *Store) storedEmbeddingModel() string {
@@ -129,11 +188,15 @@ func (st *Store) setStoredEmbeddingModel(model string) {
 	)
 }
 
-// clearEmbeddings deletes all rows from node_embeddings.
+// clearEmbeddings deletes all rows from the embedding tables.
 func (st *Store) clearEmbeddings() (int64, error) {
 	res, err := st.db.Exec(`DELETE FROM node_embeddings`)
 	if err != nil {
 		return 0, err
+	}
+	if st.vecFieldsAvailable {
+		st.db.Exec(`DELETE FROM node_label_embeddings`)      //nolint:errcheck
+		st.db.Exec(`DELETE FROM node_whymatters_embeddings`) //nolint:errcheck
 	}
 	return res.RowsAffected()
 }
@@ -246,6 +309,16 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 		if st.storeEmbedding(cand.id, embedding) {
 			count++
 		}
+		// Per-field embeddings (best-effort alongside the legacy embedding).
+		if st.vecFieldsAvailable {
+			st.embedAndStoreFields(cand.id, cand.label, cand.description, cand.whyMatters)
+		}
+	}
+
+	// Supplementary pass: fill field embeddings for nodes that already have a
+	// legacy node_embeddings entry but were created before migration v16.
+	if st.vecFieldsAvailable {
+		st.backfillFieldEmbeddings()
 	}
 
 	// Record the current model only when the run produced results or there was
@@ -254,4 +327,48 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 		st.setStoredEmbeddingModel(current)
 	}
 	return count, nil
+}
+
+// embedAndStoreFields generates and stores per-field embeddings for a node.
+// Best-effort: errors are logged but not returned.
+func (st *Store) embedAndStoreFields(id, label, description, whyMatters string) {
+	fieldTexts := embedFieldsForNode(label, description, whyMatters)
+	fieldEmbs := make(map[string][]float32, len(fieldTexts))
+	for field, text := range fieldTexts {
+		if emb, err := embed(text); err == nil {
+			fieldEmbs[field] = emb
+		}
+	}
+	st.storeFieldEmbeddings(id, fieldEmbs)
+}
+
+// backfillFieldEmbeddings fills node_label_embeddings and node_whymatters_embeddings
+// for live nodes that lack per-field embeddings (created before migration v16).
+func (st *Store) backfillFieldEmbeddings() {
+	rows, err := st.db.Query(`
+		SELECT n.id, n.label, n.description, n.why_matters
+		FROM nodes n
+		LEFT JOIN node_label_embeddings e ON e.node_id = n.id
+		WHERE n.archived_at IS NULL AND e.node_id IS NULL
+	`)
+	if err != nil {
+		log.Printf("[memoryweb] backfill field embeddings: query: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	type candidate struct{ id, label, description, whyMatters string }
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.label, &c.description, &c.whyMatters); err != nil {
+			return
+		}
+		candidates = append(candidates, c)
+	}
+	rows.Close()
+
+	for _, cand := range candidates {
+		st.embedAndStoreFields(cand.id, cand.label, cand.description, cand.whyMatters)
+	}
 }

@@ -76,9 +76,12 @@ func (st *Store) AddNode(label, description, whyMatters, domain string, occurred
 		return nil, err
 	}
 
-	// Generate and store an embedding for semantic search (best-effort, after commit).
+	// Generate and store embeddings for semantic search (best-effort, after commit).
 	if embedding, err := embed(embedTextForNode(label, description, whyMatters)); err == nil {
 		st.storeEmbedding(id, embedding)
+	}
+	if st.vecFieldsAvailable {
+		st.embedAndStoreFields(id, label, description, whyMatters)
 	}
 
 	return &Node{
@@ -293,6 +296,9 @@ func (st *Store) UpdateNode(id string, label, description, whyMatters, tags *str
 		if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
 			st.storeEmbedding(id, embedding)
 		}
+		if st.vecFieldsAvailable {
+			st.embedAndStoreFields(id, n.Label, n.Description, n.WhyMatters)
+		}
 	}
 
 	return &n, nil
@@ -435,6 +441,9 @@ func (st *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
 				st.storeEmbedding(n.ID, embedding)
 			}
+			if st.vecFieldsAvailable {
+				st.embedAndStoreFields(n.ID, n.Label, n.Description, n.WhyMatters)
+			}
 		}
 	}
 
@@ -512,6 +521,9 @@ func (st *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 	for _, n := range nodes {
 		if embedding, err := embed(embedTextForNode(n.Label, n.Description, n.WhyMatters)); err == nil {
 			st.storeEmbedding(n.ID, embedding)
+		}
+		if st.vecFieldsAvailable {
+			st.embedAndStoreFields(n.ID, n.Label, n.Description, n.WhyMatters)
 		}
 	}
 

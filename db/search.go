@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
@@ -138,37 +139,29 @@ func (st *Store) SearchNodesExact(query, domain string, limit int, memoryID stri
 // and the LIKE fallback runs instead.
 const semanticDistanceThreshold = 0.3
 
-// searchNodesSemantic ranks nodes by cosine distance between the query
-// embedding and stored node embeddings, then falls back to LIKE if no
-// semantic results are found within the relevance threshold.
-func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding []float32, allowedIDs, nodeKinds []string) (*SearchResult, error) {
-	blob, err := vec.SerializeFloat32(embedding)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fetch one extra row so we can detect truncation without a separate COUNT
-	// query. The threshold check still cuts off results beyond semanticDistanceThreshold.
-	fetch := limit + 1
-
+// queryEmbeddingTable runs a KNN search against the named vec0 embedding table
+// and returns NodeResults ordered by cosine distance ASC, stopping at the
+// semanticDistanceThreshold. Applies domain and node_kind filters via JOIN.
+func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob []byte, nodeKinds []string) ([]NodeResult, error) {
 	conds := []string{"n.archived_at IS NULL"}
-	args := []interface{}{blob}
+	args := []any{blob}
 	if domain != "" {
 		conds = append(conds, "n.domain = ?")
 		args = append(args, domain)
 	}
 	conds, args = nodeKindFilter("n.node_kind", nodeKinds, conds, args)
 	args = append(args, fetch)
-	semQ := `SELECT n.id, n.label, n.description, n.why_matters, n.domain,
-	       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
-	       vec_distance_cosine(e.embedding, ?) AS dist
-	FROM node_embeddings e
-	JOIN nodes n ON n.id = e.node_id
-	WHERE ` + strings.Join(conds, " AND ") + `
-	ORDER BY dist ASC
-	LIMIT ?`
-	var rows *sql.Rows
-	rows, err = st.db.Query(semQ, args...)
+
+	q := `SELECT n.id, n.label, n.description, n.why_matters, n.domain,
+		       n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.tags, n.node_kind,
+		       vec_distance_cosine(e.embedding, ?) AS dist
+		FROM ` + tableName + ` e
+		JOIN nodes n ON n.id = e.node_id
+		WHERE ` + strings.Join(conds, " AND ") + `
+		ORDER BY dist ASC
+		LIMIT ?`
+
+	rows, err := st.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -186,14 +179,58 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 		); err != nil {
 			return nil, err
 		}
-		// Results are ordered by distance ASC; stop as soon as we exceed the threshold.
 		if dist > semanticDistanceThreshold {
 			break
 		}
 		n.OccurredAt = nullTimeToPtr(occurredAt)
 		n.ArchivedAt = nullTimeToPtr(archivedAt)
-		d := dist // copy for pointer stability
+		d := dist
 		results = append(results, NodeResult{Node: n, SemanticDistance: &d})
+	}
+	return results, rows.Err()
+}
+
+// searchNodesSemantic ranks nodes by cosine distance between the query
+// embedding and stored node embeddings, then falls back to LIKE if no
+// semantic results are found within the relevance threshold.
+// When per-field embedding tables are available, queries label and why_matters
+// separately and uses the minimum distance per node for ranking.
+func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding []float32, allowedIDs, nodeKinds []string) (*SearchResult, error) {
+	blob, err := vec.SerializeFloat32(embedding)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []NodeResult
+
+	if st.vecFieldsAvailable {
+		// Per-field path: query label, why_matters, and legacy tables; merge by min dist.
+		// Fetching extra rows from each table to account for overlap after merge.
+		fieldFetch := (limit + 1) * 2
+		labelResults, _ := st.queryEmbeddingTable("node_label_embeddings", domain, fieldFetch, blob, nodeKinds)
+		wmResults, _ := st.queryEmbeddingTable("node_whymatters_embeddings", domain, fieldFetch, blob, nodeKinds)
+		// Also include legacy embeddings for nodes not yet in the field tables.
+		legacyResults, _ := st.queryEmbeddingTable("node_embeddings", domain, fieldFetch, blob, nodeKinds)
+
+		nodeMap := make(map[string]NodeResult)
+		for _, r := range append(append(labelResults, wmResults...), legacyResults...) {
+			if existing, ok := nodeMap[r.ID]; !ok || *r.SemanticDistance < *existing.SemanticDistance {
+				nodeMap[r.ID] = r
+			}
+		}
+		results = make([]NodeResult, 0, len(nodeMap))
+		for _, r := range nodeMap {
+			results = append(results, r)
+		}
+		sort.Slice(results, func(i, j int) bool {
+			return *results[i].SemanticDistance < *results[j].SemanticDistance
+		})
+	} else {
+		// Legacy path: single concatenated embedding per node.
+		results, err = st.queryEmbeddingTable("node_embeddings", domain, limit+1, blob, nodeKinds)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Post-filter to neighbourhood if memoryID was supplied.

@@ -31,8 +31,9 @@ func init() {
 }
 
 type Store struct {
-	db           *sql.DB
-	vecAvailable bool
+	db                 *sql.DB
+	vecAvailable       bool
+	vecFieldsAvailable bool
 }
 
 func New(path string) (*Store, error) {
@@ -117,7 +118,7 @@ func (st *Store) DB() *sql.DB {
 }
 
 // checkVecAvailable verifies that the sqlite-vec extension is loaded and the
-// node_embeddings table exists. Sets s.vecAvailable accordingly.
+// node_embeddings table exists. Sets s.vecAvailable and s.vecFieldsAvailable accordingly.
 func (st *Store) checkVecAvailable() {
 	var v string
 	if err := st.db.QueryRow("SELECT vec_version()").Scan(&v); err != nil {
@@ -131,6 +132,17 @@ func (st *Store) checkVecAvailable() {
 	}
 	st.vecAvailable = true
 	log.Printf("[memoryweb] sqlite-vec %s loaded; semantic search enabled", v)
+
+	if st.db.QueryRow("SELECT COUNT(*) FROM node_label_embeddings").Scan(&dummy) == nil &&
+		st.db.QueryRow("SELECT COUNT(*) FROM node_whymatters_embeddings").Scan(&dummy) == nil {
+		st.vecFieldsAvailable = true
+		log.Printf("[memoryweb] per-field embedding tables available; using min-distance ranking")
+	}
+}
+
+// VecFieldsAvailable reports whether the per-field embedding tables are available.
+func (st *Store) VecFieldsAvailable() bool {
+	return st.vecFieldsAvailable
 }
 
 // ── doctor diagnostics ────────────────────────────────────────────────────────
