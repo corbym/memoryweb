@@ -195,8 +195,12 @@ func (st *Store) clearEmbeddings() (int64, error) {
 		return 0, err
 	}
 	if st.vecFieldsAvailable {
-		st.db.Exec(`DELETE FROM node_label_embeddings`)      //nolint:errcheck
-		st.db.Exec(`DELETE FROM node_whymatters_embeddings`) //nolint:errcheck
+		if _, err := st.db.Exec(`DELETE FROM node_label_embeddings`); err != nil {
+			return 0, fmt.Errorf("clear label embeddings: %w", err)
+		}
+		if _, err := st.db.Exec(`DELETE FROM node_whymatters_embeddings`); err != nil {
+			return 0, fmt.Errorf("clear whymatters embeddings: %w", err)
+		}
 	}
 	return res.RowsAffected()
 }
@@ -343,13 +347,15 @@ func (st *Store) embedAndStoreFields(id, label, description, whyMatters string) 
 }
 
 // backfillFieldEmbeddings fills node_label_embeddings and node_whymatters_embeddings
-// for live nodes that lack per-field embeddings (created before migration v16).
+// for live nodes that lack either per-field embedding (created before migration v16
+// or partially written due to a mid-run Ollama failure).
 func (st *Store) backfillFieldEmbeddings() {
 	rows, err := st.db.Query(`
 		SELECT n.id, n.label, n.description, n.why_matters
 		FROM nodes n
-		LEFT JOIN node_label_embeddings e ON e.node_id = n.id
-		WHERE n.archived_at IS NULL AND e.node_id IS NULL
+		LEFT JOIN node_label_embeddings le ON le.node_id = n.id
+		LEFT JOIN node_whymatters_embeddings we ON we.node_id = n.id
+		WHERE n.archived_at IS NULL AND (le.node_id IS NULL OR we.node_id IS NULL)
 	`)
 	if err != nil {
 		log.Printf("[memoryweb] backfill field embeddings: query: %v", err)
@@ -362,9 +368,13 @@ func (st *Store) backfillFieldEmbeddings() {
 	for rows.Next() {
 		var c candidate
 		if err := rows.Scan(&c.id, &c.label, &c.description, &c.whyMatters); err != nil {
-			return
+			log.Printf("[memoryweb] backfill field embeddings: scan: %v", err)
+			continue
 		}
 		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[memoryweb] backfill field embeddings: rows: %v", err)
 	}
 	rows.Close()
 

@@ -106,7 +106,9 @@ func TestSemanticSearchFindsRelatedConcept(t *testing.T) {
 	// straitjacket label can fall within the 0.3 threshold even though it is
 	// unrelated. Assert only that the relevant node ranks first.
 	firstNodeLabel := extractFirstNodeLabel(result)
-	if firstNodeLabel != "" && !strings.Contains(firstNodeLabel, "boot crash") {
+	if firstNodeLabel == "" {
+		t.Errorf("expected parseable results with boot crash ranked first; could not extract first node label from: %s", result)
+	} else if !strings.Contains(firstNodeLabel, "boot crash") {
 		t.Errorf("expected boot crash to be the top-ranked result, got first label: %q; full result: %s", firstNodeLabel, result)
 	}
 }

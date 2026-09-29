@@ -207,10 +207,19 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 		// Per-field path: query label, why_matters, and legacy tables; merge by min dist.
 		// Fetching extra rows from each table to account for overlap after merge.
 		fieldFetch := (limit + 1) * 2
-		labelResults, _ := st.queryEmbeddingTable("node_label_embeddings", domain, fieldFetch, blob, nodeKinds)
-		wmResults, _ := st.queryEmbeddingTable("node_whymatters_embeddings", domain, fieldFetch, blob, nodeKinds)
+		labelResults, labelErr := st.queryEmbeddingTable("node_label_embeddings", domain, fieldFetch, blob, nodeKinds)
+		if labelErr != nil {
+			log.Printf("[memoryweb] per-field search: node_label_embeddings: %v", labelErr)
+		}
+		wmResults, wmErr := st.queryEmbeddingTable("node_whymatters_embeddings", domain, fieldFetch, blob, nodeKinds)
+		if wmErr != nil {
+			log.Printf("[memoryweb] per-field search: node_whymatters_embeddings: %v", wmErr)
+		}
 		// Also include legacy embeddings for nodes not yet in the field tables.
-		legacyResults, _ := st.queryEmbeddingTable("node_embeddings", domain, fieldFetch, blob, nodeKinds)
+		legacyResults, legacyErr := st.queryEmbeddingTable("node_embeddings", domain, fieldFetch, blob, nodeKinds)
+		if legacyErr != nil {
+			log.Printf("[memoryweb] per-field search: node_embeddings: %v", legacyErr)
+		}
 
 		nodeMap := make(map[string]NodeResult)
 		for _, r := range append(append(labelResults, wmResults...), legacyResults...) {
