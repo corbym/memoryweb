@@ -335,7 +335,7 @@ All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 Key implemented features:
 - Core graph: nodes, edges, search (LIKE + semantic), timeline, connections, aliases
 - Soft delete: archived_at, audit_log with provenance column, ArchiveNode, RestoreNode
-- Semantic search via sqlite-vec and Ollama (snowflake-arctic-embed)
+- Semantic search via sqlite-vec and Ollama (snowflake-arctic-embed); query-side prefix for asymmetric models (arctic-embed, mxbai-embed-large); no hard distance threshold (env override: MEMORYWEB_SEMANTIC_THRESHOLD)
 - Batch operations: remember/revise/connect all accept `items` arrays
 - orient: lean field format (id + label + why_matters ≤150 chars, sentence-boundary truncated, truncated flag); significant=10/recent=5/spine=20; live_nodes + archived_nodes; optional topic parameter returns relevant section instead of significant; no-domain digest mode with load_bearing_low_trust counter and trust delta hints
 - significance: dual-signal importance (declared + structural recency-weighted); memory_id + tags filter modes

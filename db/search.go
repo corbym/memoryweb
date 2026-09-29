@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
@@ -41,7 +43,8 @@ func (st *Store) SearchNodes(query, domain string, limit int, memoryID string, n
 
 	// Try semantic search when sqlite-vec is loaded.
 	if st.vecAvailable {
-		embedding, err := embed(query)
+		queryText := queryPrefix() + query
+		embedding, err := embed(queryText)
 		if err == nil && len(embedding) > 0 {
 			result, err := st.searchNodesSemantic(query, domain, limit, embedding, allowedIDs, nodeKinds)
 			if err == nil {
@@ -133,15 +136,27 @@ func (st *Store) SearchNodesExact(query, domain string, limit int, memoryID stri
 	return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds, false)
 }
 
-// semanticDistanceThreshold is the maximum cosine distance for a node to be
-// considered a semantic match. vec_distance_cosine returns values in [0, 2];
-// 0 = identical, 2 = opposite. Results beyond this threshold are discarded
-// and the LIKE fallback runs instead.
-const semanticDistanceThreshold = 0.3
+// semanticThreshold returns the configured cosine-distance cutoff for semantic
+// results. When MEMORYWEB_SEMANTIC_THRESHOLD is set to a positive float it
+// acts as a hard cap — rows beyond that distance are discarded and the LIKE
+// fallback runs. When unset (the default) no cap is applied: all rows up to
+// the query limit are returned, ranked purely by distance.
+//
+// vec_distance_cosine returns values in [0, 2]: 0 = identical, 2 = opposite.
+func semanticThreshold() (float64, bool) {
+	if v := os.Getenv("MEMORYWEB_SEMANTIC_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			return f, true
+		}
+	}
+	return 0, false
+}
 
 // queryEmbeddingTable runs a KNN search against the named vec0 embedding table
-// and returns NodeResults ordered by cosine distance ASC, stopping at the
-// semanticDistanceThreshold. Applies domain and node_kind filters via JOIN.
+// and returns NodeResults ordered by cosine distance ASC. When
+// MEMORYWEB_SEMANTIC_THRESHOLD is set it stops early at that distance;
+// otherwise it returns all rows up to fetch. Applies domain and node_kind
+// filters via JOIN.
 func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob []byte, nodeKinds []string) ([]NodeResult, error) {
 	conds := []string{"n.archived_at IS NULL"}
 	args := []any{blob}
@@ -167,6 +182,7 @@ func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob [
 	}
 	defer rows.Close()
 
+	thresh, hasThresh := semanticThreshold()
 	var results []NodeResult
 	for rows.Next() {
 		var n Node
@@ -179,7 +195,7 @@ func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob [
 		); err != nil {
 			return nil, err
 		}
-		if dist > semanticDistanceThreshold {
+		if hasThresh && dist > thresh {
 			break
 		}
 		n.OccurredAt = nullTimeToPtr(occurredAt)
@@ -242,6 +258,13 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 		}
 	}
 
+	// Capture best distance before neighbourhood filtering for diagnostic log.
+	var bestDist *float64
+	if len(results) > 0 {
+		d := *results[0].SemanticDistance
+		bestDist = &d
+	}
+
 	// Post-filter to neighbourhood if memoryID was supplied.
 	if len(allowedIDs) > 0 {
 		allowed := make(map[string]struct{}, len(allowedIDs))
@@ -255,7 +278,9 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 	}
 
 	if len(results) == 0 {
-		// No embeddings within threshold (or all filtered out); fall back to literal search.
+		if bestDist != nil {
+			log.Printf("[memoryweb] semantic search: no results (best dist %.3f); falling back to text search", *bestDist)
+		}
 		return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds, true)
 	}
 

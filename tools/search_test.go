@@ -363,16 +363,20 @@ func TestSearchSemantic_FindsRelatedContent(t *testing.T) {
 	}
 }
 
-// TestSearchSemantic_ExcludesIrrelevantNode: a node on a completely unrelated
-// topic must not be returned for a domain-specific technical query.
-
-// TestSearchSemantic_ExcludesIrrelevantNode: a node on a completely unrelated
-// topic must not be returned for a domain-specific technical query.
-func TestSearchSemantic_ExcludesIrrelevantNode(t *testing.T) {
+// TestSearchSemantic_RelevantNodeRanksAboveIrrelevant: when both a matching
+// and an unrelated node exist in the same domain, the relevant node ranks
+// first. With no hard threshold, top-K results are returned ordered by
+// cosine distance; good ranking (not hard exclusion) is the correctness goal.
+func TestSearchSemantic_RelevantNodeRanksAboveIrrelevant(t *testing.T) {
 	if !ollamaRunning(t) {
 		t.Skip("Ollama with " + db.EmbeddingModel() + " not available")
 	}
 	_, h := newEnv(t)
+
+	relevantID := addNode(t, h, "database schema migration", "semantic-test", map[string]any{
+		"description": "strategy for upgrading database schemas without downtime",
+		"why_matters": "safe schema evolution is critical for production deployments",
+	})
 
 	addNode(t, h, "banana bread recipe", "semantic-test", map[string]any{
 		"description": "how to bake moist banana bread at home with ripe bananas",
@@ -385,8 +389,12 @@ func TestSearchSemantic_ExcludesIrrelevantNode(t *testing.T) {
 	})
 	mustNotError(t, tr)
 	ids := searchIDs(t, tr)
-	if len(ids) != 0 {
-		t.Errorf("semantic search should not return banana bread for database query; got %d result(s): %v", len(ids), ids)
+	if len(ids) == 0 {
+		t.Error("expected at least one search result")
+		return
+	}
+	if ids[0] != relevantID {
+		t.Errorf("expected relevant node to rank first; got order: %v", ids)
 	}
 }
 

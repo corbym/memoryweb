@@ -112,6 +112,24 @@ func EmbedTextForNode(label, description, whyMatters string) string {
 	return embedTextForNode(label, description, whyMatters)
 }
 
+// queryPrefix returns the inference-time prefix for the current embedding model.
+// snowflake-arctic-embed and mxbai-embed-large are asymmetric: documents are
+// indexed bare, but queries must be prepended with this string so the model
+// maps them to the same vector space as stored embeddings. bge-m3 and all
+// other models require no prefix.
+func queryPrefix() string {
+	switch embeddingModel() {
+	case "snowflake-arctic-embed", "snowflake-arctic-embed:latest",
+		"mxbai-embed-large", "mxbai-embed-large:latest":
+		return "Represent this sentence for searching relevant passages: "
+	default:
+		return ""
+	}
+}
+
+// QueryPrefix is the exported form of queryPrefix, for use in tests.
+func QueryPrefix() string { return queryPrefix() }
+
 // embedFieldsForNode returns the per-field embedding inputs: label and why_matters
 // are embedded separately so each fits within the model's context window.
 // description is excluded — it is the longest field and adds no meaningful recall

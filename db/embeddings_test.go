@@ -111,6 +111,44 @@ func TestSearchNodesSemantic_PerFieldMinDistance(t *testing.T) {
 	}
 }
 
+func TestQueryPrefix_ArcticEmbed(t *testing.T) {
+	t.Setenv("MEMORYWEB_EMBED_MODEL", "snowflake-arctic-embed")
+	want := "Represent this sentence for searching relevant passages: "
+	if got := db.QueryPrefix(); got != want {
+		t.Errorf("arctic-embed prefix: got %q, want %q", got, want)
+	}
+}
+
+func TestQueryPrefix_ArcticEmbedLatest(t *testing.T) {
+	t.Setenv("MEMORYWEB_EMBED_MODEL", "snowflake-arctic-embed:latest")
+	want := "Represent this sentence for searching relevant passages: "
+	if got := db.QueryPrefix(); got != want {
+		t.Errorf("arctic-embed:latest prefix: got %q, want %q", got, want)
+	}
+}
+
+func TestQueryPrefix_MxbaiEmbedLarge(t *testing.T) {
+	t.Setenv("MEMORYWEB_EMBED_MODEL", "mxbai-embed-large")
+	want := "Represent this sentence for searching relevant passages: "
+	if got := db.QueryPrefix(); got != want {
+		t.Errorf("mxbai-embed-large prefix: got %q, want %q", got, want)
+	}
+}
+
+func TestQueryPrefix_BGE(t *testing.T) {
+	t.Setenv("MEMORYWEB_EMBED_MODEL", "bge-m3")
+	if got := db.QueryPrefix(); got != "" {
+		t.Errorf("bge-m3 should have no query prefix, got %q", got)
+	}
+}
+
+func TestQueryPrefix_Unknown(t *testing.T) {
+	t.Setenv("MEMORYWEB_EMBED_MODEL", "some-unknown-model")
+	if got := db.QueryPrefix(); got != "" {
+		t.Errorf("unknown model should have no query prefix, got %q", got)
+	}
+}
+
 func TestEmbedTextForNode_MatchesRememberConcatenation(t *testing.T) {
 	got := db.EmbedTextForNode("my label", "my desc", "why it matters")
 	want := "my label my desc why it matters"

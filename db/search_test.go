@@ -1,6 +1,8 @@
 package db_test
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestSearchNodes_MatchesLabel(t *testing.T) {
 	s := newStore(t)
@@ -380,6 +382,84 @@ func TestSearchNodesExact_NoMultiWordFallback(t *testing.T) {
 	for _, nr := range res.Nodes {
 		if nr.ID == wrongNode.ID {
 			t.Error("word-fallback false positive: returned node that only contains one query word")
+		}
+	}
+}
+
+// TestSearchNodesSemantic_TopKNoThreshold verifies that a node whose embedding
+// is at cosine distance > the old hardcoded 0.3 cutoff is still returned when
+// no threshold env var is set. Without the threshold guard, all rows up to
+// the requested limit are returned ordered by distance.
+func TestSearchNodesSemantic_TopKNoThreshold(t *testing.T) {
+	s := newStore(t)
+	if !s.VecAvailable() {
+		t.Skip("sqlite-vec not available")
+	}
+
+	// queryVec and farVec are near-orthogonal (cosine dist ≈ 1.0),
+	// well beyond the old 0.3 hard cutoff.
+	queryVec := makeDenseVector(1)
+	farVec := makeDenseVector(50)
+
+	withFakeEmbeddings(t, map[string][]float32{
+		"topk-node":  farVec,
+		"topk-query": queryVec,
+	})
+
+	n, err := s.AddNode("topk-node", "topk-node-desc", "topk-node-why", "proj", nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	result, err := s.SearchNodes("topk-query", "proj", 10, "", nil)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	found := false
+	for _, nr := range result.Nodes {
+		if nr.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected node at dist ≈ 1.0 to be returned with no threshold; nodes: %+v", result.Nodes)
+	}
+}
+
+// TestSearchNodesSemantic_EnvThresholdFiltersResults verifies that
+// MEMORYWEB_SEMANTIC_THRESHOLD acts as a hard cap when set: nodes whose
+// cosine distance exceeds the threshold are excluded from semantic results.
+// The LIKE fallback also returns no results (query text not in any field),
+// so the node is fully absent from the response.
+func TestSearchNodesSemantic_EnvThresholdFiltersResults(t *testing.T) {
+	s := newStore(t)
+	if !s.VecAvailable() {
+		t.Skip("sqlite-vec not available")
+	}
+
+	queryVec := makeDenseVector(1)
+	farVec := makeDenseVector(50)
+
+	withFakeEmbeddings(t, map[string][]float32{
+		"thresh-env-node":  farVec,
+		"thresh-env-query": queryVec,
+	})
+
+	n, err := s.AddNode("thresh-env-node", "thresh-env-node-desc", "thresh-env-node-why", "proj", nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	// Distance ≈ 1.0; threshold 0.1 forces break before any result is collected.
+	t.Setenv("MEMORYWEB_SEMANTIC_THRESHOLD", "0.1")
+
+	result, err := s.SearchNodes("thresh-env-query", "proj", 10, "", nil)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	for _, nr := range result.Nodes {
+		if nr.ID == n.ID {
+			t.Errorf("node at dist ≈ 1.0 should be filtered by MEMORYWEB_SEMANTIC_THRESHOLD=0.1")
 		}
 	}
 }
