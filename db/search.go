@@ -157,7 +157,18 @@ func semanticThreshold() (float64, bool) {
 // MEMORYWEB_SEMANTIC_THRESHOLD is set it stops early at that distance;
 // otherwise it returns all rows up to fetch. Applies domain and node_kind
 // filters via JOIN.
-func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob []byte, nodeKinds []string) ([]NodeResult, error) {
+//
+// The second return value is the first (smallest) cosine distance scanned
+// before any threshold was applied — nil when the table returned no rows at
+// all. This allows callers to produce meaningful diagnostic logs even when
+// MEMORYWEB_SEMANTIC_THRESHOLD suppresses the entire result set.
+func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob []byte, nodeKinds []string) ([]NodeResult, *float64, error) {
+	switch tableName {
+	case "node_embeddings", "node_label_embeddings", "node_whymatters_embeddings":
+	default:
+		return nil, nil, fmt.Errorf("queryEmbeddingTable: unknown table %q", tableName)
+	}
+
 	conds := []string{"n.archived_at IS NULL"}
 	args := []any{blob}
 	if domain != "" {
@@ -178,11 +189,12 @@ func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob [
 
 	rows, err := st.db.Query(q, args...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
 	thresh, hasThresh := semanticThreshold()
+	var firstDist *float64
 	var results []NodeResult
 	for rows.Next() {
 		var n Node
@@ -193,7 +205,11 @@ func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob [
 			&n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind,
 			&dist,
 		); err != nil {
-			return nil, err
+			return nil, firstDist, err
+		}
+		if firstDist == nil {
+			d := dist
+			firstDist = &d
 		}
 		if hasThresh && dist > thresh {
 			break
@@ -203,7 +219,7 @@ func (st *Store) queryEmbeddingTable(tableName, domain string, fetch int, blob [
 		d := dist
 		results = append(results, NodeResult{Node: n, SemanticDistance: &d})
 	}
-	return results, rows.Err()
+	return results, firstDist, rows.Err()
 }
 
 // searchNodesSemantic ranks nodes by cosine distance between the query
@@ -218,21 +234,22 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 	}
 
 	var results []NodeResult
+	var bestDist *float64
 
 	if st.vecFieldsAvailable {
 		// Per-field path: query label, why_matters, and legacy tables; merge by min dist.
 		// Fetching extra rows from each table to account for overlap after merge.
 		fieldFetch := (limit + 1) * 2
-		labelResults, labelErr := st.queryEmbeddingTable("node_label_embeddings", domain, fieldFetch, blob, nodeKinds)
+		labelResults, labelFirst, labelErr := st.queryEmbeddingTable("node_label_embeddings", domain, fieldFetch, blob, nodeKinds)
 		if labelErr != nil {
 			log.Printf("[memoryweb] per-field search: node_label_embeddings: %v", labelErr)
 		}
-		wmResults, wmErr := st.queryEmbeddingTable("node_whymatters_embeddings", domain, fieldFetch, blob, nodeKinds)
+		wmResults, wmFirst, wmErr := st.queryEmbeddingTable("node_whymatters_embeddings", domain, fieldFetch, blob, nodeKinds)
 		if wmErr != nil {
 			log.Printf("[memoryweb] per-field search: node_whymatters_embeddings: %v", wmErr)
 		}
 		// Also include legacy embeddings for nodes not yet in the field tables.
-		legacyResults, legacyErr := st.queryEmbeddingTable("node_embeddings", domain, fieldFetch, blob, nodeKinds)
+		legacyResults, legacyFirst, legacyErr := st.queryEmbeddingTable("node_embeddings", domain, fieldFetch, blob, nodeKinds)
 		if legacyErr != nil {
 			log.Printf("[memoryweb] per-field search: node_embeddings: %v", legacyErr)
 		}
@@ -250,19 +267,33 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 		sort.Slice(results, func(i, j int) bool {
 			return *results[i].SemanticDistance < *results[j].SemanticDistance
 		})
+
+		// bestDist: from merged results when non-empty, else min of all first-seen
+		// distances. The fallback covers MEMORYWEB_SEMANTIC_THRESHOLD filtering all rows.
+		if len(results) > 0 {
+			d := *results[0].SemanticDistance
+			bestDist = &d
+		} else {
+			for _, fd := range []*float64{labelFirst, wmFirst, legacyFirst} {
+				if fd != nil && (bestDist == nil || *fd < *bestDist) {
+					dd := *fd
+					bestDist = &dd
+				}
+			}
+		}
 	} else {
 		// Legacy path: single concatenated embedding per node.
-		results, err = st.queryEmbeddingTable("node_embeddings", domain, limit+1, blob, nodeKinds)
+		var legacyFirst *float64
+		results, legacyFirst, err = st.queryEmbeddingTable("node_embeddings", domain, limit+1, blob, nodeKinds)
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	// Capture best distance before neighbourhood filtering for diagnostic log.
-	var bestDist *float64
-	if len(results) > 0 {
-		d := *results[0].SemanticDistance
-		bestDist = &d
+		if len(results) > 0 {
+			d := *results[0].SemanticDistance
+			bestDist = &d
+		} else {
+			bestDist = legacyFirst
+		}
 	}
 
 	// Post-filter to neighbourhood if memoryID was supplied.

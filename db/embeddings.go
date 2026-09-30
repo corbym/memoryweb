@@ -339,7 +339,9 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 
 	// Supplementary pass: fill field embeddings for nodes that already have a
 	// legacy node_embeddings entry but were created before migration v16.
-	if st.vecFieldsAvailable {
+	// Skipped when the main loop had candidates but Ollama was unavailable
+	// (count == 0 with candidates > 0) to avoid doubling failed network calls.
+	if st.vecFieldsAvailable && (count > 0 || len(candidates) == 0) {
 		st.backfillFieldEmbeddings()
 	}
 
@@ -379,7 +381,6 @@ func (st *Store) backfillFieldEmbeddings() {
 		log.Printf("[memoryweb] backfill field embeddings: query: %v", err)
 		return
 	}
-	defer rows.Close()
 
 	type candidate struct{ id, label, description, whyMatters string }
 	var candidates []candidate
