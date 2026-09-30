@@ -185,6 +185,48 @@ func TestWaitForOllamaReady_UnreachableExpiredDeadline(t *testing.T) {
 
 // ── runDoctor tests ───────────────────────────────────────────────────────────
 
+// TestRunBackfill_SupplementaryOnlyOllamaDown_PrintsWarning verifies that when
+// all nodes already have a legacy embedding (pre-v16 install) but lack per-field
+// embeddings, and Ollama is unavailable, runBackfill prints the Ollama-unavailable
+// warning rather than the false "All embeddings are up to date." message.
+func TestRunBackfill_SupplementaryOnlyOllamaDown_PrintsWarning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		embedding := make([]float32, 1024)
+		resp := map[string]any{"embeddings": []any{embedding}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+
+	store, _ := newTestStore(t)
+	if !store.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+	if _, err := store.AddNode("test node", "desc", "why", "proj", nil, "", "decision"); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	// Simulate pre-v16 state: clear field embeddings, keep legacy embedding.
+	if err := store.ClearFieldEmbeddings(); err != nil {
+		t.Fatalf("ClearFieldEmbeddings: %v", err)
+	}
+
+	// Disable Ollama so the supplementary pass cannot write field embeddings.
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
+
+	var buf bytes.Buffer
+	if err := runBackfill(store, &buf, false); err != nil {
+		t.Fatalf("runBackfill: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "All embeddings are up to date") {
+		t.Errorf("expected Ollama warning, not false 'up to date' message; got: %q", out)
+	}
+	if !strings.Contains(out, "No embeddings stored") {
+		t.Errorf("expected 'No embeddings stored' Ollama warning; got: %q", out)
+	}
+}
+
 func TestRunDoctor_TextOutput_ContainsSections(t *testing.T) {
 	store, dbPath := newTestStore(t)
 	home := t.TempDir() // no hooks configured

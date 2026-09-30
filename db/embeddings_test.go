@@ -314,6 +314,54 @@ func TestBackfillEmbeddings_OllamaDownFieldCountIsZero(t *testing.T) {
 	}
 }
 
+// TestBackfillEmbeddings_PartialFieldSuccessNoDuplicateCount verifies that when
+// one per-field embed call fails in the main loop (partial success), the node is
+// not double-counted when the supplementary pass later completes the missing field.
+// This covers the path where embedAndStoreFields stores one field but not the
+// other — the node appears in the supplementary pass, but the count must stay at 1.
+func TestBackfillEmbeddings_PartialFieldSuccessNoDuplicateCount(t *testing.T) {
+	var callCount atomic.Int32
+	// Call 1 = probe, call 2 = legacy concat; both succeed.
+	// Call 3 = first per-field embed in the main loop — fail to simulate partial
+	// success (whether label or why_matters depends on map iteration; either way
+	// one field is stored and one is missing, so the node appears in the supp pass).
+	// Calls 4+ (second per-field in main loop, both fields in supp pass) succeed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if callCount.Add(1) == 3 {
+			http.Error(w, "simulated partial per-field failure", http.StatusInternalServerError)
+			return
+		}
+		embedding := make([]float32, 1024)
+		resp := map[string]any{"embeddings": []any{embedding}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	s := newStore(t)
+	if !s.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+
+	// Add node without embeddings so the main loop has one candidate.
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
+	if _, err := s.AddNode("test", "desc", "why", "proj", nil, "", "decision"); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+
+	n, err := s.BackfillEmbeddings(nil)
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	// Main loop wrote the legacy embedding (count 1). The supplementary pass
+	// completes the missing field embedding for the same node — but because the
+	// node was already counted by the main loop, count must remain 1.
+	if n != 1 {
+		t.Errorf("expected count 1 (no double-count on partial-success path); got %d", n)
+	}
+}
+
 // TestBackfillEmbeddings_NoDuplicateCountWhenFieldFails verifies that a node
 // processed by the main loop (legacy embedding stored) but whose field
 // embeddings fail is not double-counted — the supplementary pass must exclude

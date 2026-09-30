@@ -316,6 +316,7 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 		}
 	}
 
+	processedIDs := make(map[string]struct{})
 	count := 0
 	for i, cand := range candidates {
 		embedding, err := embed(embedTextForNode(cand.label, cand.description, cand.whyMatters))
@@ -333,6 +334,7 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 		}
 		if st.storeEmbedding(cand.id, embedding) {
 			count++
+			processedIDs[cand.id] = struct{}{} // track for supplementary-pass dedup
 		}
 		// Per-field embeddings (best-effort alongside the legacy embedding).
 		// Supplementary pass will retry nodes whose field embeddings fail here.
@@ -346,7 +348,14 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 	// Skipped when the main loop had candidates but Ollama was unavailable
 	// (count == 0 with candidates > 0) to avoid doubling failed network calls.
 	if st.vecFieldsAvailable && (count > 0 || len(candidates) == 0) {
-		count += st.backfillFieldEmbeddings()
+		suppCount, suppCandidates := st.backfillFieldEmbeddings(processedIDs)
+		count += suppCount
+		// When the main loop had no candidates but the supplementary pass did,
+		// fire the progress callback so runBackfill can detect Ollama was needed
+		// and print the correct warning rather than "All embeddings are up to date."
+		if len(candidates) == 0 && suppCandidates > 0 && suppCount == 0 && progress != nil {
+			progress(0, suppCandidates)
+		}
 	}
 
 	// Record the current model only when the run produced results or there was
@@ -358,8 +367,10 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 }
 
 // embedAndStoreFields generates and stores per-field embeddings for a node.
-// Returns true when all fields were stored successfully. Best-effort: errors
-// are logged but not returned.
+// Returns true only when every expected field was embedded and stored. When
+// one or more embed calls fail (partial success), the successful fields are
+// still stored so future passes only retry the missing ones — but false is
+// returned so callers can distinguish a complete write from a partial one.
 func (st *Store) embedAndStoreFields(id, label, description, whyMatters string) bool {
 	fieldTexts := embedFieldsForNode(label, description, whyMatters)
 	fieldEmbs := make(map[string][]float32, len(fieldTexts))
@@ -368,30 +379,47 @@ func (st *Store) embedAndStoreFields(id, label, description, whyMatters string) 
 			fieldEmbs[field] = emb
 		}
 	}
+	if len(fieldEmbs) < len(fieldTexts) {
+		// At least one embed call failed — store partial result so the
+		// supplementary pass only retries the missing field(s) next run.
+		st.storeFieldEmbeddings(id, fieldEmbs)
+		return false
+	}
 	return st.storeFieldEmbeddings(id, fieldEmbs)
 }
 
 // ClearFieldEmbeddings deletes all rows from the per-field embedding tables
 // (node_label_embeddings and node_whymatters_embeddings) without touching the
 // legacy node_embeddings table. Safe to call before a forced re-backfill.
+// Both deletes run in a single transaction so a failure leaves both tables
+// untouched rather than leaving them in an asymmetric state.
 func (st *Store) ClearFieldEmbeddings() error {
 	if !st.vecFieldsAvailable {
 		return nil
 	}
-	if _, err := st.db.Exec(`DELETE FROM node_label_embeddings`); err != nil {
+	tx, err := st.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.Exec(`DELETE FROM node_label_embeddings`); err != nil {
 		return fmt.Errorf("clear label embeddings: %w", err)
 	}
-	if _, err := st.db.Exec(`DELETE FROM node_whymatters_embeddings`); err != nil {
+	if _, err := tx.Exec(`DELETE FROM node_whymatters_embeddings`); err != nil {
 		return fmt.Errorf("clear whymatters embeddings: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // backfillFieldEmbeddings fills node_label_embeddings and node_whymatters_embeddings
 // for live nodes that lack either per-field embedding (created before migration v16
-// or partially written due to a mid-run Ollama failure). Returns the number of
-// nodes for which per-field embeddings were successfully written.
-func (st *Store) backfillFieldEmbeddings() int {
+// or partially written due to a mid-run Ollama failure). alreadyCounted is the set
+// of node IDs already incremented by the main loop — nodes in this set are processed
+// but not counted again, preventing double-counting when the main loop wrote the
+// legacy embedding but per-field embeddings were only partial. Returns (count,
+// candidateCount): count is the number of newly-counted nodes, candidateCount is the
+// total number of nodes that were candidates for the pass.
+func (st *Store) backfillFieldEmbeddings(alreadyCounted map[string]struct{}) (count, candidateCount int) {
 	rows, err := st.db.Query(`
 		SELECT n.id, n.label, n.description, n.why_matters
 		FROM nodes n
@@ -401,29 +429,30 @@ func (st *Store) backfillFieldEmbeddings() int {
 	`)
 	if err != nil {
 		log.Printf("[memoryweb] backfill field embeddings: query: %v", err)
-		return 0
+		return 0, 0
 	}
 
 	type candidate struct{ id, label, description, whyMatters string }
-	var candidates []candidate
+	var pending []candidate
 	for rows.Next() {
 		var c candidate
 		if err := rows.Scan(&c.id, &c.label, &c.description, &c.whyMatters); err != nil {
 			log.Printf("[memoryweb] backfill field embeddings: scan: %v", err)
 			continue
 		}
-		candidates = append(candidates, c)
+		pending = append(pending, c)
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[memoryweb] backfill field embeddings: rows: %v", err)
 	}
 	rows.Close()
 
-	count := 0
-	for _, cand := range candidates {
+	for _, cand := range pending {
 		if st.embedAndStoreFields(cand.id, cand.label, cand.description, cand.whyMatters) {
-			count++
+			if _, dup := alreadyCounted[cand.id]; !dup {
+				count++
+			}
 		}
 	}
-	return count
+	return count, len(pending)
 }
