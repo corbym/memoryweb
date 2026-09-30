@@ -154,6 +154,9 @@ func (st *Store) storeFieldEmbeddings(id string, fields map[string][]float32) bo
 	if !st.vecFieldsAvailable {
 		return false
 	}
+	if len(fields) == 0 {
+		return false
+	}
 	tableFor := map[string]string{
 		"label":       "node_label_embeddings",
 		"why_matters": "node_whymatters_embeddings",
@@ -332,8 +335,9 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 			count++
 		}
 		// Per-field embeddings (best-effort alongside the legacy embedding).
+		// Supplementary pass will retry nodes whose field embeddings fail here.
 		if st.vecFieldsAvailable {
-			st.embedAndStoreFields(cand.id, cand.label, cand.description, cand.whyMatters)
+			_ = st.embedAndStoreFields(cand.id, cand.label, cand.description, cand.whyMatters)
 		}
 	}
 
@@ -342,7 +346,7 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 	// Skipped when the main loop had candidates but Ollama was unavailable
 	// (count == 0 with candidates > 0) to avoid doubling failed network calls.
 	if st.vecFieldsAvailable && (count > 0 || len(candidates) == 0) {
-		st.backfillFieldEmbeddings()
+		count += st.backfillFieldEmbeddings()
 	}
 
 	// Record the current model only when the run produced results or there was
@@ -354,8 +358,9 @@ func (st *Store) BackfillEmbeddings(progress func(done, total int)) (int, error)
 }
 
 // embedAndStoreFields generates and stores per-field embeddings for a node.
-// Best-effort: errors are logged but not returned.
-func (st *Store) embedAndStoreFields(id, label, description, whyMatters string) {
+// Returns true when all fields were stored successfully. Best-effort: errors
+// are logged but not returned.
+func (st *Store) embedAndStoreFields(id, label, description, whyMatters string) bool {
 	fieldTexts := embedFieldsForNode(label, description, whyMatters)
 	fieldEmbs := make(map[string][]float32, len(fieldTexts))
 	for field, text := range fieldTexts {
@@ -363,13 +368,30 @@ func (st *Store) embedAndStoreFields(id, label, description, whyMatters string) 
 			fieldEmbs[field] = emb
 		}
 	}
-	st.storeFieldEmbeddings(id, fieldEmbs)
+	return st.storeFieldEmbeddings(id, fieldEmbs)
+}
+
+// ClearFieldEmbeddings deletes all rows from the per-field embedding tables
+// (node_label_embeddings and node_whymatters_embeddings) without touching the
+// legacy node_embeddings table. Safe to call before a forced re-backfill.
+func (st *Store) ClearFieldEmbeddings() error {
+	if !st.vecFieldsAvailable {
+		return nil
+	}
+	if _, err := st.db.Exec(`DELETE FROM node_label_embeddings`); err != nil {
+		return fmt.Errorf("clear label embeddings: %w", err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM node_whymatters_embeddings`); err != nil {
+		return fmt.Errorf("clear whymatters embeddings: %w", err)
+	}
+	return nil
 }
 
 // backfillFieldEmbeddings fills node_label_embeddings and node_whymatters_embeddings
 // for live nodes that lack either per-field embedding (created before migration v16
-// or partially written due to a mid-run Ollama failure).
-func (st *Store) backfillFieldEmbeddings() {
+// or partially written due to a mid-run Ollama failure). Returns the number of
+// nodes for which per-field embeddings were successfully written.
+func (st *Store) backfillFieldEmbeddings() int {
 	rows, err := st.db.Query(`
 		SELECT n.id, n.label, n.description, n.why_matters
 		FROM nodes n
@@ -379,7 +401,7 @@ func (st *Store) backfillFieldEmbeddings() {
 	`)
 	if err != nil {
 		log.Printf("[memoryweb] backfill field embeddings: query: %v", err)
-		return
+		return 0
 	}
 
 	type candidate struct{ id, label, description, whyMatters string }
@@ -397,7 +419,11 @@ func (st *Store) backfillFieldEmbeddings() {
 	}
 	rows.Close()
 
+	count := 0
 	for _, cand := range candidates {
-		st.embedAndStoreFields(cand.id, cand.label, cand.description, cand.whyMatters)
+		if st.embedAndStoreFields(cand.id, cand.label, cand.description, cand.whyMatters) {
+			count++
+		}
 	}
+	return count
 }

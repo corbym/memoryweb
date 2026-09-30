@@ -71,7 +71,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "  doctor         Run diagnostic checks on the installation")
 			fmt.Fprintln(os.Stdout, "  dream          Print a digest of recent nodes and drift candidates")
 			fmt.Fprintln(os.Stdout, "  search         Search nodes and print lean results (for scripting / hooks)")
-			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one")
+			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one (--force rebuilds per-field tables)")
 			fmt.Fprintln(os.Stdout, "  merge-domains  Merge all nodes from one domain into another")
 			fmt.Fprintln(os.Stdout, "  backup         Write a consistent standalone snapshot of the database")
 			fmt.Fprintln(os.Stdout, "  purge          Hard-delete archived nodes (requires --confirm or --dry-run)")
@@ -379,6 +379,7 @@ func backfillCmd() {
 	flags := flag.NewFlagSet("backfill", flag.ExitOnError)
 	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
 	quiet := flags.Bool("q", false, "suppress progress output")
+	force := flags.Bool("force", false, "clear per-field embedding tables and rebuild them (use after upgrading to v1.55.0+)")
 	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
 
 	store, err := db.New(*dbFlag)
@@ -391,6 +392,16 @@ func backfillCmd() {
 			log.Printf("[memoryweb] store close: %v", err)
 		}
 	}()
+
+	if *force {
+		if !*quiet {
+			fmt.Fprintln(os.Stdout, "Clearing per-field embedding tables...")
+		}
+		if err := store.ClearFieldEmbeddings(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: clear field embeddings: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	if err := runBackfill(store, os.Stdout, *quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -453,12 +464,12 @@ func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 	if !quiet {
 		switch {
 		case n > 0:
-			fmt.Fprintf(out, "Backfilled %d embedding(s).\n", n)
+			fmt.Fprintf(out, "Backfilled %d node(s).\n", n)
 		case progressFired:
 			// Candidates existed but all embeds failed — Ollama is likely down.
 			fmt.Fprintln(out, "No embeddings stored — is Ollama running? Run: ollama serve")
 		default:
-			fmt.Fprintln(out, "No nodes needed backfilling (all nodes already have embeddings).")
+			fmt.Fprintln(out, "All embeddings are up to date.")
 		}
 	}
 	return nil

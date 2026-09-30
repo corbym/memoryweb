@@ -108,9 +108,9 @@ func TestBackfillReportsZeroWhenOllamaUnavailable(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("backfill exited %d; output:\n%s", code, out)
 	}
-	// Without Ollama, embed() returns nil → 0 nodes backfilled.
-	// The message distinguishes "nothing to do" from "Ollama unavailable".
-	if !strings.Contains(out, "No embeddings stored") && !strings.Contains(out, "No nodes needed") {
+	// Zero nodes backfilled: either Ollama unavailable ("No embeddings stored")
+	// or everything already up to date ("All embeddings are up to date").
+	if !strings.Contains(out, "No embeddings stored") && !strings.Contains(out, "All embeddings are up to date") {
 		t.Errorf("expected output to report zero backfilled; got:\n%s", out)
 	}
 }

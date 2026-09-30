@@ -282,6 +282,82 @@ func TestEmbeddingModel_EnvOverride(t *testing.T) {
 	}
 }
 
+// TestBackfillEmbeddings_OllamaDownFieldCountIsZero verifies that when Ollama
+// becomes unavailable before the supplementary per-field pass, the returned
+// count is 0 — not inflated by the vacuous success of storeFieldEmbeddings
+// called with an empty embedding map.
+func TestBackfillEmbeddings_OllamaDownFieldCountIsZero(t *testing.T) {
+	var reqCount atomic.Int32
+	srv := fakeEmbedServer(t, &reqCount)
+	defer srv.Close()
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+
+	s := newStore(t)
+	if !s.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+	if _, err := s.AddNode("test", "desc", "why", "proj", nil, "", "decision"); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if err := s.ClearFieldEmbeddings(); err != nil {
+		t.Fatalf("ClearFieldEmbeddings: %v", err)
+	}
+	// Disable Ollama so embed calls in the supplementary pass all fail.
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
+
+	n, err := s.BackfillEmbeddings(nil)
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected count 0 when Ollama unavailable during field pass; got %d", n)
+	}
+}
+
+// TestBackfillEmbeddings_NoDuplicateCountWhenFieldFails verifies that a node
+// processed by the main loop (legacy embedding stored) but whose field
+// embeddings fail is not double-counted — the supplementary pass must exclude
+// nodes already handled by the main loop.
+func TestBackfillEmbeddings_NoDuplicateCountWhenFieldFails(t *testing.T) {
+	var callCount atomic.Int32
+	// BackfillEmbeddings probes with label first (call 1), then embeds the
+	// legacy concat text in the main loop (call 2). Succeed for both of those,
+	// then fail all subsequent calls (the per-field label + why_matters).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if callCount.Add(1) > 2 {
+			http.Error(w, "simulated per-field failure", http.StatusInternalServerError)
+			return
+		}
+		embedding := make([]float32, 1024)
+		resp := map[string]any{"embeddings": []any{embedding}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	s := newStore(t)
+	if !s.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+
+	// Add node without embeddings so the main loop has one candidate.
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
+	if _, err := s.AddNode("test", "desc", "why", "proj", nil, "", "decision"); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+
+	n, err := s.BackfillEmbeddings(nil)
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	// Main loop wrote the legacy embedding (count 1). Supplementary pass must
+	// exclude this node so count stays at 1, not 2.
+	if n != 1 {
+		t.Errorf("expected count 1 (legacy only, no field double-count); got %d", n)
+	}
+}
+
 // TestBackfillEmbeddings_DimensionMismatch verifies that BackfillEmbeddings
 // returns an error (not silent failure) when the model returns wrong-dim vectors.
 func TestBackfillEmbeddings_DimensionMismatch(t *testing.T) {
@@ -366,6 +442,95 @@ func TestBackfillEmbeddings_WritesModelToConfig(t *testing.T) {
 	s.DB().QueryRow(`SELECT value FROM config WHERE key = 'embedding_model'`).Scan(&storedModel)
 	if storedModel != "snowflake-arctic-embed" {
 		t.Errorf("expected config to record snowflake-arctic-embed; got %q", storedModel)
+	}
+}
+
+// TestBackfillEmbeddings_SupplementaryPassReturnsCount verifies that when nodes
+// already have legacy embeddings but no per-field embeddings (e.g. after upgrading
+// from pre-v16), BackfillEmbeddings returns count > 0 and the per-field tables
+// are populated. Previously the supplementary pass ran silently and the count
+// stayed 0, causing the CLI to print "No nodes needed backfilling."
+func TestBackfillEmbeddings_SupplementaryPassReturnsCount(t *testing.T) {
+	var reqCount atomic.Int32
+	srv := fakeEmbedServer(t, &reqCount)
+	defer srv.Close()
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+
+	s := newStore(t)
+	if !s.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+
+	_, err := s.AddNode("test node", "desc", "why", "proj", nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	// Simulate pre-v16: clear per-field tables, keeping legacy intact.
+	if err := s.ClearFieldEmbeddings(); err != nil {
+		t.Fatalf("ClearFieldEmbeddings: %v", err)
+	}
+
+	n, err := s.BackfillEmbeddings(nil)
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	if n == 0 {
+		t.Error("expected BackfillEmbeddings count > 0 for supplementary per-field pass; got 0")
+	}
+
+	var labelCount, wmCount int
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_label_embeddings`).Scan(&labelCount)
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_whymatters_embeddings`).Scan(&wmCount)
+	if labelCount == 0 {
+		t.Error("node_label_embeddings: expected rows after supplementary pass; got 0")
+	}
+	if wmCount == 0 {
+		t.Error("node_whymatters_embeddings: expected rows after supplementary pass; got 0")
+	}
+}
+
+// TestClearFieldEmbeddings_PreservesLegacy verifies that ClearFieldEmbeddings
+// removes per-field vectors but leaves node_embeddings intact.
+func TestClearFieldEmbeddings_PreservesLegacy(t *testing.T) {
+	var reqCount atomic.Int32
+	srv := fakeEmbedServer(t, &reqCount)
+	defer srv.Close()
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+
+	s := newStore(t)
+	if !s.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+
+	n, err := s.AddNode("test node", "desc", "why", "proj", nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	var legacyCount int
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_embeddings WHERE node_id = ?`, n.ID).Scan(&legacyCount)
+	if legacyCount == 0 {
+		t.Skip("sqlite-vec not available")
+	}
+
+	if err := s.ClearFieldEmbeddings(); err != nil {
+		t.Fatalf("ClearFieldEmbeddings: %v", err)
+	}
+
+	var labelCount, wmCount int
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_label_embeddings WHERE node_id = ?`, n.ID).Scan(&labelCount)
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_whymatters_embeddings WHERE node_id = ?`, n.ID).Scan(&wmCount)
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_embeddings WHERE node_id = ?`, n.ID).Scan(&legacyCount)
+
+	if labelCount != 0 {
+		t.Errorf("node_label_embeddings: expected 0 after clear, got %d", labelCount)
+	}
+	if wmCount != 0 {
+		t.Errorf("node_whymatters_embeddings: expected 0 after clear, got %d", wmCount)
+	}
+	if legacyCount != 1 {
+		t.Errorf("node_embeddings: expected 1 (preserved), got %d", legacyCount)
 	}
 }
 
