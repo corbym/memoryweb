@@ -260,7 +260,7 @@ list-level `results_truncated`.
 
 ### Version awareness
 
-Last verified against **v1.55.1** (18 MCP tools). `orient` returns
+Last verified against **v1.55.2** (18 MCP tools). `orient` returns
 `server_version`. If it doesn't match, re-check tool behaviour via
 `tools/list` rather than assuming this document is still accurate.
 
