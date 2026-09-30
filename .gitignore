@@ -33,3 +33,6 @@ bug-purge-copy/
 opencode.json
 
 *.exe
+
+# Serena MCP server state (machine-specific)
+.serena/
