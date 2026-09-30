@@ -20,9 +20,11 @@ type NodeResult struct {
 }
 
 type SearchResult struct {
-	Nodes     []NodeResult `json:"nodes"`
-	Edges     []Edge       `json:"edges"`
-	Truncated bool         `json:"truncated,omitempty"`
+	Nodes             []NodeResult `json:"nodes"`
+	Edges             []Edge       `json:"edges"`
+	Truncated         bool         `json:"truncated,omitempty"`
+	SemanticAttempted bool         `json:"semantic_attempted,omitempty"`
+	SemanticBestDist  *float64     `json:"semantic_best_dist,omitempty"`
 }
 
 func (st *Store) SearchNodes(query, domain string, limit int, memoryID string, nodeKinds []string) (*SearchResult, error) {
@@ -312,7 +314,13 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 		if bestDist != nil {
 			log.Printf("[memoryweb] semantic search: no results (best dist %.3f); falling back to text search", *bestDist)
 		}
-		return st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds, true)
+		likeResult, err := st.searchNodesLike(query, domain, limit, allowedIDs, nodeKinds, true)
+		if err != nil {
+			return nil, err
+		}
+		likeResult.SemanticAttempted = true
+		likeResult.SemanticBestDist = bestDist
+		return likeResult, nil
 	}
 
 	truncated := len(results) > limit
@@ -325,7 +333,7 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 	if err != nil {
 		return nil, fmt.Errorf("collectEdges: %w", err)
 	}
-	return &SearchResult{Nodes: results, Edges: edges, Truncated: truncated}, nil
+	return &SearchResult{Nodes: results, Edges: edges, Truncated: truncated, SemanticAttempted: true, SemanticBestDist: bestDist}, nil
 }
 
 // searchNodesLike performs a full-phrase LIKE search. When wordFallback is true

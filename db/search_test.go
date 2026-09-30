@@ -498,3 +498,115 @@ func TestSearchNodes_MultiWordFallback_RespectsNodeKind(t *testing.T) {
 		t.Errorf("expected only decision node from word fallback, got %+v", res.Nodes)
 	}
 }
+
+// TestSearchNodesSemantic_DiagnosticFields covers the three cases for the
+// SemanticAttempted and SemanticBestDist fields added by STORY-408:
+//   - semantic hit: SemanticAttempted=true, SemanticBestDist non-nil
+//   - semantic miss (threshold suppresses results, LIKE fallback): SemanticAttempted=true, SemanticBestDist non-nil
+//   - lexical-only (Ollama unavailable): SemanticAttempted=false, SemanticBestDist nil
+func TestSearchNodesSemantic_DiagnosticFields(t *testing.T) {
+	if !newStore(t).VecAvailable() {
+		t.Skip("sqlite-vec not available")
+	}
+
+	queryVec := makeDenseVector(1)
+	nodeVec := makeDenseVector(2) // close to queryVec in 1024-D (dist well below 1.0)
+	farVec := makeDenseVector(50) // near-orthogonal to queryVec (dist ≈ 1.0)
+
+	t.Run("semantic_hit", func(t *testing.T) {
+		s := newStore(t)
+		withFakeEmbeddings(t, map[string][]float32{
+			"diag-hit-node":  nodeVec,
+			"diag-hit-query": queryVec,
+		})
+		n, err := s.AddNode("diag-hit-node", "desc", "why", "proj", nil, "", "decision")
+		if err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
+		res, err := s.SearchNodes("diag-hit-query", "proj", 10, "", nil)
+		if err != nil {
+			t.Fatalf("SearchNodes: %v", err)
+		}
+		if !res.SemanticAttempted {
+			t.Error("expected SemanticAttempted=true on semantic hit")
+		}
+		if res.SemanticBestDist == nil {
+			t.Error("expected SemanticBestDist non-nil on semantic hit")
+		}
+		found := false
+		for _, nr := range res.Nodes {
+			if nr.ID == n.ID && nr.SemanticDistance != nil {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected node with SemanticDistance set; nodes: %+v", res.Nodes)
+		}
+	})
+
+	t.Run("semantic_miss_like_fallback", func(t *testing.T) {
+		s := newStore(t)
+		// farVec is near-orthogonal to queryVec (dist ≈ 1.0); threshold 0.1 suppresses it.
+		// The query text is placed only in tags (not embedded) so the LIKE fallback finds it
+		// without the node's embedded vector matching the query.
+		withFakeEmbeddings(t, map[string][]float32{
+			"diag-miss-embed":  farVec,
+			"diag-miss-search": queryVec,
+		})
+		t.Setenv("MEMORYWEB_SEMANTIC_THRESHOLD", "0.1")
+		n, err := s.AddNode("diag-miss-embed", "desc", "why", "proj", nil, "diag-miss-search", "decision")
+		if err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
+		res, err := s.SearchNodes("diag-miss-search", "proj", 10, "", nil)
+		if err != nil {
+			t.Fatalf("SearchNodes: %v", err)
+		}
+		if !res.SemanticAttempted {
+			t.Error("expected SemanticAttempted=true when semantic path ran but found nothing")
+		}
+		if res.SemanticBestDist == nil {
+			t.Error("expected SemanticBestDist non-nil when at least one embedding row was scanned")
+		}
+		found := false
+		for _, nr := range res.Nodes {
+			if nr.ID == n.ID {
+				found = true
+				if nr.SemanticDistance != nil {
+					t.Error("expected LIKE fallback node to have nil SemanticDistance")
+				}
+			}
+		}
+		if !found {
+			t.Errorf("expected LIKE fallback to surface the node; nodes: %+v", res.Nodes)
+		}
+	})
+
+	t.Run("lexical_only_embed_unavailable", func(t *testing.T) {
+		s := newStore(t)
+		t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
+		n, err := s.AddNode("diag-lexical-node", "desc", "why", "proj", nil, "", "decision")
+		if err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
+		res, err := s.SearchNodes("diag-lexical-node", "proj", 10, "", nil)
+		if err != nil {
+			t.Fatalf("SearchNodes: %v", err)
+		}
+		if res.SemanticAttempted {
+			t.Error("expected SemanticAttempted=false when embedding is unavailable")
+		}
+		if res.SemanticBestDist != nil {
+			t.Error("expected SemanticBestDist nil when embedding is unavailable")
+		}
+		found := false
+		for _, nr := range res.Nodes {
+			if nr.ID == n.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected LIKE to surface the node; nodes: %+v", res.Nodes)
+		}
+	})
+}
