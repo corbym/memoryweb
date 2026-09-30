@@ -58,11 +58,11 @@ You can download directly from the terminal:
 ```bash
 # x86-64
 curl -L -o /tmp/memoryweb.tar.gz \
-  https://github.com/corbym/memoryweb/releases/download/v1.4.0/memoryweb_v1.4.0_linux_amd64.tar.gz
+  https://github.com/corbym/memoryweb/releases/download/v1.55.0/memoryweb_v1.55.0_linux_amd64.tar.gz
 
 # ARM64
 curl -L -o /tmp/memoryweb.tar.gz \
-  https://github.com/corbym/memoryweb/releases/download/v1.4.0/memoryweb_v1.4.0_linux_arm64.tar.gz
+  https://github.com/corbym/memoryweb/releases/download/v1.55.0/memoryweb_v1.55.0_linux_arm64.tar.gz
 ```
 
 ---

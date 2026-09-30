@@ -255,7 +255,7 @@ memoryweb doctor --json                              # machine-readable JSON out
 Each check prints a status symbol: `[✓]` pass, `[✗]` fail, `[!]` warning, `[i]` informational. The command exits with code 1 if any check fails. Example output:
 
 ```
-[✓] Database:        ~/.memoryweb.db (WAL, schema v15)
+[✓] Database:        ~/.memoryweb.db (WAL, schema v16)
 [✓] sqlite-vec:      v0.1.6 — 142/145 nodes embedded (98%)
 [✗] Ollama binary:   not found in PATH — install from https://ollama.com/download
 [!] Ollama server:   skipped (Ollama binary not found)
@@ -460,7 +460,7 @@ Your database is forward-compatible — the binary runs any pending migrations a
 go build -o memoryweb .
 ```
 
-Requires Go 1.24+. Uses `github.com/mattn/go-sqlite3` and [sqlite-vec](https://github.com/asg017/sqlite-vec) for semantic search — CGO must be available. To deploy safely when the binary is already running:
+Requires Go 1.25+. Uses `github.com/mattn/go-sqlite3` and [sqlite-vec](https://github.com/asg017/sqlite-vec) for semantic search — CGO must be available. To deploy safely when the binary is already running:
 
 ```bash
 go build -o memoryweb.tmp . && mv memoryweb.tmp memoryweb

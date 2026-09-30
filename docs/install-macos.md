@@ -56,7 +56,7 @@ Run the following commands, substituting the filename you downloaded and your ch
 
 ```bash
 # Extract the archive (replace the filename with what you downloaded)
-tar -xzf ~/Downloads/memoryweb_v1.4.0_darwin_arm64.tar.gz -C ~/Downloads
+tar -xzf ~/Downloads/memoryweb_v1.55.0_darwin_arm64.tar.gz -C ~/Downloads
 
 # Move the binary to a permanent location on your PATH
 sudo mv ~/Downloads/memoryweb_darwin_arm64/memoryweb /usr/local/bin/memoryweb
