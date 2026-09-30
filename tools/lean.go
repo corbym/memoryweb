@@ -25,9 +25,11 @@ type leanEdge struct {
 }
 
 type leanSearchResult struct {
-	Nodes     []leanSearchNode `json:"nodes"`
-	Edges     []leanEdge       `json:"edges"`
-	Truncated bool             `json:"truncated,omitempty"`
+	Nodes             []leanSearchNode `json:"nodes"`
+	Edges             []leanEdge       `json:"edges"`
+	Truncated         bool             `json:"truncated,omitempty"`
+	SemanticAttempted bool             `json:"semantic_attempted,omitempty"`
+	SemanticBestDist  *float64         `json:"semantic_best_dist,omitempty"`
 }
 
 func toLeanSearchResult(r *db.SearchResult) leanSearchResult {
@@ -44,7 +46,13 @@ func toLeanSearchResult(r *db.SearchResult) leanSearchResult {
 	for i, edge := range r.Edges {
 		edges[i] = leanEdge{FromNode: edge.FromNode, ToNode: edge.ToNode, Relationship: edge.Relationship}
 	}
-	return leanSearchResult{Nodes: nodes, Edges: edges, Truncated: r.Truncated}
+	return leanSearchResult{
+		Nodes:             nodes,
+		Edges:             edges,
+		Truncated:         r.Truncated,
+		SemanticAttempted: r.SemanticAttempted,
+		SemanticBestDist:  r.SemanticBestDist,
+	}
 }
 
 func truncateWhy(s string) (string, bool) {
@@ -238,9 +246,11 @@ func digestLineFromTrust(node leanTrustNode) string {
 }
 
 type digestSearchResult struct {
-	Lines     []string   `json:"lines"`
-	Edges     []leanEdge `json:"edges,omitempty"`
-	Truncated bool       `json:"truncated,omitempty"`
+	Lines             []string   `json:"lines"`
+	Edges             []leanEdge `json:"edges,omitempty"`
+	Truncated         bool       `json:"truncated,omitempty"`
+	SemanticAttempted bool       `json:"semantic_attempted,omitempty"`
+	SemanticBestDist  *float64   `json:"semantic_best_dist,omitempty"`
 }
 
 func toDigestSearchResult(r *db.SearchResult) digestSearchResult {
@@ -252,7 +262,13 @@ func toDigestSearchResult(r *db.SearchResult) digestSearchResult {
 	for i, edge := range r.Edges {
 		edges[i] = leanEdge{FromNode: edge.FromNode, ToNode: edge.ToNode, Relationship: edge.Relationship}
 	}
-	return digestSearchResult{Lines: lines, Edges: edges, Truncated: r.Truncated}
+	return digestSearchResult{
+		Lines:             lines,
+		Edges:             edges,
+		Truncated:         r.Truncated,
+		SemanticAttempted: r.SemanticAttempted,
+		SemanticBestDist:  r.SemanticBestDist,
+	}
 }
 
 type digestSignificanceResult struct {

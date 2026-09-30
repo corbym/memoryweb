@@ -319,6 +319,11 @@ func (st *Store) searchNodesSemantic(query, domain string, limit int, embedding 
 			return nil, err
 		}
 		likeResult.SemanticAttempted = true
+		// bestDist reflects the closest embedding row scanned before any
+		// neighbourhood filter was applied. When allowedIDs removes all
+		// semantic candidates, bestDist may be non-nil even though every
+		// returned node came from LIKE — it tells the caller a close semantic
+		// match exists outside the requested neighbourhood.
 		likeResult.SemanticBestDist = bestDist
 		return likeResult, nil
 	}

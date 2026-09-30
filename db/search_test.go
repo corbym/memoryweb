@@ -510,8 +510,8 @@ func TestSearchNodesSemantic_DiagnosticFields(t *testing.T) {
 	}
 
 	queryVec := makeDenseVector(1)
-	nodeVec := makeDenseVector(2) // close to queryVec in 1024-D (dist well below 1.0)
-	farVec := makeDenseVector(50) // near-orthogonal to queryVec (dist ≈ 1.0)
+	nodeVec := makeDenseVector(2) // independent seed → near-orthogonal (dist ≈ 1.0); no threshold set so it is still returned
+	farVec := makeDenseVector(50) // independent seed → near-orthogonal (dist ≈ 1.0); threshold 0.1 suppresses it
 
 	t.Run("semantic_hit", func(t *testing.T) {
 		s := newStore(t)
