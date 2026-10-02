@@ -86,11 +86,6 @@ when someone asks "how do I connect multiple memories at once?"
   registers. "Lets agents wire up several related findings in one atomic call
   without looping" — "wire up" and "atomic" bridge outcome and technical
   vocabulary. **This field is the primary retrieval bridge; never skip it.**
-  For nodes with technical labels, add at least one outcome-framed sentence
-  that uses natural-language vocabulary a user would type as a question. E.g.
-  "prevents agents from accidentally writing credentials or API keys into
-  memory" alongside "stdlib 5-pattern detector" — the outcome sentence is what
-  surfaces the node for conceptual queries.
 
 If `orient()` returned a nonzero stale count for the domain, run
 `audit(mode=stale)` before filing anything new there — a fresh contradiction
