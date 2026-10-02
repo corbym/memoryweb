@@ -67,6 +67,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "")
 			fmt.Fprintln(os.Stdout, "Subcommands:")
 			fmt.Fprintln(os.Stdout, "  setup          Install Claude Code hooks and configure desktop MCP clients")
+			fmt.Fprintln(os.Stdout, "  install-skill  Install the memoryweb agent skill to ~/.claude/skills/memoryweb/SKILL.md")
 			fmt.Fprintln(os.Stdout, "  options        View or set hook behaviour options")
 			fmt.Fprintln(os.Stdout, "  doctor         Run diagnostic checks on the installation")
 			fmt.Fprintln(os.Stdout, "  dream          Print a digest of recent nodes and drift candidates")
@@ -91,6 +92,9 @@ func main() {
 		case "backfill":
 			backfillCmd()
 			return
+		case "install-skill":
+			installSkillCmd()
+			return
 		case "setup":
 			setupCmd()
 			return
@@ -111,7 +115,7 @@ func main() {
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "memoryweb: unknown subcommand %q\n\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "Subcommands: setup, options, doctor, dream, search, backfill, merge-domains, backup, purge, version")
+			fmt.Fprintln(os.Stderr, "Subcommands: setup, install-skill, options, doctor, dream, search, backfill, merge-domains, backup, purge, version")
 			fmt.Fprintln(os.Stderr, "Run 'memoryweb --help' for usage.")
 			os.Exit(1)
 		}
@@ -567,6 +571,78 @@ func setupWriteMCPServerConfig(configPath, exePath, dbPath string) error {
 	return os.WriteFile(configPath, output, 0600)
 }
 
+// installSkillCmd implements the "memoryweb install-skill" subcommand.
+func installSkillCmd() {
+	flags := flag.NewFlagSet("install-skill", flag.ExitOnError)
+	dryRun := flags.Bool("dry-run", false, "print what would change without writing")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot determine home directory: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runInstallSkill(os.Stdout, home, *dryRun); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runInstallSkill writes the embedded memoryweb skill to
+// ~/.claude/skills/memoryweb/SKILL.md. It is idempotent: if the file already
+// exists and matches the embedded content, it prints "already up to date" and
+// returns nil. In dry-run mode it reports what would happen without writing.
+func runInstallSkill(out io.Writer, home string, dryRun bool) error {
+	skillPath := filepath.Join(home, ".claude", "skills", "memoryweb", "SKILL.md")
+
+	existing, readErr := os.ReadFile(skillPath)
+	alreadyCurrent := readErr == nil && string(existing) == skillContent
+
+	if dryRun {
+		if alreadyCurrent {
+			fmt.Fprintf(out, "[dry-run] memoryweb skill is already up to date at %s\n", skillPath)
+		} else if os.IsNotExist(readErr) {
+			fmt.Fprintf(out, "[dry-run] would install memoryweb skill at %s\n", skillPath)
+		} else {
+			fmt.Fprintf(out, "[dry-run] would update memoryweb skill at %s\n", skillPath)
+		}
+		return nil
+	}
+
+	if alreadyCurrent {
+		fmt.Fprintln(out, "memoryweb skill is already up to date")
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0755); err != nil {
+		return fmt.Errorf("create skill dir: %w", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(skillContent), 0644); err != nil {
+		return fmt.Errorf("write skill: %w", err)
+	}
+
+	if os.IsNotExist(readErr) {
+		fmt.Fprintf(out, "memoryweb skill installed at %s\n", skillPath)
+	} else {
+		fmt.Fprintf(out, "memoryweb skill updated at %s\n", skillPath)
+	}
+	return nil
+}
+
+// doctorCheckSkill inspects ~/.claude/skills/memoryweb/SKILL.md and returns
+// ok/warn/fail depending on whether it is present, stale, or missing.
+func doctorCheckSkill(home string) (message, status string) {
+	skillPath := filepath.Join(home, ".claude", "skills", "memoryweb", "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		return "skill not installed — run: memoryweb install-skill", "fail"
+	}
+	if string(data) != skillContent {
+		return "skill is stale — run: memoryweb install-skill", "warn"
+	}
+	return "memoryweb skill up to date", "ok"
+}
+
 // setupCmd implements the "memoryweb setup" subcommand.
 func setupCmd() {
 	flags := flag.NewFlagSet("setup", flag.ExitOnError)
@@ -705,6 +781,11 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 			return fmt.Errorf("write settings: %w", err)
 		}
 		fmt.Fprintln(out, "memoryweb hooks installed. Restart Claude Code to activate.")
+	}
+
+	// ── Agent skill ──────────────────────────────────────────────────────────
+	if err := runInstallSkill(out, home, dryRun); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not install skill: %v\n", err)
 	}
 
 	// ── Desktop agent detection ───────────────────────────────────────────────
@@ -1200,6 +1281,10 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 	// ── 6. Claude Code hooks ──────────────────────────────────────────────────
 	hooksMsg, hooksStatus := doctorCheckHooks(home)
 	add("Claude hooks", hooksStatus, hooksMsg)
+
+	// ── 6a. Agent skill ───────────────────────────────────────────────────────
+	skillMsg, skillStatus := doctorCheckSkill(home)
+	add("Agent skill", skillStatus, skillMsg)
 
 	// ── 7. Graph stats (informational) ────────────────────────────────────────
 	liveNodes, archivedNodes, nodeErr := store.NodeCounts()

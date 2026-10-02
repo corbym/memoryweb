@@ -1191,6 +1191,150 @@ func TestCIWorkflowTestCommand_HasRaceTimeoutAndCountOne(t *testing.T) {
 	}
 }
 
+// ── install-skill tests ──────────────────────────────────────────────────────
+
+// TestInstallSkill_EmbedMatchesFile verifies skillContent matches the source file at test time.
+func TestInstallSkill_EmbedMatchesFile(t *testing.T) {
+	data, err := os.ReadFile("docs/memoryweb-skill.md")
+	if err != nil {
+		t.Fatalf("read docs/memoryweb-skill.md: %v", err)
+	}
+	if string(data) != skillContent {
+		t.Error("embedded skillContent does not match docs/memoryweb-skill.md")
+	}
+}
+
+func TestInstallSkill_Write(t *testing.T) {
+	home := t.TempDir()
+	var buf bytes.Buffer
+	if err := runInstallSkill(&buf, home, false); err != nil {
+		t.Fatalf("runInstallSkill: %v", err)
+	}
+	skillPath := filepath.Join(home, ".claude", "skills", "memoryweb", "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("skill file not written: %v", err)
+	}
+	if string(data) != skillContent {
+		t.Error("written content does not match embedded skill")
+	}
+	if !strings.Contains(buf.String(), "installed") {
+		t.Errorf("expected 'installed' in output; got %q", buf.String())
+	}
+}
+
+func TestInstallSkill_Idempotent(t *testing.T) {
+	home := t.TempDir()
+	var buf bytes.Buffer
+	if err := runInstallSkill(&buf, home, false); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	buf.Reset()
+	if err := runInstallSkill(&buf, home, false); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if !strings.Contains(buf.String(), "up to date") {
+		t.Errorf("expected 'up to date' on second run; got %q", buf.String())
+	}
+}
+
+func TestInstallSkill_Stale(t *testing.T) {
+	home := t.TempDir()
+	skillDir := filepath.Join(home, ".claude", "skills", "memoryweb")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("old content"), 0644); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := runInstallSkill(&buf, home, false); err != nil {
+		t.Fatalf("runInstallSkill: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read skill file: %v", err)
+	}
+	if string(data) != skillContent {
+		t.Error("stale skill not overwritten with embedded content")
+	}
+	if !strings.Contains(buf.String(), "updated") {
+		t.Errorf("expected 'updated' in output; got %q", buf.String())
+	}
+}
+
+func TestInstallSkill_DryRun(t *testing.T) {
+	home := t.TempDir()
+	var buf bytes.Buffer
+	if err := runInstallSkill(&buf, home, true); err != nil {
+		t.Fatalf("runInstallSkill dry-run: %v", err)
+	}
+	skillPath := filepath.Join(home, ".claude", "skills", "memoryweb", "SKILL.md")
+	if _, err := os.Stat(skillPath); err == nil {
+		t.Error("dry-run must not write the skill file")
+	}
+	if !strings.Contains(buf.String(), "dry-run") {
+		t.Errorf("expected 'dry-run' in output; got %q", buf.String())
+	}
+}
+
+func TestDoctorCheckSkill_Missing(t *testing.T) {
+	home := t.TempDir()
+	msg, status := doctorCheckSkill(home)
+	if status != "fail" {
+		t.Errorf("expected fail for missing skill; got status=%q msg=%q", status, msg)
+	}
+	if !strings.Contains(msg, "install-skill") {
+		t.Errorf("expected 'install-skill' in message; got %q", msg)
+	}
+}
+
+func TestDoctorCheckSkill_Present(t *testing.T) {
+	home := t.TempDir()
+	var buf bytes.Buffer
+	if err := runInstallSkill(&buf, home, false); err != nil {
+		t.Fatalf("install skill: %v", err)
+	}
+	_, status := doctorCheckSkill(home)
+	if status != "ok" {
+		t.Errorf("expected ok for installed skill; got %q", status)
+	}
+}
+
+func TestDoctorCheckSkill_Stale(t *testing.T) {
+	home := t.TempDir()
+	skillDir := filepath.Join(home, ".claude", "skills", "memoryweb")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("old content"), 0644); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+	msg, status := doctorCheckSkill(home)
+	if status != "warn" {
+		t.Errorf("expected warn for stale skill; got status=%q msg=%q", status, msg)
+	}
+	if !strings.Contains(msg, "stale") {
+		t.Errorf("expected 'stale' in message; got %q", msg)
+	}
+}
+
+func TestRunDoctor_SkillCheck_FailsWhenMissing(t *testing.T) {
+	store, dbPath := newTestStore(t)
+	home := t.TempDir() // no skill installed
+
+	var buf bytes.Buffer
+	passed := runDoctor(store, &buf, dbPath, home, false)
+	out := buf.String()
+
+	if !strings.Contains(out, "[✗] Agent skill:") {
+		t.Errorf("missing skill should produce [✗] Agent skill; got:\n%s", out)
+	}
+	if passed {
+		t.Errorf("runDoctor should return false when skill is missing; output:\n%s", out)
+	}
+}
+
 func TestGomodGoDirectiveMatchesToolchain(t *testing.T) {
 	raw, err := os.ReadFile("go.mod")
 	if err != nil {

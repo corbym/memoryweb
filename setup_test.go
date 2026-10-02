@@ -526,3 +526,42 @@ func TestSetupResolvesRelativeDBInMCPServerConfig(t *testing.T) {
 		t.Errorf("MEMORYWEB_DB = %q, want resolved absolute path %q", got, want)
 	}
 }
+
+// TestSetupInstallsSkill: running setup writes the skill file.
+func TestSetupInstallsSkill(t *testing.T) {
+	tmpHome := t.TempDir()
+
+	_, code := runSetupCmd(t, tmpHome, "--hooks-dir", hooksDir(t))
+	if code != 0 {
+		t.Fatal("setup run failed")
+	}
+
+	skillPath := filepath.Join(tmpHome, ".claude", "skills", "memoryweb", "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("skill file not written: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("skill file is empty")
+	}
+	// Sanity-check: the skill mentions memoryweb somewhere.
+	if !strings.Contains(string(data), "memoryweb") {
+		t.Error("skill file does not mention memoryweb")
+	}
+}
+
+// TestSetupDryRunSkillNotWritten: setup --dry-run must not write the skill file.
+func TestSetupDryRunSkillNotWritten(t *testing.T) {
+	tmpHome := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755)
+
+	_, code := runSetupCmdWithStdin(t, tmpHome, "", "--hooks-dir", hooksDir(t), "--dry-run")
+	if code != 0 {
+		t.Fatalf("setup --dry-run exited %d", code)
+	}
+
+	skillPath := filepath.Join(tmpHome, ".claude", "skills", "memoryweb", "SKILL.md")
+	if _, err := os.Stat(skillPath); err == nil {
+		t.Error("setup --dry-run must not write the skill file")
+	}
+}
