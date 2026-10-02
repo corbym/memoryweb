@@ -72,6 +72,21 @@ the topic. If a similar memory already exists, `revise` it instead of filing
 a duplicate. When revising a decision, do not paste new source material into
 its `description` — file a `finding` and `connect` instead.
 
+**Writing for retrieval.** Search queries use outcome and intent vocabulary,
+not just implementation names. A node labelled "AddEdgesBatch" won't surface
+when someone asks "how do I connect multiple memories at once?"
+
+- **Label**: lead with the outcome or intent, not just the implementation
+  name. Include both if the implementation name matters. "Batch edge creation
+  — connect multiple memories in one call" beats "AddEdgesBatch".
+- **tags**: include synonyms across at least two registers — technical term +
+  outcome term + common abbreviation. E.g. `batch-connect multi-edge
+  AddEdgesBatch bulk-connect`.
+- **why_matters**: write at least one sentence that bridges the two
+  registers. "Lets agents wire up several related findings in one atomic call
+  without looping" — "wire up" and "atomic" bridge outcome and technical
+  vocabulary. **This field is the primary retrieval bridge; never skip it.**
+
 If `orient()` returned a nonzero stale count for the domain, run
 `audit(mode=stale)` before filing anything new there — a fresh contradiction
 is easier to reason about before more nodes pile on top of it.
