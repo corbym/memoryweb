@@ -431,6 +431,7 @@ func (st *Store) backfillFieldEmbeddings(alreadyCounted map[string]struct{}) (co
 		log.Printf("[memoryweb] backfill field embeddings: query: %v", err)
 		return 0, 0
 	}
+	defer rows.Close() // panic safety; explicit close below releases cursor before embedding work
 
 	type candidate struct{ id, label, description, whyMatters string }
 	var pending []candidate
@@ -445,7 +446,7 @@ func (st *Store) backfillFieldEmbeddings(alreadyCounted map[string]struct{}) (co
 	if err := rows.Err(); err != nil {
 		log.Printf("[memoryweb] backfill field embeddings: rows: %v", err)
 	}
-	rows.Close()
+	rows.Close() // release cursor before embedding work below
 
 	for _, cand := range pending {
 		if st.embedAndStoreFields(cand.id, cand.label, cand.description, cand.whyMatters) {

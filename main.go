@@ -451,7 +451,12 @@ func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 	if !quiet {
 		progress = func(done, total int) {
 			progressFired = true
-			drawProgressBar(out, done, total)
+			// done=0 is a sentinel from the supplementary pass meaning
+			// "Ollama was attempted but nothing was stored" — don't render
+			// a 0% bar for a pass that never made progress.
+			if done > 0 {
+				drawProgressBar(out, done, total)
+			}
 		}
 	}
 
