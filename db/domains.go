@@ -70,8 +70,13 @@ func (st *Store) ListAliases() ([]DomainAlias, error) {
 	var out []DomainAlias
 	for rows.Next() {
 		var alias DomainAlias
-		rows.Scan(&alias.Alias, &alias.Domain, &alias.CreatedAt)
+		if err := rows.Scan(&alias.Alias, &alias.Domain, &alias.CreatedAt); err != nil {
+			return nil, err
+		}
 		out = append(out, alias)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

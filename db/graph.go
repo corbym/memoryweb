@@ -635,7 +635,9 @@ func (st *Store) suggestEdgesKeyword(id, targetLabel, targetDomain, targetTags s
 	var candidates []scored
 	for rows.Next() {
 		var cid, clabel, ctags string
-		rows.Scan(&cid, &clabel, &ctags)
+		if err := rows.Scan(&cid, &clabel, &ctags); err != nil {
+			return nil, err
+		}
 
 		cLabelLower := strings.ToLower(clabel)
 		cTagsLower := strings.ToLower(ctags)

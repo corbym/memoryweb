@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -606,7 +607,7 @@ func runInstallSkill(out io.Writer, home string, dryRun bool) error {
 	if dryRun {
 		if alreadyCurrent {
 			fmt.Fprintf(out, "[dry-run] memoryweb skill is already up to date at %s\n", skillPath)
-		} else if os.IsNotExist(readErr) {
+		} else if errors.Is(readErr, os.ErrNotExist) {
 			fmt.Fprintf(out, "[dry-run] would install memoryweb skill at %s\n", skillPath)
 		} else {
 			fmt.Fprintf(out, "[dry-run] would update memoryweb skill at %s\n", skillPath)
@@ -626,7 +627,7 @@ func runInstallSkill(out io.Writer, home string, dryRun bool) error {
 		return fmt.Errorf("write skill: %w", err)
 	}
 
-	if os.IsNotExist(readErr) {
+	if errors.Is(readErr, os.ErrNotExist) {
 		fmt.Fprintf(out, "memoryweb skill installed at %s\n", skillPath)
 	} else {
 		fmt.Fprintf(out, "memoryweb skill updated at %s\n", skillPath)

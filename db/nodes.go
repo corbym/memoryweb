@@ -365,6 +365,10 @@ func (st *Store) UpdateNodesBatch(inputs []NodeUpdateInput) ([]*Node, error) {
 			changes = append(changes, fmt.Sprintf("occurred_at (was %s)", oldVal))
 		}
 		if inp.NodeKind != nil {
+			if !isValidNodeKind(*inp.NodeKind) {
+				tx.Rollback()
+				return nil, fmt.Errorf("item %d: invalid node_kind %q — must be one of %v", i, *inp.NodeKind, ValidNodeKinds)
+			}
 			sets = append(sets, "node_kind = ?")
 			args = append(args, *inp.NodeKind)
 			if *inp.NodeKind != cur.NodeKind {
@@ -546,23 +550,32 @@ func (st *Store) LogDomainCreationFlagged(nodeID, nodeLabel, reason string) erro
 func (st *Store) ArchiveNode(id, reason string) error {
 	now := time.Now().UTC()
 
+	tx, err := st.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var label string
-	if err := st.db.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
+	if err := tx.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("node not found: %s", id)
 		}
 		return err
 	}
 
-	if _, err := st.db.Exec(`UPDATE nodes SET archived_at = ? WHERE id = ?`, now, id); err != nil {
+	if _, err := tx.Exec(`UPDATE nodes SET archived_at = ? WHERE id = ?`, now, id); err != nil {
 		return err
 	}
 
-	_, err := st.db.Exec(
+	if _, err := tx.Exec(
 		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		"auditlog-"+shortID(), "archive", id, label, reason, now,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // ArchiveNodesBatch archives multiple nodes in a single transaction.
@@ -634,23 +647,32 @@ func (st *Store) RestoreNodesBatch(ids []string) error {
 func (st *Store) RestoreNode(id string) error {
 	now := time.Now().UTC()
 
+	tx, err := st.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var label string
-	if err := st.db.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
+	if err := tx.QueryRow(`SELECT label FROM nodes WHERE id = ?`, id).Scan(&label); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("node not found: %s", id)
 		}
 		return err
 	}
 
-	if _, err := st.db.Exec(`UPDATE nodes SET archived_at = NULL WHERE id = ?`, id); err != nil {
+	if _, err := tx.Exec(`UPDATE nodes SET archived_at = NULL WHERE id = ?`, id); err != nil {
 		return err
 	}
 
-	_, err := st.db.Exec(
+	if _, err := tx.Exec(
 		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		"auditlog-"+shortID(), "restore", id, label, nil, now,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // ListArchived returns archived nodes, optionally filtered by domain.

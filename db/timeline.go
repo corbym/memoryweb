@@ -34,7 +34,9 @@ func (st *Store) RecentChanges(domain string, limit int, nodeKinds []string) ([]
 	for rows.Next() {
 		var n Node
 		var occurredAt, archivedAt sql.NullTime
-		rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind)
+		if err := rows.Scan(&n.ID, &n.Label, &n.Description, &n.WhyMatters, &n.Domain, &n.CreatedAt, &n.UpdatedAt, &occurredAt, &archivedAt, &n.Tags, &n.NodeKind); err != nil {
+			return nil, err
+		}
 		if occurredAt.Valid {
 			n.OccurredAt = &occurredAt.Time
 		}
@@ -42,6 +44,9 @@ func (st *Store) RecentChanges(domain string, limit int, nodeKinds []string) ([]
 			n.ArchivedAt = &archivedAt.Time
 		}
 		nodes = append(nodes, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return nodes, nil
 }
