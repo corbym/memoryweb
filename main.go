@@ -399,6 +399,12 @@ func backfillCmd() {
 	}()
 
 	if *force {
+		// Probe Ollama before clearing — wiping all embeddings when Ollama is down
+		// would leave the deployment with no semantic search until --force succeeds.
+		if _, probeErr := db.Embed("probe"); probeErr != nil {
+			fmt.Fprintf(os.Stderr, "error: --force requires a running Ollama instance (probe failed: %v)\n", probeErr)
+			os.Exit(1)
+		}
 		if !*quiet {
 			fmt.Fprintln(os.Stdout, "Clearing all embedding tables...")
 		}

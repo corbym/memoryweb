@@ -146,6 +146,28 @@ func EmbedFieldsForNode(label, description, whyMatters string) map[string]string
 	return embedFieldsForNode(label, description, whyMatters)
 }
 
+// storeOneFieldEmbedding writes a single field embedding blob into table using
+// a DELETE + INSERT transaction. sqlite-vec vec0 tables reject INSERT OR REPLACE,
+// so we delete any existing row first. The transaction ensures the old row is
+// kept intact when the insert fails.
+func (st *Store) storeOneFieldEmbedding(id, table string, blob []byte) error {
+	tx, err := st.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.Exec(`DELETE FROM `+table+` WHERE node_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO `+table+`(node_id, embedding) VALUES (?, ?)`,
+		id, blob,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // storeFieldEmbeddings stores per-field embeddings for a node in the
 // node_label_embeddings and node_whymatters_embeddings virtual tables.
 // Each field is stored independently; a failure in one does not affect the other.
@@ -181,30 +203,8 @@ func (st *Store) storeFieldEmbeddings(id string, fields map[string][]float32) bo
 			ok = false
 			continue
 		}
-		// sqlite-vec vec0 tables reject INSERT OR REPLACE; use DELETE + INSERT per field.
-		tx, txErr := st.db.Begin()
-		if txErr != nil {
-			log.Printf("[memoryweb] store field embedding for %s/%s: begin tx: %v", id, field, txErr)
-			ok = false
-			continue
-		}
-		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE node_id = ?`, id); err != nil {
-			tx.Rollback() //nolint:errcheck
+		if err := st.storeOneFieldEmbedding(id, table, blob); err != nil {
 			log.Printf("[memoryweb] store field embedding for %s/%s: %v", id, field, err)
-			ok = false
-			continue
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO `+table+`(node_id, embedding) VALUES (?, ?)`,
-			id, blob,
-		); err != nil {
-			tx.Rollback() //nolint:errcheck
-			log.Printf("[memoryweb] store field embedding for %s/%s: %v", id, field, err)
-			ok = false
-			continue
-		}
-		if err := tx.Commit(); err != nil {
-			log.Printf("[memoryweb] store field embedding for %s/%s: commit: %v", id, field, err)
 			ok = false
 		}
 	}
@@ -289,8 +289,8 @@ func (st *Store) storeEmbedding(id string, embedding []float32) bool {
 		log.Printf("[memoryweb] store embedding for %s: begin tx: %v", id, err)
 		return false
 	}
+	defer tx.Rollback() //nolint:errcheck
 	if _, err := tx.Exec(`DELETE FROM node_embeddings WHERE node_id = ?`, id); err != nil {
-		tx.Rollback() //nolint:errcheck
 		log.Printf("[memoryweb] store embedding for %s: %v", id, err)
 		return false
 	}
@@ -298,7 +298,6 @@ func (st *Store) storeEmbedding(id string, embedding []float32) bool {
 		`INSERT INTO node_embeddings(node_id, embedding) VALUES (?, ?)`,
 		id, blob,
 	); err != nil {
-		tx.Rollback() //nolint:errcheck
 		log.Printf("[memoryweb] store embedding for %s: %v", id, err)
 		return false
 	}

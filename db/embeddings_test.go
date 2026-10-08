@@ -681,11 +681,15 @@ func TestUpdateNode_ReEmbedsReplacesPreviousFieldEmbeddings(t *testing.T) {
 		t.Skip("sqlite-vec not available; skipping field stale-embedding regression test")
 	}
 
-	// Sanity: label blob should be all-3.0.
+	// Sanity: both per-field blobs should be all-3.0 before the update.
 	var blob []byte
 	s.DB().QueryRow(`SELECT embedding FROM node_label_embeddings WHERE node_id = ?`, n.ID).Scan(&blob)
 	if got := decodeFirstFloat32(blob); got != 3.0 {
 		t.Errorf("before update: label first dim expected 3.0, got %v", got)
+	}
+	s.DB().QueryRow(`SELECT embedding FROM node_whymatters_embeddings WHERE node_id = ?`, n.ID).Scan(&blob)
+	if got := decodeFirstFloat32(blob); got != 3.0 {
+		t.Errorf("before update: why_matters first dim expected 3.0, got %v — AddNode did not store a why_matters embedding; test cannot verify stale-row replacement for that field", got)
 	}
 
 	newLabel := "field-fresh-new"
