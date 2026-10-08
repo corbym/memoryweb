@@ -73,7 +73,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "  doctor         Run diagnostic checks on the installation")
 			fmt.Fprintln(os.Stdout, "  dream          Print a digest of recent nodes and drift candidates")
 			fmt.Fprintln(os.Stdout, "  search         Search nodes and print lean results (for scripting / hooks)")
-			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one (--force rebuilds per-field tables)")
+			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one (--force clears all tables and rebuilds)")
 			fmt.Fprintln(os.Stdout, "  merge-domains  Merge all nodes from one domain into another")
 			fmt.Fprintln(os.Stdout, "  backup         Write a consistent standalone snapshot of the database")
 			fmt.Fprintln(os.Stdout, "  purge          Hard-delete archived nodes (requires --confirm or --dry-run)")
@@ -384,7 +384,7 @@ func backfillCmd() {
 	flags := flag.NewFlagSet("backfill", flag.ExitOnError)
 	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
 	quiet := flags.Bool("q", false, "suppress progress output")
-	force := flags.Bool("force", false, "clear per-field embedding tables and rebuild them (use after upgrading to v1.55.0+)")
+	force := flags.Bool("force", false, "clear all embedding tables and rebuild from scratch (use after bulk revise or upgrading)")
 	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
 
 	store, err := db.New(*dbFlag)
@@ -400,10 +400,10 @@ func backfillCmd() {
 
 	if *force {
 		if !*quiet {
-			fmt.Fprintln(os.Stdout, "Clearing per-field embedding tables...")
+			fmt.Fprintln(os.Stdout, "Clearing all embedding tables...")
 		}
-		if err := store.ClearFieldEmbeddings(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: clear field embeddings: %v\n", err)
+		if err := store.ClearAllEmbeddings(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: clear embeddings: %v\n", err)
 			os.Exit(1)
 		}
 	}

@@ -1,7 +1,9 @@
 package db_test
 
 import (
+	"encoding/binary"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -579,6 +581,129 @@ func TestClearFieldEmbeddings_PreservesLegacy(t *testing.T) {
 	}
 	if legacyCount != 1 {
 		t.Errorf("node_embeddings: expected 1 (preserved), got %d", legacyCount)
+	}
+}
+
+// makeConstantVector returns a 1024-dim vector where every element equals val.
+// Used to produce two clearly distinct blobs so we can tell which generation
+// was stored by reading back the first float32.
+func makeConstantVector(val float32) []float32 {
+	v := make([]float32, 1024)
+	for i := range v {
+		v[i] = val
+	}
+	return v
+}
+
+// decodeFirstFloat32 interprets the first 4 bytes of a vec0 serialised blob
+// as a little-endian IEEE-754 float32. Returns 0 when the slice is too short.
+func decodeFirstFloat32(b []byte) float32 {
+	if len(b) < 4 {
+		return 0
+	}
+	return math.Float32frombits(binary.LittleEndian.Uint32(b[:4]))
+}
+
+// TestUpdateNode_ReEmbedsReplacesPreviousEmbedding is the regression test for
+// the "stale embeddings after revise" bug. Before the fix, sqlite-vec's vec0
+// tables rejected INSERT OR REPLACE with a UNIQUE constraint error, so revise
+// silently left the old blob in place. After the fix (DELETE + INSERT in a tx)
+// the updated embedding must replace the old one in all three tables.
+func TestUpdateNode_ReEmbedsReplacesPreviousEmbedding(t *testing.T) {
+	oldVec := makeConstantVector(1.0)
+	newVec := makeConstantVector(2.0)
+	withFakeEmbeddings(t, map[string][]float32{
+		"stale-embed-old-label": oldVec,
+		"fresh-embed-new-label": newVec,
+	})
+
+	s := newStore(t)
+
+	n, err := s.AddNode("stale-embed-old-label", "desc", "why", "proj", nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	var embCount int
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_embeddings WHERE node_id = ?`, n.ID).Scan(&embCount)
+	if embCount == 0 {
+		t.Skip("sqlite-vec not available; skipping stale-embedding regression test")
+	}
+
+	// Sanity: blob should be all-1.0.
+	var blob []byte
+	s.DB().QueryRow(`SELECT embedding FROM node_embeddings WHERE node_id = ?`, n.ID).Scan(&blob)
+	if got := decodeFirstFloat32(blob); got != 1.0 {
+		t.Errorf("before update: expected first dim 1.0, got %v", got)
+	}
+
+	newLabel := "fresh-embed-new-label"
+	if _, err := s.UpdateNode(n.ID, &newLabel, nil, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+
+	// After update: blob must be the new embedding (all-2.0), not the stale one.
+	s.DB().QueryRow(`SELECT embedding FROM node_embeddings WHERE node_id = ?`, n.ID).Scan(&blob)
+	if got := decodeFirstFloat32(blob); got != 2.0 {
+		t.Errorf("after update: expected first dim 2.0 (new embedding), got %v — stale embedding not replaced", got)
+	}
+
+	// Count must remain exactly 1.
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_embeddings WHERE node_id = ?`, n.ID).Scan(&embCount)
+	if embCount != 1 {
+		t.Errorf("expected exactly 1 embedding row after update; got %d", embCount)
+	}
+}
+
+// TestUpdateNode_ReEmbedsReplacesPreviousFieldEmbeddings verifies the same fix
+// for the per-field tables (node_label_embeddings, node_whymatters_embeddings).
+func TestUpdateNode_ReEmbedsReplacesPreviousFieldEmbeddings(t *testing.T) {
+	oldVec := makeConstantVector(3.0)
+	newVec := makeConstantVector(4.0)
+	withFakeEmbeddings(t, map[string][]float32{
+		"field-stale-old": oldVec,
+		"field-fresh-new": newVec,
+	})
+
+	s := newStore(t)
+	if !s.VecFieldsAvailable() {
+		t.Skip("per-field embedding tables not available")
+	}
+
+	n, err := s.AddNode("field-stale-old", "desc", "field-stale-old", "proj", nil, "", "decision")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	var labelCount int
+	s.DB().QueryRow(`SELECT COUNT(*) FROM node_label_embeddings WHERE node_id = ?`, n.ID).Scan(&labelCount)
+	if labelCount == 0 {
+		t.Skip("sqlite-vec not available; skipping field stale-embedding regression test")
+	}
+
+	// Sanity: label blob should be all-3.0.
+	var blob []byte
+	s.DB().QueryRow(`SELECT embedding FROM node_label_embeddings WHERE node_id = ?`, n.ID).Scan(&blob)
+	if got := decodeFirstFloat32(blob); got != 3.0 {
+		t.Errorf("before update: label first dim expected 3.0, got %v", got)
+	}
+
+	newLabel := "field-fresh-new"
+	wm := "field-fresh-new"
+	if _, err := s.UpdateNode(n.ID, &newLabel, nil, &wm, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+
+	// label blob must now be all-4.0.
+	s.DB().QueryRow(`SELECT embedding FROM node_label_embeddings WHERE node_id = ?`, n.ID).Scan(&blob)
+	if got := decodeFirstFloat32(blob); got != 4.0 {
+		t.Errorf("after update: label first dim expected 4.0 (new embedding), got %v — stale label embedding not replaced", got)
+	}
+
+	// why_matters blob must also be all-4.0.
+	s.DB().QueryRow(`SELECT embedding FROM node_whymatters_embeddings WHERE node_id = ?`, n.ID).Scan(&blob)
+	if got := decodeFirstFloat32(blob); got != 4.0 {
+		t.Errorf("after update: why_matters first dim expected 4.0 (new embedding), got %v — stale wm embedding not replaced", got)
 	}
 }
 

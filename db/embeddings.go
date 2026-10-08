@@ -181,11 +181,30 @@ func (st *Store) storeFieldEmbeddings(id string, fields map[string][]float32) bo
 			ok = false
 			continue
 		}
-		if _, err := st.db.Exec(
-			`INSERT OR REPLACE INTO `+table+`(node_id, embedding) VALUES (?, ?)`,
+		// sqlite-vec vec0 tables reject INSERT OR REPLACE; use DELETE + INSERT per field.
+		tx, txErr := st.db.Begin()
+		if txErr != nil {
+			log.Printf("[memoryweb] store field embedding for %s/%s: begin tx: %v", id, field, txErr)
+			ok = false
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE node_id = ?`, id); err != nil {
+			tx.Rollback() //nolint:errcheck
+			log.Printf("[memoryweb] store field embedding for %s/%s: %v", id, field, err)
+			ok = false
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO `+table+`(node_id, embedding) VALUES (?, ?)`,
 			id, blob,
 		); err != nil {
+			tx.Rollback() //nolint:errcheck
 			log.Printf("[memoryweb] store field embedding for %s/%s: %v", id, field, err)
+			ok = false
+			continue
+		}
+		if err := tx.Commit(); err != nil {
+			log.Printf("[memoryweb] store field embedding for %s/%s: commit: %v", id, field, err)
 			ok = false
 		}
 	}
@@ -209,26 +228,45 @@ func (st *Store) setStoredEmbeddingModel(model string) {
 	)
 }
 
-// clearEmbeddings deletes all rows from the embedding tables.
+// clearEmbeddings deletes all rows from all three embedding tables atomically.
 func (st *Store) clearEmbeddings() (int64, error) {
-	res, err := st.db.Exec(`DELETE FROM node_embeddings`)
+	tx, err := st.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	res, err := tx.Exec(`DELETE FROM node_embeddings`)
 	if err != nil {
 		return 0, err
 	}
 	if st.vecFieldsAvailable {
-		if _, err := st.db.Exec(`DELETE FROM node_label_embeddings`); err != nil {
+		if _, err := tx.Exec(`DELETE FROM node_label_embeddings`); err != nil {
 			return 0, fmt.Errorf("clear label embeddings: %w", err)
 		}
-		if _, err := st.db.Exec(`DELETE FROM node_whymatters_embeddings`); err != nil {
+		if _, err := tx.Exec(`DELETE FROM node_whymatters_embeddings`); err != nil {
 			return 0, fmt.Errorf("clear whymatters embeddings: %w", err)
 		}
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
+}
+
+// ClearAllEmbeddings deletes all rows from all three embedding tables atomically.
+// Safe to call before a forced full re-backfill.
+func (st *Store) ClearAllEmbeddings() error {
+	_, err := st.clearEmbeddings()
+	return err
 }
 
 // storeEmbedding inserts or replaces the embedding for a node in the
 // node_embeddings virtual table. Returns true if the embedding was stored
 // successfully. A failure only degrades search quality, not correctness.
+//
+// sqlite-vec vec0 tables reject INSERT OR REPLACE with a UNIQUE constraint
+// error when a row already exists, so we use DELETE + INSERT in a transaction.
 func (st *Store) storeEmbedding(id string, embedding []float32) bool {
 	if !st.vecAvailable || len(embedding) == 0 {
 		return false
@@ -246,11 +284,26 @@ func (st *Store) storeEmbedding(id string, embedding []float32) bool {
 		log.Printf("[memoryweb] serialize embedding for %s: %v", id, err)
 		return false
 	}
-	if _, err := st.db.Exec(
-		`INSERT OR REPLACE INTO node_embeddings(node_id, embedding) VALUES (?, ?)`,
+	tx, err := st.db.Begin()
+	if err != nil {
+		log.Printf("[memoryweb] store embedding for %s: begin tx: %v", id, err)
+		return false
+	}
+	if _, err := tx.Exec(`DELETE FROM node_embeddings WHERE node_id = ?`, id); err != nil {
+		tx.Rollback() //nolint:errcheck
+		log.Printf("[memoryweb] store embedding for %s: %v", id, err)
+		return false
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO node_embeddings(node_id, embedding) VALUES (?, ?)`,
 		id, blob,
 	); err != nil {
+		tx.Rollback() //nolint:errcheck
 		log.Printf("[memoryweb] store embedding for %s: %v", id, err)
+		return false
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("[memoryweb] store embedding for %s: commit: %v", id, err)
 		return false
 	}
 	return true
