@@ -32,6 +32,9 @@ bug-purge-copy/
 # machine-specific opencode config (backlog-mcp points at this machine's exe)
 opencode.json
 
+# machine-specific Claude Code MCP config (backlog-mcp path)
+.mcp.json
+
 *.exe
 
 # Serena MCP server state (machine-specific)
