@@ -77,6 +77,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "  merge-domains  Merge all nodes from one domain into another")
 			fmt.Fprintln(os.Stdout, "  backup         Write a consistent standalone snapshot of the database")
 			fmt.Fprintln(os.Stdout, "  purge          Hard-delete archived nodes (requires --confirm or --dry-run)")
+			fmt.Fprintln(os.Stdout, "  stats          Manage stats files (dedupe)")
 			fmt.Fprintln(os.Stdout, "  version        Print the version and exit")
 			fmt.Fprintln(os.Stdout, "")
 			fmt.Fprintln(os.Stdout, "Run 'memoryweb <subcommand> --help' for subcommand-specific flags.")
@@ -114,9 +115,12 @@ func main() {
 		case "purge":
 			purgeCmd()
 			return
+		case "stats":
+			statsCmd()
+			return
 		default:
 			fmt.Fprintf(os.Stderr, "memoryweb: unknown subcommand %q\n\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "Subcommands: setup, install-skill, options, doctor, dream, search, backfill, merge-domains, backup, purge, version")
+			fmt.Fprintln(os.Stderr, "Subcommands: setup, install-skill, options, doctor, dream, search, backfill, merge-domains, backup, purge, stats, version")
 			fmt.Fprintln(os.Stderr, "Run 'memoryweb --help' for usage.")
 			os.Exit(1)
 		}
@@ -1608,6 +1612,52 @@ func runMergeDomains(store *db.Store, out io.Writer, source, target string, dryR
 	return nil
 }
 
+// statsCmd implements the "memoryweb stats" subcommand group.
+func statsCmd() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: memoryweb stats <subcommand>")
+		fmt.Fprintln(os.Stderr, "Subcommands:")
+		fmt.Fprintln(os.Stderr, "  dedupe <jsonl-path>  Deduplicate a stats JSONL file by session_id")
+		os.Exit(1)
+	}
+	switch os.Args[2] {
+	case "dedupe":
+		statsDedupeCmd()
+	default:
+		fmt.Fprintf(os.Stderr, "memoryweb stats: unknown subcommand %q\n", os.Args[2])
+		os.Exit(1)
+	}
+}
+
+// statsDedupeCmd implements "memoryweb stats dedupe <path>".
+func statsDedupeCmd() {
+	flags := flag.NewFlagSet("stats dedupe", flag.ExitOnError)
+	flags.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: memoryweb stats dedupe <jsonl-path>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Rewrites a stats JSONL file in place, collapsing duplicate rows for the same")
+		fmt.Fprintln(os.Stderr, "session into one (key: session_id; legacy rows: start_ts). A backup is saved")
+		fmt.Fprintln(os.Stderr, "to <path>.bak before any changes are made.")
+		flags.PrintDefaults()
+	}
+	flags.Parse(os.Args[3:]) //nolint:errcheck // ExitOnError handles the error
+	args := flags.Args()
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "error: exactly one JSONL file path is required")
+		flags.Usage()
+		os.Exit(1)
+	}
+	path := args[0]
+	orig, deduped, err := stats.Dedupe(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	removed := orig - deduped
+	fmt.Printf("dedupe: %d → %d rows (%d duplicate(s) removed); backup at %s.bak\n",
+		orig, deduped, removed, path)
+}
+
 func purgeCmd() {
 	flags := flag.NewFlagSet("purge", flag.ExitOnError)
 	dbFlag := flags.String("db", resolveDBPath(), "path to the SQLite database file")
@@ -1692,6 +1742,14 @@ func printLiveRemaining(result db.PurgeResult, domain string, includeLive bool) 
 func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, *RPCError) {
 	switch req.Method {
 	case "initialize":
+		// A new initialize marks the start of a fresh MCP client session. Flush
+		// and reset the stats recorder so a long-lived process does not carry
+		// one session's totals into the next.
+		if rec != nil {
+			if _, err := rec.FlushAndReset(); err != nil {
+				log.Printf("[memoryweb] stats flush on initialize: %v", err)
+			}
+		}
 		return handleInitialize(req.Params)
 	case "tools/list":
 		result, err := h.ListTools()

@@ -14,6 +14,8 @@ package stats
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -84,6 +86,7 @@ type callRec struct {
 }
 
 type sessionData struct {
+	SessionID       string    `json:"session_id,omitempty"`
 	StartTS         time.Time `json:"start_ts"`
 	WKD             float64   `json:"wkd"`
 	Type            string    `json:"type"`
@@ -93,6 +96,8 @@ type sessionData struct {
 	Transient       int       `json:"transient"`
 	Ratio           float64   `json:"ratio"`
 	Burst           bool      `json:"burst"`
+	ActiveSecs      int       `json:"active_secs,omitempty"`     // last_call - first_call
+	WallClockSecs   int       `json:"wall_clock_secs,omitempty"` // time.Since(start) at flush
 	Client          string    `json:"client,omitempty"`
 	StaleChecks     int       `json:"stale_checks,omitempty"`
 	StaleCandidates int       `json:"stale_candidates,omitempty"`
@@ -105,13 +110,16 @@ type sessionData struct {
 // Recorder observes tool calls and writes session summaries.
 // All exported methods are safe for concurrent use.
 type Recorder struct {
-	mu        sync.Mutex
-	humanPath string // human-readable log; may be empty
-	jsonPath  string // JSONL machine-readable log; may be empty
-	client    string // value of MEMORYWEB_CLIENT env var; may be empty
-	start     time.Time
-	calls     []callRec
-	flushed   bool // true once Flush() has been called
+	mu          sync.Mutex
+	humanPath   string // human-readable log; may be empty
+	jsonPath    string // JSONL machine-readable log; may be empty
+	client      string // value of MEMORYWEB_CLIENT env var; may be empty
+	sessionID   string // stable ID for this session
+	start       time.Time
+	firstCallTS *time.Time // timestamp of first tool call in this session
+	lastCallTS  *time.Time // timestamp of most-recent tool call
+	calls       []callRec
+	flushed     bool // true once Flush() has successfully written this session
 }
 
 // New returns a Recorder. humanPath receives the human-readable summary;
@@ -124,10 +132,18 @@ func New(humanPath, jsonPath string) *Recorder {
 		humanPath: humanPath,
 		jsonPath:  jsonPath,
 		client:    os.Getenv("MEMORYWEB_CLIENT"),
+		sessionID: newSessionID(),
 		start:     time.Now().UTC(),
 	}
 	rec.recoverCurrent()
 	return rec
+}
+
+// newSessionID generates a random 8-byte hex session identifier.
+func newSessionID() string {
+	b := make([]byte, 8)
+	rand.Read(b) //nolint:errcheck
+	return hex.EncodeToString(b)
 }
 
 // recoverCurrent merges any orphaned *.current files from a previous crashed
@@ -181,7 +197,14 @@ func (r *Recorder) Record(tool string, argsRaw json.RawMessage, resultText strin
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	call := callRec{tool: tool, kind: toolKinds[tool], isError: isError, ts: time.Now().UTC()}
+	now := time.Now().UTC()
+	call := callRec{tool: tool, kind: toolKinds[tool], isError: isError, ts: now}
+
+	if r.firstCallTS == nil {
+		r.firstCallTS = &now
+	}
+	r.lastCallTS = &now
+
 	if !isError {
 		switch tool {
 		case "remember":
@@ -212,15 +235,39 @@ func (r *Recorder) Record(tool string, argsRaw json.RawMessage, resultText strin
 }
 
 // Flush computes the session summary, appends it to the log file, and returns
-// the summary text. Safe to call more than once.
+// the summary text. Idempotent: subsequent calls after the first successful
+// write return immediately without writing again.
 func (r *Recorder) Flush() (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.flush()
 }
 
+// FlushAndReset flushes the current session (if any tool calls were made) and
+// then resets the recorder for a new session. Call this when a new MCP client
+// session starts (initialize request) to prevent a long-lived process from
+// carrying one session's totals into the next.
+func (r *Recorder) FlushAndReset() (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	summary, err := r.flush()
+	r.resetLocked()
+	return summary, err
+}
+
+// resetLocked resets session state without flushing. Must be called with r.mu held.
+func (r *Recorder) resetLocked() {
+	r.calls = nil
+	r.firstCallTS = nil
+	r.lastCallTS = nil
+	r.start = time.Now().UTC()
+	r.sessionID = newSessionID()
+	r.flushed = false
+}
+
 func (r *Recorder) flush() (string, error) {
-	if len(r.calls) == 0 {
+	// Idempotency: skip if already flushed this session or nothing was recorded.
+	if r.flushed || len(r.calls) == 0 {
 		return "", nil
 	}
 	sess := r.computeSession()
@@ -268,6 +315,9 @@ func (r *Recorder) flush() (string, error) {
 		os.Remove(r.jsonPath + ".current") //nolint:errcheck
 	}
 
+	if firstErr == nil {
+		r.flushed = true
+	}
 	return summary, firstErr
 }
 
@@ -275,7 +325,7 @@ func (r *Recorder) flush() (string, error) {
 
 type computedSession struct {
 	data            sessionData
-	duration        time.Duration
+	duration        time.Duration // call-span (last_call - first_call), not wall-clock
 	byTool          map[string]int
 	errors          int
 	totalCalls      int
@@ -295,6 +345,7 @@ func (r *Recorder) computeSession() computedSession {
 	var staleChecks, staleCandidates int
 	var staleByType [5]int
 	var dupEdges [4]int
+	hasWrites := false
 
 	for i, call := range r.calls {
 		byTool[call.tool]++
@@ -306,6 +357,9 @@ func (r *Recorder) computeSession() computedSession {
 		transientFiled += call.transient
 		if call.domain != "" {
 			domains[call.domain]++
+		}
+		if call.kind == kindWrite && !call.isError {
+			hasWrites = true
 		}
 		if call.kind == kindRetrieval && !call.isError {
 			retrievalTotal++
@@ -344,8 +398,10 @@ func (r *Recorder) computeSession() computedSession {
 		ratio*10.0
 	wkd = math.Round(wkd*10) / 10
 
+	// Session type: "filing" if any write tool was called or nodes/edges were filed.
+	// "retrieval" if no writes at all and enough calls. "minimal" otherwise.
 	sessType := "filing"
-	if nodesFiled == 0 && edgesFiled == 0 {
+	if nodesFiled == 0 && edgesFiled == 0 && !hasWrites {
 		if retrievalTotal >= 3 || len(r.calls) >= 3 {
 			sessType = "retrieval"
 		} else {
@@ -358,13 +414,27 @@ func (r *Recorder) computeSession() computedSession {
 		grade = WKDGrade(wkd)
 	}
 
+	// Active duration = span from first to last call, not wall-clock process uptime.
+	var activeDuration time.Duration
+	if r.firstCallTS != nil && r.lastCallTS != nil {
+		activeDuration = r.lastCallTS.Sub(*r.firstCallTS)
+	}
+	wallClockSecs := int(time.Since(r.start).Seconds())
+
 	return computedSession{
 		data: sessionData{
-			StartTS: r.start, WKD: wkd, Type: sessType,
-			NodesFiled: nodesFiled, EdgesFiled: edgesFiled,
-			Orphans: orphans, Transient: transientFiled,
+			SessionID:       r.sessionID,
+			StartTS:         r.start,
+			WKD:             wkd,
+			Type:            sessType,
+			NodesFiled:      nodesFiled,
+			EdgesFiled:      edgesFiled,
+			Orphans:         orphans,
+			Transient:       transientFiled,
 			Ratio:           math.Round(ratio*100) / 100,
 			Burst:           nodesFiled > 15,
+			ActiveSecs:      int(activeDuration.Seconds()),
+			WallClockSecs:   wallClockSecs,
 			Client:          r.client,
 			StaleChecks:     staleChecks,
 			StaleCandidates: staleCandidates,
@@ -373,7 +443,7 @@ func (r *Recorder) computeSession() computedSession {
 			DupEdge35:       dupEdges[2],
 			DupEdge6p:       dupEdges[3],
 		},
-		duration:        time.Since(r.start),
+		duration:        activeDuration,
 		byTool:          byTool,
 		errors:          errors,
 		totalCalls:      len(r.calls),
@@ -424,7 +494,7 @@ func readJSONL(path string) []sessionData {
 	}
 	defer f.Close()
 
-	var out []sessionData
+	var raw []sessionData
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -433,8 +503,43 @@ func readJSONL(path string) []sessionData {
 		}
 		var sd sessionData
 		if json.Unmarshal([]byte(line), &sd) == nil {
-			out = append(out, sd)
+			raw = append(raw, sd)
 		}
+	}
+	return deduplicateSessions(raw)
+}
+
+// deduplicateSessions collapses duplicate rows for the same session.
+// Key: session_id when present; start_ts (RFC3339 precision) for legacy rows.
+// Keeps the row with the most nodes filed; ties go to the later (last) row.
+// Preserves original order of first occurrence.
+func deduplicateSessions(sessions []sessionData) []sessionData {
+	type key struct{ id, ts string }
+	best := make(map[key]sessionData)
+	var order []key
+
+	for _, s := range sessions {
+		var k key
+		if s.SessionID != "" {
+			k = key{id: s.SessionID}
+		} else {
+			k = key{ts: s.StartTS.UTC().Format(time.RFC3339)}
+		}
+		if existing, seen := best[k]; !seen {
+			best[k] = s
+			order = append(order, k)
+		} else {
+			// Prefer the row with more nodes; break ties by taking the later row.
+			if s.NodesFiled > existing.NodesFiled ||
+				(s.NodesFiled == existing.NodesFiled) {
+				best[k] = s
+			}
+		}
+	}
+
+	out := make([]sessionData, 0, len(order))
+	for _, k := range order {
+		out = append(out, best[k])
 	}
 	return out
 }
@@ -487,6 +592,7 @@ func (r *Recorder) formatSummary(sess computedSession, prior []sessionData) stri
 		sb.WriteString(fmt.Sprintf("Client        %s\n", sess.data.Client))
 	}
 
+	// Active time: call-span (last_call - first_call), not wall-clock process uptime.
 	mins := int(sess.duration.Minutes())
 	if mins < 1 {
 		mins = 1
