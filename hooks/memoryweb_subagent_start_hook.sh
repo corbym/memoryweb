@@ -9,7 +9,7 @@ set -euo pipefail
 source "$(dirname "$0")/memoryweb_lib.sh"
 
 MEMORYWEB_BIN="${MEMORYWEB_BIN:-memoryweb}"
-MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb.db}"
+MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb/.memoryweb.db}"
 STATE_DIR="${MEMORYWEB_HOOK_STATE_DIR:-${HOME}/.memoryweb/hook_state}"
 mkdir -p "${STATE_DIR}"
 

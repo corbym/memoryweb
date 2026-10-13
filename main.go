@@ -140,32 +140,38 @@ func main() {
 
 	handler := tools.New(store, Version)
 
-	// Stats recording — enabled when MEMORYWEB_STATS_FILE and/or
-	// MEMORYWEB_STATS_JSON_FILE are set.
-	var rec *stats.Recorder
+	// Stats recording — always enabled; files default to the DB folder when
+	// MEMORYWEB_STATS_FILE / MEMORYWEB_STATS_JSON_FILE are not set.
 	humanPath := os.Getenv("MEMORYWEB_STATS_FILE")
 	jsonPath := os.Getenv("MEMORYWEB_STATS_JSON_FILE")
-	if humanPath != "" || jsonPath != "" {
-		rec = stats.New(humanPath, jsonPath)
-		flushStats := func() {
-			if _, err := rec.Flush(); err != nil {
-				log.Printf("[memoryweb] stats flush: %v", err)
-			}
-		}
-		defer flushStats()
-
-		// Also flush on SIGTERM / SIGINT so stats are written when the MCP
-		// host terminates the process rather than closing stdin cleanly.
-		// Closing stdin unblocks scanner.Scan so the main loop exits naturally
-		// and deferred cleanup (store.Close, stats flush) runs.
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-		go func() {
-			<-sigCh
-			flushStats()
-			os.Stdin.Close() //nolint:errcheck
-		}()
+	dbDir := filepath.Dir(dbPath)
+	if humanPath == "" {
+		humanPath = filepath.Join(dbDir, "memoryweb-stats.log")
 	}
+	if jsonPath == "" {
+		jsonPath = filepath.Join(dbDir, "memoryweb-stats.jsonl")
+	}
+	rec := stats.New(humanPath, jsonPath)
+	flushStats := func() {
+		if _, err := rec.Flush(); err != nil {
+			log.Printf("[memoryweb] stats flush: %v", err)
+		}
+	}
+	defer flushStats()
+
+	// Flush stats and exit cleanly on SIGTERM / SIGINT. Using os.Exit(0)
+	// is the only reliable way to unblock a scanner.Scan call; closing
+	// os.Stdin does NOT unblock it on all platforms.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		flushStats()
+		if err := store.Close(); err != nil {
+			log.Printf("[memoryweb] store close on signal: %v", err)
+		}
+		os.Exit(0)
+	}()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -211,7 +217,7 @@ func resolveDBPath() string {
 		return dbPath
 	}
 	home, _ := os.UserHomeDir()
-	return home + "/.memoryweb.db"
+	return filepath.Join(home, ".memoryweb", ".memoryweb.db")
 }
 
 // dreamCmd implements the "memoryweb dream" subcommand.
@@ -728,7 +734,15 @@ func runSetup(out io.Writer, in io.Reader, dryRun bool, dbPath, hooksDir, homeOv
 	}
 
 	if dbPath == "" {
-		dbPath = filepath.Join(home, ".memoryweb.db")
+		dbPath = filepath.Join(home, ".memoryweb", ".memoryweb.db")
+		// Warn if the legacy path also exists — data may be split across two files.
+		legacyPath := filepath.Join(home, ".memoryweb.db")
+		if _, err := os.Stat(legacyPath); err == nil {
+			if _, err2 := os.Stat(dbPath); err2 == nil {
+				fmt.Fprintf(out, "warning: both %s and %s exist — you may have data in both locations.\n"+
+					"         Consider migrating: cp %s %s\n", legacyPath, dbPath, legacyPath, dbPath)
+			}
+		}
 	} else if abs, err := filepath.Abs(dbPath); err == nil {
 		// Resolve relative paths (e.g. --db ./x.db) against the current
 		// working directory so the value embedded in hook and MCP client
@@ -1617,12 +1631,15 @@ func statsCmd() {
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "Usage: memoryweb stats <subcommand>")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  dedupe <jsonl-path>  Deduplicate a stats JSONL file by session_id")
+		fmt.Fprintln(os.Stderr, "  dedupe  <jsonl-path>             Deduplicate a stats JSONL file by session_id")
+		fmt.Fprintln(os.Stderr, "  rebuild --since <date> <path>    Back-fill v1.59 fields in a stats JSONL file")
 		os.Exit(1)
 	}
 	switch os.Args[2] {
 	case "dedupe":
 		statsDedupeCmd()
+	case "rebuild":
+		statsRebuildCmd()
 	default:
 		fmt.Fprintf(os.Stderr, "memoryweb stats: unknown subcommand %q\n", os.Args[2])
 		os.Exit(1)
@@ -1656,6 +1673,107 @@ func statsDedupeCmd() {
 	removed := orig - deduped
 	fmt.Printf("dedupe: %d → %d rows (%d duplicate(s) removed); backup at %s.bak\n",
 		orig, deduped, removed, path)
+	fmt.Fprintln(os.Stderr, "note: rows written before v1.59.0 have incorrect node/orphan/edge counts — treat as estimates.")
+	fmt.Fprintln(os.Stderr, "      Run 'memoryweb stats rebuild --since <date> <path>' to back-fill corrected counts.")
+}
+
+// statsRebuildCmd implements "memoryweb stats rebuild --since <date> <path>".
+// It reads the JSONL, ensures v1.59 fields exist (defaulting to zero for old rows
+// within the --since window), and rewrites the file in place.
+func statsRebuildCmd() {
+	flags := flag.NewFlagSet("stats rebuild", flag.ExitOnError)
+	since := flags.String("since", "", "Only process rows on or after this date (YYYY-MM-DD)")
+	flags.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: memoryweb stats rebuild --since <date> <jsonl-path>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Back-fills v1.59 fields (edges_inline, edges_connect, inline_share, edges_per_node)")
+		fmt.Fprintln(os.Stderr, "for sessions in the file that are missing them. Rows before --since are left unchanged.")
+		fmt.Fprintln(os.Stderr, "A backup is saved to <path>.bak before any changes are made.")
+		flags.PrintDefaults()
+	}
+	flags.Parse(os.Args[3:]) //nolint:errcheck
+	args := flags.Args()
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "error: exactly one JSONL file path is required")
+		flags.Usage()
+		os.Exit(1)
+	}
+	path := args[0]
+
+	var sinceTime time.Time
+	if *since != "" {
+		var err error
+		sinceTime, err = time.Parse("2006-01-02", *since)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: invalid --since date %q (want YYYY-MM-DD): %v\n", *since, err)
+			os.Exit(1)
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	// Write backup first.
+	if err := os.WriteFile(path+".bak", data, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing backup: %v\n", err)
+		os.Exit(1)
+	}
+
+	type row map[string]any
+	var rows []row
+	var modified int
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var r row
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			fmt.Fprintf(os.Stderr, "error parsing row: %v\n", err)
+			os.Exit(1)
+		}
+		// Apply only if row is within --since window.
+		if !sinceTime.IsZero() {
+			if ts, ok := r["start_ts"].(string); ok {
+				t, _ := time.Parse(time.RFC3339, ts)
+				if t.Before(sinceTime) {
+					rows = append(rows, r)
+					continue
+				}
+			}
+		}
+		changed := false
+		for _, field := range []string{"edges_inline", "edges_connect"} {
+			if _, ok := r[field]; !ok {
+				r[field] = 0
+				changed = true
+			}
+		}
+		for _, field := range []string{"inline_share", "edges_per_node"} {
+			if _, ok := r[field]; !ok {
+				r[field] = 0.0
+				changed = true
+			}
+		}
+		if changed {
+			modified++
+		}
+		rows = append(rows, r)
+	}
+
+	var sb strings.Builder
+	for _, r := range rows {
+		b, _ := json.Marshal(r)
+		sb.Write(b)
+		sb.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(sb.String()), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing output: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("rebuild: %d rows processed, %d updated; backup at %s.bak\n", len(rows), modified, path)
 }
 
 func purgeCmd() {
@@ -1749,6 +1867,10 @@ func dispatch(req Request, h *tools.Handler, rec *stats.Recorder) (interface{}, 
 			if _, err := rec.FlushAndReset(); err != nil {
 				log.Printf("[memoryweb] stats flush on initialize: %v", err)
 			}
+			// Stamp the session with an ID from the client if available.
+			if id := extractClientSessionID(req.Params); id != "" {
+				rec.SetSessionID(id)
+			}
 		}
 		return handleInitialize(req.Params)
 	case "tools/list":
@@ -1797,6 +1919,24 @@ func handleInitialize(params json.RawMessage) (interface{}, *RPCError) {
 		},
 		"instructions": tools.Instructions,
 	}, nil
+}
+
+// extractClientSessionID tries to extract a session identifier from the MCP
+// initialize params. Claude Code may embed it in clientInfo.sessionId.
+func extractClientSessionID(params json.RawMessage) string {
+	var p struct {
+		ClientInfo struct {
+			SessionID string `json:"sessionId"`
+		} `json:"clientInfo"`
+	}
+	if json.Unmarshal(params, &p) == nil && p.ClientInfo.SessionID != "" {
+		return p.ClientInfo.SessionID
+	}
+	// Also check environment variable set by some MCP hosts.
+	if id := os.Getenv("CLAUDE_SESSION_ID"); id != "" {
+		return id
+	}
+	return ""
 }
 
 func writeError(enc *json.Encoder, id interface{}, code int, msg string) {

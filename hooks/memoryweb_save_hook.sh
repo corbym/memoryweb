@@ -20,7 +20,7 @@ if [ "${SAVE_INTERVAL}" -eq 0 ]; then
 fi
 STATE_DIR="${MEMORYWEB_HOOK_STATE_DIR:-${HOME}/.memoryweb/hook_state}"
 PROJECTS_DIR="${MEMORYWEB_PROJECTS_DIR:-${HOME}/.claude/projects}"
-MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb.db}"
+MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb/.memoryweb.db}"
 MEMORYWEB_BIN="${MEMORYWEB_BIN:-memoryweb}"
 
 mkdir -p "${STATE_DIR}"

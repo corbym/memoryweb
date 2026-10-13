@@ -6,10 +6,11 @@
 // Either path may be empty to disable that output.
 //
 // Crash safety: after every tool call the current session state is written to
-// humanPath+".current" / jsonPath+".current" (overwriting). On clean shutdown
-// those files are merged into the main logs and deleted. If the process is
-// killed with SIGKILL, the .current files survive and are recovered into the
-// main log on the next run.
+// humanPath+".current.<pid>" / jsonPath+".current.<pid>" (per-process files).
+// On clean shutdown those files are merged into the main logs and deleted. If
+// the process is killed with SIGKILL the .current.<pid> files survive and are
+// recovered into the main log on the next run (after confirming the previous
+// process is dead via PID liveness check).
 package stats
 
 import (
@@ -20,7 +21,9 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,18 +74,26 @@ const (
 	staleTransient
 )
 
+// nodeInfo tracks a single node created during the session.
+type nodeInfo struct {
+	id        string
+	hasInline bool   // got at least one inline edge via related_to
+	transient bool   // node_kind == "transient" or transient arg was true
+	domain    string // domain the node was filed in
+}
+
 type callRec struct {
 	tool        string
 	kind        toolKind
 	isError     bool
 	ts          time.Time
-	nodesFiled  int
-	transient   int
-	edgesFiled  int
-	domain      string
-	staleTotal  int    // candidates returned by whats_stale
-	staleByType [5]int // indexed by stale* constants
-	dupEdges    [4]int // dup candidate edge-count buckets: 0, 1-2, 3-5, 6+
+	nodes       []nodeInfo  // nodes created by this call (remember / remember_all)
+	inlineEdges int         // total inline edges created by this call
+	edgePairs   [][2]string // [fromID, toID] pairs for connect calls
+	edgesCount  int         // edge count when pairs are unavailable (batch fallback)
+	staleTotal  int         // candidates returned by whats_stale / audit(stale)
+	staleByType [5]int      // indexed by stale* constants
+	dupEdges    [4]int      // dup candidate edge-count buckets: 0, 1-2, 3-5, 6+
 }
 
 type sessionData struct {
@@ -91,7 +102,11 @@ type sessionData struct {
 	WKD             float64   `json:"wkd"`
 	Type            string    `json:"type"`
 	NodesFiled      int       `json:"nodes"`
-	EdgesFiled      int       `json:"edges"`
+	EdgesFiled      int       `json:"edges"`                    // total (inline + connect)
+	EdgesInline     int       `json:"edges_inline,omitempty"`   // edges from related_to
+	EdgesConnect    int       `json:"edges_connect,omitempty"`  // edges from explicit connect
+	InlineShare     float64   `json:"inline_share,omitempty"`   // EdgesInline / EdgesFiled
+	EdgesPerNode    float64   `json:"edges_per_node,omitempty"` // EdgesFiled / NodesFiled
 	Orphans         int       `json:"orphans"`
 	Transient       int       `json:"transient"`
 	Ratio           float64   `json:"ratio"`
@@ -107,13 +122,19 @@ type sessionData struct {
 	DupEdge6p       int       `json:"dup_edge_6p,omitempty"`  // 6+ edges
 }
 
+// ProcessAliveFn checks whether the process with the given PID is still running.
+// It is a package-level variable so tests can replace it with a stub.
+var ProcessAliveFn = func(pid int) bool {
+	return defaultProcessAlive(pid)
+}
+
 // Recorder observes tool calls and writes session summaries.
 // All exported methods are safe for concurrent use.
 type Recorder struct {
 	mu          sync.Mutex
 	humanPath   string // human-readable log; may be empty
 	jsonPath    string // JSONL machine-readable log; may be empty
-	client      string // value of MEMORYWEB_CLIENT env var; may be empty
+	client      string // MEMORYWEB_CLIENT or "unknown"
 	sessionID   string // stable ID for this session
 	start       time.Time
 	firstCallTS *time.Time // timestamp of first tool call in this session
@@ -124,14 +145,18 @@ type Recorder struct {
 
 // New returns a Recorder. humanPath receives the human-readable summary;
 // jsonPath receives one JSON object per session (JSONL). Either may be empty.
-// The MEMORYWEB_CLIENT env var, if set, is stamped into each session record.
-// Any orphaned .current files from a previous crashed session are recovered
-// into the main logs before returning.
+// The MEMORYWEB_CLIENT env var is stamped into each session record; if unset
+// it defaults to "unknown". Any orphaned .current.<pid> files from crashed
+// processes are recovered into the main logs before returning.
 func New(humanPath, jsonPath string) *Recorder {
+	client := os.Getenv("MEMORYWEB_CLIENT")
+	if client == "" {
+		client = "unknown"
+	}
 	rec := &Recorder{
 		humanPath: humanPath,
 		jsonPath:  jsonPath,
-		client:    os.Getenv("MEMORYWEB_CLIENT"),
+		client:    client,
 		sessionID: newSessionID(),
 		start:     time.Now().UTC(),
 	}
@@ -146,33 +171,65 @@ func newSessionID() string {
 	return hex.EncodeToString(b)
 }
 
-// recoverCurrent merges any orphaned *.current files from a previous crashed
-// session into the main log files, then deletes them.
+// SetSessionID overrides the auto-generated session ID.
+// Call this when the MCP client provides a stable session identifier.
+func (r *Recorder) SetSessionID(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessionID = id
+}
+
+// recoverCurrent scans for .current.<pid> files left by crashed processes,
+// confirms each owner is dead, and merges their content into the main logs.
+// Uses atomic rename as a recovery lock so concurrent processes claim each
+// file exactly once.
 func (r *Recorder) recoverCurrent() {
-	if r.humanPath != "" {
-		cur := r.humanPath + ".current"
-		if data, err := os.ReadFile(cur); err == nil && len(data) > 0 {
-			if f, err := os.OpenFile(r.humanPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
-				f.Write(data) //nolint:errcheck
-				f.Close()
-			}
-			os.Remove(cur) //nolint:errcheck
+	myPID := os.Getpid()
+	for _, base := range []string{r.humanPath, r.jsonPath} {
+		if base == "" {
+			continue
 		}
-	}
-	if r.jsonPath != "" {
-		cur := r.jsonPath + ".current"
-		if data, err := os.ReadFile(cur); err == nil && len(data) > 0 {
-			if f, err := os.OpenFile(r.jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
+		matches, _ := filepath.Glob(base + ".current.*")
+		prefix := base + ".current."
+		for _, cur := range matches {
+			if !strings.HasPrefix(cur, prefix) {
+				continue
+			}
+			suffix := cur[len(prefix):]
+			if !isAllDigits(suffix) {
+				continue // skip .current.<pid>.recovering and other non-PID suffixes
+			}
+			ownerPID, err := strconv.Atoi(suffix)
+			if err != nil {
+				continue
+			}
+			if ownerPID == myPID {
+				continue // skip our own (shouldn't exist yet, but be defensive)
+			}
+			if ProcessAliveFn(ownerPID) {
+				continue // leave live processes' files alone
+			}
+			// Claim atomically via rename — first claimer wins.
+			claimed := cur + ".recovering"
+			if err := os.Rename(cur, claimed); err != nil {
+				continue // another process claimed it
+			}
+			data, err := os.ReadFile(claimed)
+			if err != nil || len(data) == 0 {
+				os.Remove(claimed) //nolint:errcheck
+				continue
+			}
+			if f, err := os.OpenFile(base, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
 				f.Write(data) //nolint:errcheck
 				f.Close()
 			}
-			os.Remove(cur) //nolint:errcheck
+			os.Remove(claimed) //nolint:errcheck
 		}
 	}
 }
 
-// writeCurrent overwrites the *.current files with the latest session state.
-// Called after every tool call so the data survives a SIGKILL.
+// writeCurrent overwrites the per-process .current.<pid> files with the latest
+// session state. Called after every tool call so the data survives a SIGKILL.
 // Must be called with r.mu held.
 func (r *Recorder) writeCurrent() {
 	if len(r.calls) == 0 {
@@ -180,14 +237,17 @@ func (r *Recorder) writeCurrent() {
 	}
 	sess := r.computeSession()
 	prior := r.readPriorSessions()
+	pid := os.Getpid()
 
 	if r.humanPath != "" {
 		summary := r.formatSummary(sess, prior)
-		os.WriteFile(r.humanPath+".current", []byte(summary+"\n"), 0600) //nolint:errcheck
+		cur := fmt.Sprintf("%s.current.%d", r.humanPath, pid)
+		os.WriteFile(cur, []byte(summary+"\n"), 0600) //nolint:errcheck
 	}
 	if r.jsonPath != "" {
 		dataJSON, _ := json.Marshal(sess.data)
-		os.WriteFile(r.jsonPath+".current", append(dataJSON, '\n'), 0600) //nolint:errcheck
+		cur := fmt.Sprintf("%s.current.%d", r.jsonPath, pid)
+		os.WriteFile(cur, append(dataJSON, '\n'), 0600) //nolint:errcheck
 	}
 }
 
@@ -208,17 +268,25 @@ func (r *Recorder) Record(tool string, argsRaw json.RawMessage, resultText strin
 	if !isError {
 		switch tool {
 		case "remember":
-			call.nodesFiled = 1
-			call.transient = parseTransientArg(argsRaw)
-			call.domain = parseDomainArg(argsRaw)
+			if isBatchArgs(argsRaw, "items") {
+				call.nodes, call.inlineEdges = parseRememberBatch(argsRaw, resultText)
+			} else {
+				call.nodes, call.inlineEdges = parseRememberSingle(argsRaw, resultText)
+			}
 		case "remember_all":
-			call.nodesFiled, call.transient = parseRememberAllArgs(argsRaw)
+			call.nodes, call.inlineEdges = parseRememberAll(argsRaw, resultText)
 		case "connect":
-			call.edgesFiled = 1
+			if isBatchArgs(argsRaw, "items") {
+				call.edgePairs, call.edgesCount = parseConnectBatch(argsRaw, resultText)
+			} else {
+				if pair, ok := parseConnectSingle(argsRaw, resultText); ok {
+					call.edgePairs = [][2]string{pair}
+				}
+			}
 		case "connect_all":
-			call.edgesFiled = parseEdgesCreated(resultText)
+			call.edgesCount = parseEdgesCreated(resultText)
 		case "merge":
-			call.edgesFiled = 1
+			call.edgesCount = 1
 		case "whats_stale":
 			call.staleTotal, call.staleByType, call.dupEdges = parseWhatsStaleResult(resultText)
 		case "audit":
@@ -307,12 +375,13 @@ func (r *Recorder) flush() (string, error) {
 		}
 	}
 
-	// Clean up .current files now that the data is in the main log.
+	// Clean up per-process .current files now that data is in the main log.
+	pid := os.Getpid()
 	if r.humanPath != "" {
-		os.Remove(r.humanPath + ".current") //nolint:errcheck
+		os.Remove(fmt.Sprintf("%s.current.%d", r.humanPath, pid)) //nolint:errcheck
 	}
 	if r.jsonPath != "" {
-		os.Remove(r.jsonPath + ".current") //nolint:errcheck
+		os.Remove(fmt.Sprintf("%s.current.%d", r.jsonPath, pid)) //nolint:errcheck
 	}
 
 	if firstErr == nil {
@@ -338,7 +407,10 @@ type computedSession struct {
 }
 
 func (r *Recorder) computeSession() computedSession {
-	var nodesFiled, edgesFiled, transientFiled, errors int
+	var transientFiled, errors int
+	sessionNodeIDs := make(map[string]struct{})
+	connectedNodeIDs := make(map[string]struct{})
+	var edgesInline, edgesConnect int
 	byTool := make(map[string]int)
 	domains := make(map[string]int)
 	var retrievalTotal, retrievalToWrite int
@@ -351,17 +423,45 @@ func (r *Recorder) computeSession() computedSession {
 		byTool[call.tool]++
 		if call.isError {
 			errors++
+			continue
 		}
-		nodesFiled += call.nodesFiled
-		edgesFiled += call.edgesFiled
-		transientFiled += call.transient
-		if call.domain != "" {
-			domains[call.domain]++
+
+		// Node tracking
+		for _, n := range call.nodes {
+			if n.id != "" {
+				sessionNodeIDs[n.id] = struct{}{}
+				if n.hasInline {
+					connectedNodeIDs[n.id] = struct{}{}
+				}
+				if n.transient {
+					transientFiled++
+				}
+				if n.domain != "" {
+					domains[n.domain]++
+				}
+			}
 		}
-		if call.kind == kindWrite && !call.isError {
+
+		// Inline edges
+		edgesInline += call.inlineEdges
+
+		// Connect pairs — mark session nodes as connected
+		for _, pair := range call.edgePairs {
+			edgesConnect++
+			if _, ok := sessionNodeIDs[pair[0]]; ok {
+				connectedNodeIDs[pair[0]] = struct{}{}
+			}
+			if _, ok := sessionNodeIDs[pair[1]]; ok {
+				connectedNodeIDs[pair[1]] = struct{}{}
+			}
+		}
+		// Batch-connect count where we don't have specific pairs
+		edgesConnect += call.edgesCount
+
+		if call.kind == kindWrite {
 			hasWrites = true
 		}
-		if call.kind == kindRetrieval && !call.isError {
+		if call.kind == kindRetrieval {
 			retrievalTotal++
 			for j := i + 1; j <= i+3 && j < len(r.calls); j++ {
 				if r.calls[j].kind == kindWrite && !r.calls[j].isError {
@@ -382,8 +482,11 @@ func (r *Recorder) computeSession() computedSession {
 		}
 	}
 
-	orphans := imax(0, nodesFiled-edgesFiled)
-	connected := imin(nodesFiled, edgesFiled)
+	nodesFiled := len(sessionNodeIDs)
+	edgesTotal := edgesInline + edgesConnect
+	orphans := imax(0, nodesFiled-len(connectedNodeIDs))
+	connected := nodesFiled - orphans
+
 	ratio := 0.0
 	if retrievalTotal > 0 {
 		ratio = float64(retrievalToWrite) / float64(retrievalTotal)
@@ -392,16 +495,16 @@ func (r *Recorder) computeSession() computedSession {
 	// WKD: +2 per connected node, +1.5 per edge, -1 per orphan,
 	//      -0.5 per transient node, +10x retrieval-action ratio.
 	wkd := float64(connected)*2.0 +
-		float64(edgesFiled)*1.5 -
+		float64(edgesTotal)*1.5 -
 		float64(orphans)*1.0 -
 		float64(transientFiled)*0.5 +
 		ratio*10.0
 	wkd = math.Round(wkd*10) / 10
 
-	// Session type: "filing" if any write tool was called or nodes/edges were filed.
-	// "retrieval" if no writes at all and enough calls. "minimal" otherwise.
+	// Session type: "filing" if any write tool was called.
+	// "retrieval" if no writes and enough calls. "minimal" otherwise.
 	sessType := "filing"
-	if nodesFiled == 0 && edgesFiled == 0 && !hasWrites {
+	if nodesFiled == 0 && edgesTotal == 0 && !hasWrites {
 		if retrievalTotal >= 3 || len(r.calls) >= 3 {
 			sessType = "retrieval"
 		} else {
@@ -414,12 +517,20 @@ func (r *Recorder) computeSession() computedSession {
 		grade = WKDGrade(wkd)
 	}
 
-	// Active duration = span from first to last call, not wall-clock process uptime.
 	var activeDuration time.Duration
 	if r.firstCallTS != nil && r.lastCallTS != nil {
 		activeDuration = r.lastCallTS.Sub(*r.firstCallTS)
 	}
 	wallClockSecs := int(time.Since(r.start).Seconds())
+
+	var inlineShare float64
+	if edgesTotal > 0 {
+		inlineShare = math.Round(float64(edgesInline)/float64(edgesTotal)*100) / 100
+	}
+	var edgesPerNode float64
+	if nodesFiled > 0 {
+		edgesPerNode = math.Round(float64(edgesTotal)/float64(nodesFiled)*100) / 100
+	}
 
 	return computedSession{
 		data: sessionData{
@@ -428,7 +539,11 @@ func (r *Recorder) computeSession() computedSession {
 			WKD:             wkd,
 			Type:            sessType,
 			NodesFiled:      nodesFiled,
-			EdgesFiled:      edgesFiled,
+			EdgesFiled:      edgesTotal,
+			EdgesInline:     edgesInline,
+			EdgesConnect:    edgesConnect,
+			InlineShare:     inlineShare,
+			EdgesPerNode:    edgesPerNode,
 			Orphans:         orphans,
 			Transient:       transientFiled,
 			Ratio:           math.Round(ratio*100) / 100,
@@ -736,39 +851,205 @@ func (r *Recorder) formatSummary(sess computedSession, prior []sessionData) stri
 
 // ── argument/result parsers ───────────────────────────────────────────────────
 
-func parseTransientArg(args json.RawMessage) int {
-	var a struct {
-		Transient bool `json:"transient"`
+// isBatchArgs returns true if args contains the given key as an array.
+func isBatchArgs(args json.RawMessage, key string) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(args, &m) != nil {
+		return false
 	}
-	if json.Unmarshal(args, &a) == nil && a.Transient {
-		return 1
+	v, ok := m[key]
+	if !ok {
+		return false
 	}
-	return 0
+	return len(v) > 2 && v[0] == '[' // non-empty array
 }
 
-func parseDomainArg(args json.RawMessage) string {
-	var a struct {
-		Domain string `json:"domain"`
+// parseRememberSingle extracts nodeInfo and inline edge count from a single remember call.
+func parseRememberSingle(argsRaw json.RawMessage, resultText string) (nodes []nodeInfo, inlineEdges int) {
+	var args struct {
+		RelatedTo []json.RawMessage `json:"related_to"`
+		Transient bool              `json:"transient"`
+		NodeKind  string            `json:"node_kind"`
+		Domain    string            `json:"domain"`
 	}
-	json.Unmarshal(args, &a)
-	return a.Domain
+	var result struct {
+		Node struct {
+			ID       string `json:"id"`
+			NodeKind string `json:"node_kind"`
+		} `json:"node"`
+		SkippedConnections []json.RawMessage `json:"skipped_connections"`
+	}
+	json.Unmarshal(argsRaw, &args)              //nolint:errcheck
+	json.Unmarshal([]byte(resultText), &result) //nolint:errcheck
+
+	if result.Node.ID == "" {
+		return
+	}
+	isTransient := result.Node.NodeKind == "transient" || args.Transient || args.NodeKind == "transient"
+	skipped := len(result.SkippedConnections)
+	inline := imax(0, len(args.RelatedTo)-skipped)
+	nodes = []nodeInfo{{
+		id:        result.Node.ID,
+		hasInline: inline > 0,
+		transient: isTransient,
+		domain:    args.Domain,
+	}}
+	inlineEdges = inline
+	return
 }
 
-func parseRememberAllArgs(args json.RawMessage) (nodes, transient int) {
-	var a struct {
+// parseRememberBatch extracts nodeInfos and total inline edge count from a batch
+// remember call (args.items format).
+func parseRememberBatch(argsRaw json.RawMessage, resultText string) (nodes []nodeInfo, inlineEdges int) {
+	var args struct {
+		Items []struct {
+			RelatedTo []json.RawMessage `json:"related_to"`
+			Transient bool              `json:"transient"`
+			NodeKind  string            `json:"node_kind"`
+			Domain    string            `json:"domain"`
+		} `json:"items"`
+	}
+	var result struct {
 		Nodes []struct {
-			Transient bool `json:"transient"`
+			Node struct {
+				ID       string `json:"id"`
+				NodeKind string `json:"node_kind"`
+			} `json:"node"`
+			SkippedConnections []json.RawMessage `json:"skipped_connections"`
 		} `json:"nodes"`
 	}
-	if json.Unmarshal(args, &a) == nil {
-		nodes = len(a.Nodes)
-		for _, n := range a.Nodes {
-			if n.Transient {
-				transient++
-			}
+	json.Unmarshal(argsRaw, &args)              //nolint:errcheck
+	json.Unmarshal([]byte(resultText), &result) //nolint:errcheck
+
+	for i, rn := range result.Nodes {
+		if rn.Node.ID == "" {
+			continue
 		}
+		isTransient := rn.Node.NodeKind == "transient"
+		var nodeInline int
+		var domain string
+		if i < len(args.Items) {
+			if args.Items[i].Transient || args.Items[i].NodeKind == "transient" {
+				isTransient = true
+			}
+			skipped := len(rn.SkippedConnections)
+			nodeInline = imax(0, len(args.Items[i].RelatedTo)-skipped)
+			domain = args.Items[i].Domain
+		}
+		nodes = append(nodes, nodeInfo{
+			id:        rn.Node.ID,
+			hasInline: nodeInline > 0,
+			transient: isTransient,
+			domain:    domain,
+		})
+		inlineEdges += nodeInline
 	}
 	return
+}
+
+// parseRememberAll extracts nodeInfos from legacy remember_all (args.nodes format).
+func parseRememberAll(argsRaw json.RawMessage, resultText string) (nodes []nodeInfo, inlineEdges int) {
+	var args struct {
+		Nodes []struct {
+			RelatedTo []json.RawMessage `json:"related_to"`
+			Transient bool              `json:"transient"`
+			NodeKind  string            `json:"node_kind"`
+			Domain    string            `json:"domain"`
+		} `json:"nodes"`
+	}
+	var result struct {
+		Nodes []struct {
+			Node struct {
+				ID       string `json:"id"`
+				NodeKind string `json:"node_kind"`
+			} `json:"node"`
+			SkippedConnections []json.RawMessage `json:"skipped_connections"`
+		} `json:"nodes"`
+	}
+	json.Unmarshal(argsRaw, &args)              //nolint:errcheck
+	json.Unmarshal([]byte(resultText), &result) //nolint:errcheck
+
+	for i, rn := range result.Nodes {
+		if rn.Node.ID == "" {
+			continue
+		}
+		isTransient := rn.Node.NodeKind == "transient"
+		var nodeInline int
+		var domain string
+		if i < len(args.Nodes) {
+			if args.Nodes[i].Transient || args.Nodes[i].NodeKind == "transient" {
+				isTransient = true
+			}
+			skipped := len(rn.SkippedConnections)
+			nodeInline = imax(0, len(args.Nodes[i].RelatedTo)-skipped)
+			domain = args.Nodes[i].Domain
+		}
+		nodes = append(nodes, nodeInfo{
+			id:        rn.Node.ID,
+			hasInline: nodeInline > 0,
+			transient: isTransient,
+			domain:    domain,
+		})
+		inlineEdges += nodeInline
+	}
+	return
+}
+
+// parseConnectSingle extracts the from/to node IDs from a single connect call.
+// It tries the result JSON first (full Edge with from_memory/to_memory), then
+// falls back to args (also checking legacy from_node/to_node for test fixtures).
+func parseConnectSingle(argsRaw json.RawMessage, resultText string) (pair [2]string, ok bool) {
+	// Try result first — a successful connect returns the full Edge JSON.
+	var edge struct {
+		FromMemory string `json:"from_memory"`
+		ToMemory   string `json:"to_memory"`
+	}
+	if json.Unmarshal([]byte(resultText), &edge) == nil && edge.FromMemory != "" {
+		return [2]string{edge.FromMemory, edge.ToMemory}, true
+	}
+	// Fall back to args.
+	var args struct {
+		FromMemory string `json:"from_memory"`
+		ToMemory   string `json:"to_memory"`
+		FromNode   string `json:"from_node"` // legacy key used in test fixtures
+		ToNode     string `json:"to_node"`   // legacy key used in test fixtures
+	}
+	if json.Unmarshal(argsRaw, &args) == nil {
+		from := args.FromMemory
+		if from == "" {
+			from = args.FromNode
+		}
+		to := args.ToMemory
+		if to == "" {
+			to = args.ToNode
+		}
+		if from != "" && to != "" {
+			return [2]string{from, to}, true
+		}
+	}
+	return [2]string{}, false
+}
+
+// parseConnectBatch extracts from/to pairs from a batch connect call's args items.
+// Falls back to result edge count when args parsing yields no pairs.
+func parseConnectBatch(argsRaw json.RawMessage, resultText string) (pairs [][2]string, count int) {
+	var args struct {
+		Items []struct {
+			FromMemory string `json:"from_memory"`
+			ToMemory   string `json:"to_memory"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(argsRaw, &args) == nil {
+		for _, item := range args.Items {
+			if item.FromMemory != "" && item.ToMemory != "" {
+				pairs = append(pairs, [2]string{item.FromMemory, item.ToMemory})
+			}
+		}
+		if len(pairs) > 0 {
+			return pairs, 0
+		}
+	}
+	return nil, parseEdgesCreated(resultText)
 }
 
 func parseEdgesCreated(resultText string) int {
@@ -832,15 +1113,21 @@ func edgeBucket(n int) int {
 	}
 }
 
-func imax(a, b int) int {
-	if a > b {
-		return a
+// isAllDigits reports whether s is a non-empty string of ASCII digits.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
 	}
-	return b
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
-func imin(a, b int) int {
-	if a < b {
+func imax(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

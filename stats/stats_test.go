@@ -3,6 +3,7 @@ package stats_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -393,6 +394,328 @@ func TestTrend_DeduplicatesSessionID(t *testing.T) {
 	// Deduplicated prior = 2 sessions; plus current = 3 total.
 	if !strings.Contains(summary, "3 total") {
 		t.Errorf("trend must show 3 total sessions after deduplication; got:\n%s", summary)
+	}
+}
+
+// ── v1.59 counting tests ──────────────────────────────────────────────────────
+
+// TestBatchRememberCorrectCounting verifies that a batch remember with related_to
+// on each item counts nodes, inline edges, and orphans correctly.
+func TestBatchRememberCorrectCounting(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	r := stats.New(filepath.Join(dir, "stats.log"), jsonPath)
+
+	batchArgs := map[string]any{
+		"items": []map[string]any{
+			{"label": "A", "domain": "proj", "related_to": []string{"existing-1"}},
+			{"label": "B", "domain": "proj", "related_to": []string{"existing-2"}},
+			{"label": "C", "domain": "proj", "related_to": []string{"existing-3"}},
+		},
+	}
+	batchResult := `{"nodes":[
+		{"node":{"id":"a-001"},"skipped_connections":[]},
+		{"node":{"id":"b-002"},"skipped_connections":[]},
+		{"node":{"id":"c-003"},"skipped_connections":[]}
+	]}`
+	call(r, "remember", batchArgs, batchResult, false)
+
+	_, err := r.Flush()
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	data, _ := os.ReadFile(jsonPath)
+	var sd map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &sd); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	if v := int(sd["nodes"].(float64)); v != 3 {
+		t.Errorf("nodes = %d, want 3", v)
+	}
+	if v := int(sd["edges"].(float64)); v != 3 {
+		t.Errorf("edges = %d, want 3", v)
+	}
+	if v := int(sd["edges_inline"].(float64)); v != 3 {
+		t.Errorf("edges_inline = %d, want 3", v)
+	}
+	if v, ok := sd["edges_connect"]; ok && int(v.(float64)) != 0 {
+		t.Errorf("edges_connect = %v, want 0 or omitted", v)
+	}
+	if v := int(sd["orphans"].(float64)); v != 0 {
+		t.Errorf("orphans = %d, want 0", v)
+	}
+}
+
+// TestSingleRememberThenConnect verifies that a single remember without related_to
+// followed by an explicit connect counts correctly (1 node, 1 connect edge, 0 orphans,
+// 0 inline edges).
+func TestSingleRememberThenConnect_NoInline(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	r := stats.New(filepath.Join(dir, "stats.log"), jsonPath)
+
+	call(r, "remember", map[string]any{"label": "A", "domain": "proj"}, `{"node":{"id":"a-abc"}}`, false)
+	call(r, "connect",
+		map[string]any{"from_memory": "a-abc", "to_memory": "existing-1", "relationship": "led_to"},
+		`{"id":"edge-1","from_memory":"a-abc","to_memory":"existing-1","relationship":"led_to","narrative":""}`,
+		false)
+
+	_, err := r.Flush()
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	data, _ := os.ReadFile(jsonPath)
+	var sd map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &sd); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	if v := int(sd["nodes"].(float64)); v != 1 {
+		t.Errorf("nodes = %d, want 1", v)
+	}
+	if v := int(sd["edges"].(float64)); v != 1 {
+		t.Errorf("edges = %d, want 1", v)
+	}
+	inlineEdges := 0
+	if v, ok := sd["edges_inline"]; ok {
+		inlineEdges = int(v.(float64))
+	}
+	if inlineEdges != 0 {
+		t.Errorf("edges_inline = %d, want 0", inlineEdges)
+	}
+	if v := int(sd["edges_connect"].(float64)); v != 1 {
+		t.Errorf("edges_connect = %d, want 1", v)
+	}
+	if v := int(sd["orphans"].(float64)); v != 0 {
+		t.Errorf("orphans = %d, want 0", v)
+	}
+}
+
+// TestNodeNoEdgesIsOrphan verifies that a node with no connections at flush time
+// counts as exactly 1 orphan.
+func TestNodeNoEdgesIsOrphan(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	r := stats.New(filepath.Join(dir, "stats.log"), jsonPath)
+
+	call(r, "remember", map[string]any{"label": "Lone", "domain": "proj"}, `{"node":{"id":"lone-1"}}`, false)
+
+	_, err := r.Flush()
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	data, _ := os.ReadFile(jsonPath)
+	var sd map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &sd); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	if v := int(sd["orphans"].(float64)); v != 1 {
+		t.Errorf("orphans = %d, want 1", v)
+	}
+}
+
+// TestAcceptance_10Nodes6Inline2Connect2Orphan verifies the acceptance scenario:
+// 10 nodes (6 linked inline, 2 linked by connect, 2 unlinked).
+func TestAcceptance_10Nodes6Inline2Connect2Orphan(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	r := stats.New(filepath.Join(dir, "stats.log"), jsonPath)
+
+	// 6 nodes with inline edges
+	call(r, "remember", map[string]any{
+		"items": []map[string]any{
+			{"label": "A", "domain": "proj", "related_to": []string{"e1"}},
+			{"label": "B", "domain": "proj", "related_to": []string{"e2"}},
+			{"label": "C", "domain": "proj", "related_to": []string{"e3"}},
+			{"label": "D", "domain": "proj", "related_to": []string{"e4"}},
+			{"label": "E", "domain": "proj", "related_to": []string{"e5"}},
+			{"label": "F", "domain": "proj", "related_to": []string{"e6"}},
+		},
+	}, `{"nodes":[
+		{"node":{"id":"a-1"},"skipped_connections":[]},
+		{"node":{"id":"b-2"},"skipped_connections":[]},
+		{"node":{"id":"c-3"},"skipped_connections":[]},
+		{"node":{"id":"d-4"},"skipped_connections":[]},
+		{"node":{"id":"e-5"},"skipped_connections":[]},
+		{"node":{"id":"f-6"},"skipped_connections":[]}
+	]}`, false)
+
+	// 4 nodes without inline edges
+	call(r, "remember", map[string]any{
+		"items": []map[string]any{
+			{"label": "G", "domain": "proj"},
+			{"label": "H", "domain": "proj"},
+			{"label": "I", "domain": "proj"},
+			{"label": "J", "domain": "proj"},
+		},
+	}, `{"nodes":[
+		{"node":{"id":"g-7"},"skipped_connections":[]},
+		{"node":{"id":"h-8"},"skipped_connections":[]},
+		{"node":{"id":"i-9"},"skipped_connections":[]},
+		{"node":{"id":"j-10"},"skipped_connections":[]}
+	]}`, false)
+
+	// Connect g and h via explicit connect (g connected to existing, h connected to existing)
+	call(r, "connect",
+		map[string]any{"from_memory": "g-7", "to_memory": "e1", "relationship": "led_to"},
+		`{"id":"eg","from_memory":"g-7","to_memory":"e1","relationship":"led_to","narrative":""}`,
+		false)
+	call(r, "connect",
+		map[string]any{"from_memory": "h-8", "to_memory": "e2", "relationship": "led_to"},
+		`{"id":"eh","from_memory":"h-8","to_memory":"e2","relationship":"led_to","narrative":""}`,
+		false)
+	// i-9 and j-10 are orphans
+
+	summary, err := r.Flush()
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	data, _ := os.ReadFile(jsonPath)
+	var sd map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &sd); err != nil {
+		t.Fatalf("json parse: %v\nsummary:\n%s", err, summary)
+	}
+
+	check := func(key string, want int) {
+		t.Helper()
+		v, ok := sd[key].(float64)
+		if !ok {
+			t.Errorf("%s missing or wrong type: %v\nsummary:\n%s", key, sd[key], summary)
+			return
+		}
+		if int(v) != want {
+			t.Errorf("%s = %d, want %d\nsummary:\n%s", key, int(v), want, summary)
+		}
+	}
+	check("nodes", 10)
+	check("edges", 8) // 6 inline + 2 connect
+	check("edges_inline", 6)
+	check("edges_connect", 2)
+	check("orphans", 2)
+}
+
+// TestPerProcessCurrentFiles_WritesWithPIDSuffix verifies that writeCurrent writes
+// a file named <path>.current.<pid> (not the shared .current).
+func TestPerProcessCurrentFiles_WritesWithPIDSuffix(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	r := stats.New(filepath.Join(dir, "stats.log"), jsonPath)
+
+	call(r, "remember", map[string]any{"label": "A", "domain": "proj"}, `{"node":{"id":"a"}}`, false)
+
+	pid := os.Getpid()
+	currentFile := fmt.Sprintf("%s.current.%d", jsonPath, pid)
+	if _, err := os.Stat(currentFile); err != nil {
+		t.Errorf("expected %s to exist after Record(); got: %v", filepath.Base(currentFile), err)
+	}
+
+	// Old-style shared .current must NOT exist.
+	sharedFile := jsonPath + ".current"
+	if _, err := os.Stat(sharedFile); err == nil {
+		t.Errorf("shared .current file must not be written; found %s", filepath.Base(sharedFile))
+	}
+
+	r.Flush() //nolint:errcheck
+
+	// After flush the .current.<pid> file should be cleaned up.
+	if _, err := os.Stat(currentFile); !os.IsNotExist(err) {
+		t.Errorf("expected %s to be removed after Flush(); err: %v", filepath.Base(currentFile), err)
+	}
+}
+
+// TestPerProcessCurrentFiles_RecoversCrashedProcess verifies that a new recorder
+// recovers a .current.<pid> file whose process has died.
+func TestPerProcessCurrentFiles_RecoversCrashedProcess(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	humanPath := filepath.Join(dir, "stats.log")
+
+	fakePID := 99991
+	crashedData := `{"session_id":"crashed","start_ts":"2026-10-01T10:00:00Z","wkd":5.0,"type":"filing","nodes":3,"edges":2,"orphans":1,"transient":0,"ratio":0.5,"burst":false}` + "\n"
+	curFile := fmt.Sprintf("%s.current.%d", jsonPath, fakePID)
+	if err := os.WriteFile(curFile, []byte(crashedData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Override processAlive: fakePID is dead.
+	old := stats.ProcessAliveFn
+	stats.ProcessAliveFn = func(pid int) bool { return pid != fakePID }
+	defer func() { stats.ProcessAliveFn = old }()
+
+	stats.New(humanPath, jsonPath)
+
+	data, _ := os.ReadFile(jsonPath)
+	if !strings.Contains(string(data), "crashed") {
+		t.Errorf("crashed session should have been recovered into main jsonl;\ngot: %s", string(data))
+	}
+	if _, err := os.Stat(curFile); !os.IsNotExist(err) {
+		t.Errorf("expected %s to be removed after recovery", filepath.Base(curFile))
+	}
+}
+
+// TestPerProcessCurrentFiles_DoesNotAdoptLiveProcess verifies that a new recorder
+// does NOT recover a .current.<pid> file whose process is still running.
+func TestPerProcessCurrentFiles_DoesNotAdoptLiveProcess(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	humanPath := filepath.Join(dir, "stats.log")
+
+	fakePID := 77771
+	liveData := `{"session_id":"live","start_ts":"2026-10-01T10:00:00Z","wkd":5.0,"type":"filing","nodes":3,"edges":2,"orphans":1,"transient":0,"ratio":0.5,"burst":false}` + "\n"
+	curFile := fmt.Sprintf("%s.current.%d", jsonPath, fakePID)
+	if err := os.WriteFile(curFile, []byte(liveData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Override processAlive: fakePID is alive.
+	old := stats.ProcessAliveFn
+	stats.ProcessAliveFn = func(pid int) bool { return pid == fakePID }
+	defer func() { stats.ProcessAliveFn = old }()
+
+	stats.New(humanPath, jsonPath)
+
+	// The live .current file must still exist.
+	if _, err := os.Stat(curFile); err != nil {
+		t.Errorf("live process .current file was incorrectly removed: %v", err)
+	}
+	// Main jsonl must be empty (no recovery happened).
+	if fi, err := os.Stat(jsonPath); err == nil && fi.Size() > 0 {
+		data, _ := os.ReadFile(jsonPath)
+		if strings.Contains(string(data), "live") {
+			t.Errorf("should not have recovered live process's data;\ngot: %s", string(data))
+		}
+	}
+}
+
+// TestDefaultClientIsUnknown verifies that when MEMORYWEB_CLIENT is unset the
+// recorded client field is "unknown" rather than empty.
+func TestDefaultClientIsUnknown(t *testing.T) {
+	old := os.Getenv("MEMORYWEB_CLIENT")
+	os.Unsetenv("MEMORYWEB_CLIENT")
+	defer func() {
+		if old != "" {
+			os.Setenv("MEMORYWEB_CLIENT", old)
+		}
+	}()
+
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.jsonl")
+	r := stats.New(filepath.Join(dir, "stats.log"), jsonPath)
+
+	call(r, "remember", map[string]any{"label": "A", "domain": "proj"}, `{"node":{"id":"a"}}`, false)
+	r.Flush() //nolint:errcheck
+
+	data, _ := os.ReadFile(jsonPath)
+	var sd map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &sd); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	client, ok := sd["client"].(string)
+	if !ok || client != "unknown" {
+		t.Errorf("expected client='unknown' when MEMORYWEB_CLIENT unset, got %v", sd["client"])
 	}
 }
 

@@ -328,7 +328,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.58.0)
+## What's implemented (v1.59.0)
 
 All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
@@ -354,6 +354,7 @@ Key implemented features:
 - connect: `relationship` enum includes `resolved`, `resolved_by`, `supersedes` for contradiction resolution
 - remember: `orphan_warning` no longer instructs agents to pass `connect` a `domain` parameter
 - lean/digest lifecycle: list-shaped retrieval tools annotate `lifecycle_state` (`contested`, `resolved`, `superseded`) from live graph edges; digest lines append `(state)`; archived edge endpoints are ignored; cross-domain `orient()` recent entries included
+- Stats v1.59: correct per-node orphan counting (parses remember/connect results); per-process `.current.<pid>` crash-recovery files with PID-liveness check; SIGINT now calls `os.Exit(0)` instead of `os.Stdin.Close()`; stats files default to DB folder; client defaults to "unknown"; `stats rebuild` sub-command; hook scripts use `~/.memoryweb/.memoryweb.db` default
 
 ---
 
