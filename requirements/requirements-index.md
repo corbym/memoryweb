@@ -5,6 +5,7 @@
 | Story | Title | Status | Type |
 |-------|-------|--------|------|
 | [STORY-002](./epic-001-platform-integrations/story-002.md) | Port memoryweb hooks to OpenCode as an event-bus plugin | draft | feature |
+| [STORY-007](./epic-001-platform-integrations/story-007.md) | Add option to disable dream injection in the stop hook | done | feature |
 
 ## EPIC-002: Observability & CI — `draft`
 

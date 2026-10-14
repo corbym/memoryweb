@@ -51,10 +51,12 @@ fi
 # First run: block and request a thorough filing pass.
 touch "${compacting_flag}"
 
-# Capture dream digest for context (best-effort; skipped silently if unavailable).
+# Capture dream digest for context (skipped when dream_injection=false or binary unavailable).
 dream_digest=""
-if command -v "${MEMORYWEB_BIN}" >/dev/null 2>&1; then
-  dream_digest=$("${MEMORYWEB_BIN}" dream --db "${MEMORYWEB_DB}" 2>/dev/null || true)
+if memoryweb_option_enabled "dream_injection" "true"; then
+  if command -v "${MEMORYWEB_BIN}" >/dev/null 2>&1; then
+    dream_digest=$("${MEMORYWEB_BIN}" dream --db "${MEMORYWEB_DB}" 2>/dev/null || true)
+  fi
 fi
 
 memoryweb_json_escape "${dream_digest}"

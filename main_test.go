@@ -730,7 +730,7 @@ func TestOptionsCmd_PrintDefaults(t *testing.T) {
 	out := buf.String()
 	for _, key := range []string{
 		"session_orient_enabled", "auto_recall", "pre_compact_enabled",
-		"reinject_on_compact", "sweep_interval_turns",
+		"reinject_on_compact", "sweep_interval_turns", "dream_injection",
 		"subagent_orient_enabled", "subagent_audit_enabled",
 	} {
 		if !strings.Contains(out, key) {
@@ -742,6 +742,9 @@ func TestOptionsCmd_PrintDefaults(t *testing.T) {
 	}
 	if !strings.Contains(out, "15") {
 		t.Errorf("expected '15' for sweep_interval_turns default; got:\n%s", out)
+	}
+	if !strings.Contains(out, "true") {
+		t.Errorf("expected 'true' for dream_injection default; got:\n%s", out)
 	}
 }
 
@@ -791,6 +794,18 @@ func TestOptionsCmd_SetBool(t *testing.T) {
 	data, _ := os.ReadFile(cfg)
 	if !strings.Contains(string(data), `"session_orient_enabled": true`) {
 		t.Errorf("config file should contain true; got: %s", data)
+	}
+}
+
+func TestOptionsCmd_SetDreamInjectionFalse(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.json")
+	var buf bytes.Buffer
+	if err := runOptionsCmd(&buf, cfg, []string{"set", "dream_injection", "false"}); err != nil {
+		t.Fatalf("set dream_injection false: %v", err)
+	}
+	data, _ := os.ReadFile(cfg)
+	if !strings.Contains(string(data), `"dream_injection": false`) {
+		t.Errorf("expected dream_injection false in config; got: %s", data)
 	}
 }
 
