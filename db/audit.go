@@ -100,7 +100,6 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 		return []ConflictCandidate{}, nil
 	}
 	var embNodes []embeddedNode
-	validSet := make(map[string]bool)
 	for fRows.Next() {
 		var n embeddedNode
 		if err := fRows.Scan(&n.id, &n.label, &n.domain, &n.blob); err != nil {
@@ -108,7 +107,6 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 			return []ConflictCandidate{}, nil
 		}
 		embNodes = append(embNodes, n)
-		validSet[n.id] = true
 	}
 	fRows.Close()
 	if err := fRows.Err(); err != nil {
@@ -138,7 +136,8 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 
 	// All-pairs cosine distance in Go. O(N²) arithmetic, but no CGO overhead
 	// per pair — avoids N separate full-table-scan SQLite queries.
-	seen := make(map[pairKey]bool)
+	// node_embeddings has node_id TEXT PRIMARY KEY, so each node appears once in
+	// nodesVec; the j>i loop visits each pair exactly once and no seen-map is needed.
 	candidates := []ConflictCandidate{}
 	for i := range nodesVec {
 		for j := i + 1; j < len(nodesVec); j++ {
@@ -147,14 +146,14 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 			if dist > CandidateSimilarityFloor {
 				continue
 			}
-			// Normalise pair to (smaller-id, larger-id) for deduplication.
+			// Normalise pair to (smaller-id, larger-id).
 			aID, aLabel, aDomain := ni.id, ni.label, ni.domain
 			bID, bLabel, bDomain := nj.id, nj.label, nj.domain
 			if aID > bID {
 				aID, aLabel, aDomain, bID, bLabel, bDomain = bID, bLabel, bDomain, aID, aLabel, aDomain
 			}
 			key := pairKey{aID, bID}
-			if seen[key] || excluded[key] {
+			if excluded[key] {
 				continue
 			}
 			// Cross-domain pairs need to be very semantically close.
@@ -167,7 +166,6 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 			if domain != "" && aDomain != domain && bDomain != domain {
 				continue
 			}
-			seen[key] = true
 			candidates = append(candidates, ConflictCandidate{
 				AID:              aID,
 				ALabel:           aLabel,
@@ -211,7 +209,7 @@ func blobToFloat32(b []byte) []float32 {
 }
 
 // cosineDistance returns 1 - cos(a, b). Returns 1.0 (maximum distance) for
-// zero-magnitude vectors to avoid division by zero.
+// zero-magnitude vectors, mismatched lengths, or non-finite inputs.
 func cosineDistance(a, b []float32) float64 {
 	if len(a) != len(b) || len(a) == 0 {
 		return 1.0
@@ -224,10 +222,15 @@ func cosineDistance(a, b []float32) float64 {
 		normA += ai * ai
 		normB += bi * bi
 	}
-	if normA == 0 || normB == 0 {
+	denom := math.Sqrt(normA * normB)
+	if denom == 0 {
 		return 1.0
 	}
-	return 1.0 - dot/(math.Sqrt(normA)*math.Sqrt(normB))
+	result := 1.0 - dot/denom
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return 1.0
+	}
+	return result
 }
 
 // DriftCandidate is a node flagged as potentially stale or conflicting.

@@ -212,10 +212,10 @@ func TestFindConflictCandidates_Performance(t *testing.T) {
 }
 
 // TestFindConflictCandidates_ScalesTo1000 is a regression guard against the
-// O(N²) self-join that caused MCP bridge timeouts at ~1,100 live nodes. At
-// N=1,000 the per-node KNN sweep must finish within 20 s.
-// Embeddings are inserted directly via SQL (bypassing the Ollama HTTP path)
-// so setup is instantaneous and we only measure the sweep itself.
+// O(N²) SQL approaches (self-join, per-node KNN) that caused MCP bridge
+// timeouts at ~1,100 live nodes. At N=1,000 the all-pairs Go distance loop
+// must finish within 20 s. Embeddings are inserted directly via SQL (bypassing
+// the Ollama HTTP path) so setup is instantaneous and only the sweep is timed.
 func TestFindConflictCandidates_ScalesTo1000(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping scale test in short mode")
