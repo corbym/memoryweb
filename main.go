@@ -1075,7 +1075,7 @@ var optionSpecs = []optionSpec{
 	{"pre_compact_enabled", false, "file before compaction (PreCompact hook)"},
 	{"reinject_on_compact", false, "reinject orient (domain+topic) after compaction (PostCompact hook)"},
 	{"sweep_interval_turns", 15, "turns between filing prompts; 0 disables (Stop hook)"},
-	{"dream_injection", true, "include dream digest in filing prompt; false skips it (Stop hook)"},
+	{"dream_injection", true, "include dream digest in filing prompt; false skips it (Stop hook and PreCompact hook)"},
 	{"subagent_orient_enabled", false, "orient sub-agents into parent scope + inject digest (SubagentStart hook)"},
 	{"subagent_audit_enabled", false, "orphan audit on sub-agent stop (SubagentStop hook)"},
 }

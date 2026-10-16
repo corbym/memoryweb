@@ -4,7 +4,7 @@
 set -euo pipefail
 
 MEMORYWEB_BIN="${MEMORYWEB_BIN:-memoryweb}"
-MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb.db}"
+MEMORYWEB_DB="${MEMORYWEB_DB:-${HOME}/.memoryweb/.memoryweb.db}"
 
 # shellcheck source=memoryweb_lib.sh
 source "$(dirname "$0")/memoryweb_lib.sh"

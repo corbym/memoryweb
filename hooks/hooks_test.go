@@ -751,6 +751,69 @@ func TestPrecompactHookEmbedsDreamDigest(t *testing.T) {
 	}
 }
 
+// TestPrecompactHookDreamInjectionDisabled verifies that when dream_injection=false
+// is set, the precompact hook still blocks but omits the dream digest.
+// Mirrors TestSaveHookDreamInjectionDisabled — positive control first.
+func TestPrecompactHookDreamInjectionDisabled(t *testing.T) {
+	precompactHook := filepath.Join(hooksDir(t), "memoryweb_precompact_hook.sh")
+	projectsDir := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "test.db")
+
+	seedRealisticDB(t, dbPath)
+
+	// ── positive control: dream_injection=true (default) ─────────────────────
+	statePos := t.TempDir()
+	homePos := t.TempDir()
+	writeConfig(t, homePos, map[string]interface{}{"pre_compact_enabled": true})
+	sessionPos := "test-precompact-dream-injection-enabled"
+	_ = projectsDir
+
+	outPos, codePos := runHookExtra(t, precompactHook, sessionPos, statePos, t.TempDir(),
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+		"HOME="+homePos,
+	)
+	if codePos != 0 {
+		t.Fatalf("positive-control hook exited %d; output:\n%s", codePos, outPos)
+	}
+	if !strings.Contains(outPos, dreamDigestHeader) {
+		t.Fatalf("positive control: expected dream header %q with dream_injection=true; got:\n%s", dreamDigestHeader, outPos)
+	}
+
+	// ── negative control: dream_injection=false ───────────────────────────────
+	stateNeg := t.TempDir()
+	homeNeg := t.TempDir()
+	writeConfig(t, homeNeg, map[string]interface{}{"pre_compact_enabled": true, "dream_injection": false})
+	sessionNeg := "test-precompact-dream-injection-disabled"
+
+	outNeg, codeNeg := runHookExtra(t, precompactHook, sessionNeg, stateNeg, t.TempDir(),
+		"MEMORYWEB_DB="+dbPath,
+		"MEMORYWEB_BIN="+dreamBin,
+		"HOME="+homeNeg,
+	)
+	if codeNeg != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", codeNeg, outNeg)
+	}
+
+	if !strings.Contains(outNeg, `"continue":false`) {
+		t.Errorf("expected continue:false when dream_injection=false; got:\n%s", outNeg)
+	}
+	if strings.Contains(outNeg, dreamDigestHeader) {
+		t.Errorf("expected no dream header %q when dream_injection=false; got:\n%s", dreamDigestHeader, outNeg)
+	}
+
+	line := strings.TrimSpace(outNeg)
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+		t.Errorf("hook output is not valid JSON: %v\ngot:\n%s", err, outNeg)
+	}
+	stopReason, _ := envelope["stopReason"].(string)
+	if !strings.Contains(stopReason, "remember with an items array") {
+		t.Errorf("stopReason should still contain filing instructions; got:\n%s", stopReason)
+	}
+}
+
 // TestPrecompactHookBlocksGracefullyWithoutDreamBin verifies that the precompact
 // hook still fires correctly when the dream binary is absent.
 func TestPrecompactHookBlocksGracefullyWithoutDreamBin(t *testing.T) {

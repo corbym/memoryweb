@@ -56,20 +56,21 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 	excluded := make(map[pairKey]bool)
 	edgeRows, err := st.db.Query(
 		`SELECT from_node, to_node FROM edges WHERE relationship IN ('contradicts', 'resolved', 'resolved_by', 'supersedes')`)
-	if err == nil {
-		for edgeRows.Next() {
-			var fn, tn string
-			if edgeRows.Scan(&fn, &tn) == nil {
-				if fn > tn {
-					fn, tn = tn, fn
-				}
-				excluded[pairKey{fn, tn}] = true
+	if err != nil {
+		return []ConflictCandidate{}, fmt.Errorf("FindConflictCandidates edges: %w", err)
+	}
+	for edgeRows.Next() {
+		var fn, tn string
+		if edgeRows.Scan(&fn, &tn) == nil {
+			if fn > tn {
+				fn, tn = tn, fn
 			}
+			excluded[pairKey{fn, tn}] = true
 		}
-		edgeRows.Close()
-		if err := edgeRows.Err(); err != nil {
-			return []ConflictCandidate{}, nil
-		}
+	}
+	edgeRows.Close()
+	if err := edgeRows.Err(); err != nil {
+		return []ConflictCandidate{}, nil
 	}
 
 	// Fetch all live, embedded nodes that match the caller's tag and node_kind
@@ -113,7 +114,7 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 		var id, label, domain string
 		var blob []byte
 		if err := fRows.Scan(&id, &label, &domain, &blob); err != nil {
-			return []ConflictCandidate{}, nil
+			return nil, fmt.Errorf("FindConflictCandidates scan: %w", err)
 		}
 		v := blobToFloat32(blob)
 		if len(v) > 0 {
