@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -72,9 +73,10 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 	}
 
 	// Fetch all live, embedded nodes that match the caller's tag and node_kind
-	// filters. Blobs are loaded into Go memory once; each is then used as the
-	// query vector for that node's KNN pass. Total memory is O(N × embedding
-	// size) — about 5 MB at N=1,300 with 1024-dim floats, which is acceptable.
+	// filters. Blobs are loaded into Go memory once; each is then deserialized
+	// into a []float32 as one operand in the all-pairs cosine distance loop below.
+	// Total memory is O(N × embedding size) — about 5 MB at N=1,300 with
+	// 1024-dim floats, which is acceptable.
 	// Domain filter is intentionally absent here: it is applied per-pair below
 	// so that cross-domain pairs are included when "at least one side is in the
 	// requested domain", preserving the prior semantics.
@@ -99,36 +101,27 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 	if err != nil {
 		return []ConflictCandidate{}, nil
 	}
-	var embNodes []embeddedNode
+	defer fRows.Close()
+	// nodeForDistance holds only the fields the inner loop needs; the blob is
+	// discarded after deserialization to avoid retaining ~4 KB per node.
+	type nodeForDistance struct {
+		id, label, domain string
+		vec               []float32
+	}
+	var nodesVec []nodeForDistance
 	for fRows.Next() {
-		var n embeddedNode
-		if err := fRows.Scan(&n.id, &n.label, &n.domain, &n.blob); err != nil {
-			fRows.Close()
+		var id, label, domain string
+		var blob []byte
+		if err := fRows.Scan(&id, &label, &domain, &blob); err != nil {
 			return []ConflictCandidate{}, nil
 		}
-		embNodes = append(embNodes, n)
+		v := blobToFloat32(blob)
+		if len(v) > 0 {
+			nodesVec = append(nodesVec, nodeForDistance{id, label, domain, v})
+		}
 	}
-	fRows.Close()
 	if err := fRows.Err(); err != nil {
 		return []ConflictCandidate{}, nil
-	}
-	if len(embNodes) < 2 {
-		return []ConflictCandidate{}, nil
-	}
-
-	// Deserialize each embedding blob to []float32 once, so the inner loop
-	// works entirely in Go without any SQLite round-trips.
-	type embeddedNodeVec struct {
-		embeddedNode
-		vec []float32
-	}
-	nodesVec := make([]embeddedNodeVec, 0, len(embNodes))
-	for _, n := range embNodes {
-		v := blobToFloat32(n.blob)
-		if len(v) == 0 {
-			continue
-		}
-		nodesVec = append(nodesVec, embeddedNodeVec{n, v})
 	}
 	if len(nodesVec) < 2 {
 		return []ConflictCandidate{}, nil
@@ -137,8 +130,13 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 	// All-pairs cosine distance in Go. O(N²) arithmetic, but no CGO overhead
 	// per pair — avoids N separate full-table-scan SQLite queries.
 	// node_embeddings has node_id TEXT PRIMARY KEY, so each node appears once in
-	// nodesVec; the j>i loop visits each pair exactly once and no seen-map is needed.
-	candidates := []ConflictCandidate{}
+	// nodesVec; the j>i loop visits each pair exactly once and no dedup map is needed.
+	// Accumulation is bounded to limit×4 pairs before sort+truncation so that a
+	// densely-clustered domain with many sub-threshold pairs cannot build an
+	// arbitrarily-large slice and stall on O(K²) sort.
+	poolCap := limit * 4
+	candidates := make([]ConflictCandidate, 0, poolCap)
+outer:
 	for i := range nodesVec {
 		for j := i + 1; j < len(nodesVec); j++ {
 			ni, nj := &nodesVec[i], &nodesVec[j]
@@ -174,23 +172,19 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 				SemanticDistance: dist,
 				Reason:           "semantically adjacent — agent adjudicates whether these conflict",
 			})
+			if len(candidates) >= poolCap {
+				break outer
+			}
 		}
 	}
 
-	sortConflictCandidates(candidates)
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].SemanticDistance < candidates[j].SemanticDistance
+	})
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
 	}
 	return candidates, nil
-}
-
-// sortConflictCandidates sorts candidates by SemanticDistance ascending.
-func sortConflictCandidates(cs []ConflictCandidate) {
-	for i := 1; i < len(cs); i++ {
-		for j := i; j > 0 && cs[j].SemanticDistance < cs[j-1].SemanticDistance; j-- {
-			cs[j], cs[j-1] = cs[j-1], cs[j]
-		}
-	}
 }
 
 // blobToFloat32 decodes a little-endian IEEE 754 float32 byte blob as produced
@@ -229,6 +223,9 @@ func cosineDistance(a, b []float32) float64 {
 	result := 1.0 - dot/denom
 	if math.IsNaN(result) || math.IsInf(result, 0) {
 		return 1.0
+	}
+	if result < 0 {
+		return 0
 	}
 	return result
 }

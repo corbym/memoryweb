@@ -5,15 +5,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"hash/fnv"
-	"math"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/corbym/memoryweb/db"
 )
 
 // disableOllamaDB sets MEMORYWEB_OLLAMA_ENDPOINT=disabled for the duration of
@@ -102,37 +99,6 @@ func makeDenseVector(seed int64) []float32 {
 		v[i] = float32(r.NormFloat64())
 	}
 	return v
-}
-
-// insertEmbeddingsDirect writes embeddings directly into node_embeddings using
-// raw SQL, bypassing the Ollama HTTP path entirely. This is orders of magnitude
-// faster than withFakeEmbeddings+BackfillEmbeddings for large node counts
-// (N=1,000 inserts in milliseconds vs minutes of HTTP round trips).
-// vectors maps node IDs (not label markers) to float32 slices.
-func insertEmbeddingsDirect(t *testing.T, s *db.Store, vectors map[string][]float32) {
-	t.Helper()
-	if !s.VecAvailable() {
-		t.Skip("sqlite-vec not available")
-	}
-	for nodeID, v := range vectors {
-		blob := serializeEmbeddingBlob(v)
-		if _, err := s.DB().Exec(`DELETE FROM node_embeddings WHERE node_id = ?`, nodeID); err != nil {
-			t.Fatalf("insertEmbeddingsDirect: DELETE %s: %v", nodeID, err)
-		}
-		if _, err := s.DB().Exec(`INSERT INTO node_embeddings(node_id, embedding) VALUES (?, ?)`, nodeID, blob); err != nil {
-			t.Fatalf("insertEmbeddingsDirect: INSERT %s: %v", nodeID, err)
-		}
-	}
-}
-
-// serializeEmbeddingBlob encodes a []float32 as the little-endian IEEE 754
-// byte sequence that sqlite-vec's FLOAT[N] column expects.
-func serializeEmbeddingBlob(v []float32) []byte {
-	blob := make([]byte, len(v)*4)
-	for i, f := range v {
-		binary.LittleEndian.PutUint32(blob[i*4:], math.Float32bits(f))
-	}
-	return blob
 }
 
 // TestSuggestEdges_CrossDomainRejectedWhenNoSameDomainCandidate guards against
