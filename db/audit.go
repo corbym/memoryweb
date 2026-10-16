@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -31,75 +32,37 @@ const conflictsDomainThreshold = 0.3
 // pairs are included only when their distance is below conflictsDomainThreshold.
 // The result contains up to limit pairs. Empty slice (not nil) is returned when
 // no embeddings exist.
+//
+// Implementation: all embeddings are loaded from SQL once, deserialized to
+// []float32 in Go, then all (N*(N-1)/2) pairwise cosine distances are computed
+// in pure Go. This is O(N²) arithmetic but avoids the N separate SQLite KNN
+// queries that caused MCP bridge timeouts at ~1,100 live nodes — each SQLite
+// round-trip incurs CGO overhead and a full-table scan, making the per-query
+// approach ~60× slower than in-process Go arithmetic at N=1,000.
 func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKinds []string) ([]ConflictCandidate, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 	domain = st.ResolveAlias(domain)
 
-	// Fetch live nodes with their embeddings. If no embeddings table is
-	// available or empty, return an empty slice.
 	if !st.vecAvailable {
 		return []ConflictCandidate{}, nil
 	}
 
-	// Compute pairwise distances in a single SQL statement (a self-join over
-	// node_embeddings normalised to unordered pairs via e2.node_id > e1.node_id),
-	// so SQLite streams only pairs below the floor instead of issuing one query
-	// per node and loading every embedded node into Go memory. Scope filters
-	// live at the SQL level: tags and node_kind must match on BOTH sides of a
-	// pair (mirroring the previous per-node inner queries); a domain scope
-	// requires at least one side to be in the domain.
-	subConds := []string{
-		"n1.archived_at IS NULL",
-		"n2.archived_at IS NULL",
-		"length(e1.embedding) > 0",
-		"length(e2.embedding) > 0",
-	}
-	subArgs := []interface{}{}
-	subConds, subArgs = tagFilter("n1.tags", tags, subConds, subArgs)
-	subConds, subArgs = tagFilter("n2.tags", tags, subConds, subArgs)
-	subConds, subArgs = nodeKindFilter("n1.node_kind", nodeKinds, subConds, subArgs)
-	subConds, subArgs = nodeKindFilter("n2.node_kind", nodeKinds, subConds, subArgs)
-	if domain != "" {
-		subConds = append(subConds, "(n1.domain = ? OR n2.domain = ?)")
-		subArgs = append(subArgs, domain, domain)
-	}
-
-	// Pool more pairs than the final limit so exclusions (already-contradicting
-	// pairs) don't starve the result; Go applies the cross-domain threshold and
-	// pair exclusions over the closest pool the SQL ORDER BY draws.
-	pool := limit * 4
-	pairQ := `SELECT id1, label1, domain1, id2, label2, domain2, dist FROM (
-		SELECT e1.node_id AS id1, n1.label AS label1, n1.domain AS domain1,
-		       e2.node_id AS id2, n2.label AS label2, n2.domain AS domain2,
-		       vec_distance_cosine(e1.embedding, e2.embedding) AS dist
-		FROM node_embeddings e1
-		JOIN nodes n1 ON n1.id = e1.node_id
-		JOIN node_embeddings e2 ON e2.node_id > e1.node_id
-		JOIN nodes n2 ON n2.id = e2.node_id
-		WHERE ` + strings.Join(subConds, " AND ") + `
-	) pairs
-	WHERE dist <= ?
-	ORDER BY dist ASC
-	LIMIT ?`
-
-	// Build the set of pairs to exclude: already-contradicting pairs, and pairs
-	// already resolved via a resolved/resolved_by/supersedes edge directly
-	// between the two nodes (checked in either direction).
+	// Build adjudication-edge exclusion set. Pairs already connected by a
+	// contradicts, resolved, resolved_by, or supersedes edge are suppressed.
 	type pairKey struct{ a, b string }
-	contradicting := make(map[pairKey]bool)
+	excluded := make(map[pairKey]bool)
 	edgeRows, err := st.db.Query(
 		`SELECT from_node, to_node FROM edges WHERE relationship IN ('contradicts', 'resolved', 'resolved_by', 'supersedes')`)
 	if err == nil {
 		for edgeRows.Next() {
 			var fn, tn string
 			if edgeRows.Scan(&fn, &tn) == nil {
-				// Normalise: always store the smaller id first.
 				if fn > tn {
 					fn, tn = tn, fn
 				}
-				contradicting[pairKey{fn, tn}] = true
+				excluded[pairKey{fn, tn}] = true
 			}
 		}
 		edgeRows.Close()
@@ -108,40 +71,114 @@ func (st *Store) FindConflictCandidates(domain string, limit int, tags, nodeKind
 		}
 	}
 
-	args := append(subArgs, CandidateSimilarityFloor, pool)
-	rows, err := st.db.Query(pairQ, args...)
+	// Fetch all live, embedded nodes that match the caller's tag and node_kind
+	// filters. Blobs are loaded into Go memory once; each is then used as the
+	// query vector for that node's KNN pass. Total memory is O(N × embedding
+	// size) — about 5 MB at N=1,300 with 1024-dim floats, which is acceptable.
+	// Domain filter is intentionally absent here: it is applied per-pair below
+	// so that cross-domain pairs are included when "at least one side is in the
+	// requested domain", preserving the prior semantics.
+	type embeddedNode struct {
+		id     string
+		label  string
+		domain string
+		blob   []byte
+	}
+	fetchConds := []string{
+		"n.archived_at IS NULL",
+		"length(e.embedding) > 0",
+	}
+	fetchArgs := []interface{}{}
+	fetchConds, fetchArgs = tagFilter("n.tags", tags, fetchConds, fetchArgs)
+	fetchConds, fetchArgs = nodeKindFilter("n.node_kind", nodeKinds, fetchConds, fetchArgs)
+	fetchQ := `SELECT n.id, n.label, n.domain, e.embedding
+	           FROM nodes n
+	           JOIN node_embeddings e ON e.node_id = n.id
+	           WHERE ` + strings.Join(fetchConds, " AND ")
+	fRows, err := st.db.Query(fetchQ, fetchArgs...)
 	if err != nil {
 		return []ConflictCandidate{}, nil
 	}
-	defer rows.Close()
-
-	candidates := []ConflictCandidate{}
-	for rows.Next() {
-		var aID, aLabel, aDomain, bID, bLabel, bDomain string
-		var dist float64
-		if err := rows.Scan(&aID, &aLabel, &aDomain, &bID, &bLabel, &bDomain, &dist); err != nil {
+	var embNodes []embeddedNode
+	validSet := make(map[string]bool)
+	for fRows.Next() {
+		var n embeddedNode
+		if err := fRows.Scan(&n.id, &n.label, &n.domain, &n.blob); err != nil {
+			fRows.Close()
 			return []ConflictCandidate{}, nil
 		}
-		// Cross-domain pairs are surfaced only when very semantically close;
-		// same-domain pairs ride the full floor. (The self-join never pairs a
-		// node with itself and yields the smaller id first.)
-		if aDomain != bDomain && dist > conflictsDomainThreshold {
-			continue
-		}
-		if contradicting[pairKey{aID, bID}] {
-			continue
-		}
-		candidates = append(candidates, ConflictCandidate{
-			AID:              aID,
-			ALabel:           aLabel,
-			BID:              bID,
-			BLabel:           bLabel,
-			SemanticDistance: dist,
-			Reason:           "semantically adjacent — agent adjudicates whether these conflict",
-		})
+		embNodes = append(embNodes, n)
+		validSet[n.id] = true
+	}
+	fRows.Close()
+	if err := fRows.Err(); err != nil {
+		return []ConflictCandidate{}, nil
+	}
+	if len(embNodes) < 2 {
+		return []ConflictCandidate{}, nil
 	}
 
-	// Sort by distance ascending and cap at limit.
+	// Deserialize each embedding blob to []float32 once, so the inner loop
+	// works entirely in Go without any SQLite round-trips.
+	type embeddedNodeVec struct {
+		embeddedNode
+		vec []float32
+	}
+	nodesVec := make([]embeddedNodeVec, 0, len(embNodes))
+	for _, n := range embNodes {
+		v := blobToFloat32(n.blob)
+		if len(v) == 0 {
+			continue
+		}
+		nodesVec = append(nodesVec, embeddedNodeVec{n, v})
+	}
+	if len(nodesVec) < 2 {
+		return []ConflictCandidate{}, nil
+	}
+
+	// All-pairs cosine distance in Go. O(N²) arithmetic, but no CGO overhead
+	// per pair — avoids N separate full-table-scan SQLite queries.
+	seen := make(map[pairKey]bool)
+	candidates := []ConflictCandidate{}
+	for i := range nodesVec {
+		for j := i + 1; j < len(nodesVec); j++ {
+			ni, nj := &nodesVec[i], &nodesVec[j]
+			dist := cosineDistance(ni.vec, nj.vec)
+			if dist > CandidateSimilarityFloor {
+				continue
+			}
+			// Normalise pair to (smaller-id, larger-id) for deduplication.
+			aID, aLabel, aDomain := ni.id, ni.label, ni.domain
+			bID, bLabel, bDomain := nj.id, nj.label, nj.domain
+			if aID > bID {
+				aID, aLabel, aDomain, bID, bLabel, bDomain = bID, bLabel, bDomain, aID, aLabel, aDomain
+			}
+			key := pairKey{aID, bID}
+			if seen[key] || excluded[key] {
+				continue
+			}
+			// Cross-domain pairs need to be very semantically close.
+			if aDomain != bDomain && dist > conflictsDomainThreshold {
+				continue
+			}
+			// Domain filter: at least one node in the pair must belong to the
+			// requested domain (mirrors the previous "(n1.domain=? OR n2.domain=?)"
+			// self-join semantics).
+			if domain != "" && aDomain != domain && bDomain != domain {
+				continue
+			}
+			seen[key] = true
+			candidates = append(candidates, ConflictCandidate{
+				AID:              aID,
+				ALabel:           aLabel,
+				BID:              bID,
+				BLabel:           bLabel,
+				SemanticDistance: dist,
+				Reason:           "semantically adjacent — agent adjudicates whether these conflict",
+			})
+		}
+	}
+
 	sortConflictCandidates(candidates)
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
@@ -156,6 +193,41 @@ func sortConflictCandidates(cs []ConflictCandidate) {
 			cs[j], cs[j-1] = cs[j-1], cs[j]
 		}
 	}
+}
+
+// blobToFloat32 decodes a little-endian IEEE 754 float32 byte blob as produced
+// by vec.SerializeFloat32. Returns nil for malformed input.
+func blobToFloat32(b []byte) []float32 {
+	if len(b)%4 != 0 {
+		return nil
+	}
+	v := make([]float32, len(b)/4)
+	for i := range v {
+		v[i] = math.Float32frombits(
+			uint32(b[i*4]) | uint32(b[i*4+1])<<8 | uint32(b[i*4+2])<<16 | uint32(b[i*4+3])<<24,
+		)
+	}
+	return v
+}
+
+// cosineDistance returns 1 - cos(a, b). Returns 1.0 (maximum distance) for
+// zero-magnitude vectors to avoid division by zero.
+func cosineDistance(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 1.0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		ai := float64(a[i])
+		bi := float64(b[i])
+		dot += ai * bi
+		normA += ai * ai
+		normB += bi * bi
+	}
+	if normA == 0 || normB == 0 {
+		return 1.0
+	}
+	return 1.0 - dot/(math.Sqrt(normA)*math.Sqrt(normB))
 }
 
 // DriftCandidate is a node flagged as potentially stale or conflicting.

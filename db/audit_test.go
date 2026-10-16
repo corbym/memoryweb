@@ -179,10 +179,9 @@ func TestFindConflictCandidates_ReturnsEmptySliceNotNilWhenNothingQualifies(t *t
 	}
 }
 
-// TestFindConflictCandidates_Performance guards against the pair-distance scan
-// degrading back into one SQL query per node (CR-22): pairwise distances must
-// be computed in a single SQL statement, so a 200-node domain completes well
-// under half a second.
+// TestFindConflictCandidates_Performance guards against the conflicts sweep
+// regressing to a superlinear algorithm: 200 identical-embedding nodes must
+// complete well within budget even when every pair qualifies.
 func TestFindConflictCandidates_Performance(t *testing.T) {
 	s := newStore(t)
 	const n = 200
@@ -205,10 +204,43 @@ func TestFindConflictCandidates_Performance(t *testing.T) {
 		t.Fatalf("FindConflictCandidates: %v", err)
 	}
 	if elapsed > 2000*time.Millisecond {
-		t.Fatalf("200-node conflicts scan took %s — candidates should be computed in a single SQL query, not one query per node", elapsed)
+		t.Fatalf("200-node conflicts sweep took %s — expected < 2s", elapsed)
 	}
 	if len(candidates) > 10 {
 		t.Errorf("expected at most 10 candidates, got %d", len(candidates))
+	}
+}
+
+// TestFindConflictCandidates_ScalesTo1000 is a regression guard against the
+// O(N²) self-join that caused MCP bridge timeouts at ~1,100 live nodes. At
+// N=1,000 the per-node KNN sweep must finish within 20 s.
+// Embeddings are inserted directly via SQL (bypassing the Ollama HTTP path)
+// so setup is instantaneous and we only measure the sweep itself.
+func TestFindConflictCandidates_ScalesTo1000(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping scale test in short mode")
+	}
+	s := newStore(t)
+	if !s.VecAvailable() {
+		t.Skip("sqlite-vec not available")
+	}
+	const n = 1000
+	sharedVec := makeDenseVector(9999)
+	vecs := make(map[string][]float32, n)
+	for i := 0; i < n; i++ {
+		node := mustAddNode(t, s, fmt.Sprintf("conf-scale-%04d marker", i), "conf-scale-domain")
+		vecs[node.ID] = sharedVec
+	}
+	insertEmbeddingsDirect(t, s, vecs)
+
+	start := time.Now()
+	_, err := s.FindConflictCandidates("conf-scale-domain", 50, nil, nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("conflicts sweep did not finish: %v", err)
+	}
+	if elapsed > 20*time.Second {
+		t.Fatalf("1000-node conflicts sweep took %s — expected < 20s (O(N²) self-join regression?)", elapsed)
 	}
 }
 
