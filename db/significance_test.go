@@ -519,3 +519,102 @@ func TestGetTrustForMemoryID_ScopesToNeighbourhood(t *testing.T) {
 		t.Error("anchor should appear in its own neighbourhood trust result")
 	}
 }
+
+// ── GetStructuralNodes ────────────────────────────────────────────────────────
+
+func TestGetStructuralNodes_Empty(t *testing.T) {
+	s := newStore(t)
+	nodes, truncated, err := s.GetStructuralNodes("empty-domain", 10, 90)
+	if err != nil {
+		t.Fatalf("GetStructuralNodes: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Errorf("empty domain: want 0 nodes, got %d", len(nodes))
+	}
+	if truncated {
+		t.Error("empty domain: want truncated=false")
+	}
+}
+
+func TestGetStructuralNodes_ReturnsStructural(t *testing.T) {
+	s := newStore(t)
+	popular := mustAddNode(t, s, "Popular node", "proj")
+	niche := mustAddNode(t, s, "Niche node", "proj")
+
+	for _, label := range []string{"Linker A", "Linker B", "Linker C"} {
+		linker := mustAddNode(t, s, label, "proj")
+		if _, err := s.AddEdge(linker.ID, popular.ID, "connects_to", ""); err != nil {
+			t.Fatalf("AddEdge: %v", err)
+		}
+	}
+	nicheLinker := mustAddNode(t, s, "Niche linker", "proj")
+	if _, err := s.AddEdge(nicheLinker.ID, niche.ID, "connects_to", ""); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	nodes, truncated, err := s.GetStructuralNodes("proj", 10, 90)
+	if err != nil {
+		t.Fatalf("GetStructuralNodes: %v", err)
+	}
+	if len(nodes) == 0 {
+		t.Fatal("want at least one structural node")
+	}
+	if nodes[0].ID != popular.ID {
+		t.Errorf("top node: want %q (popular), got %q", popular.ID, nodes[0].ID)
+	}
+	if nodes[0].ImportanceScore <= 0 {
+		t.Errorf("ImportanceScore should be > 0, got %f", nodes[0].ImportanceScore)
+	}
+	if truncated {
+		t.Error("truncated should be false when limit > result count")
+	}
+}
+
+func TestGetStructuralNodes_Truncation(t *testing.T) {
+	s := newStore(t)
+	// Create 3 hubs each with an inbound edge so structural returns 3 nodes.
+	for i := 0; i < 3; i++ {
+		hub := mustAddNode(t, s, fmt.Sprintf("Hub %d", i), "proj")
+		linker := mustAddNode(t, s, fmt.Sprintf("Linker %d", i), "proj")
+		if _, err := s.AddEdge(linker.ID, hub.ID, "connects_to", ""); err != nil {
+			t.Fatalf("AddEdge: %v", err)
+		}
+	}
+
+	nodes, truncated, err := s.GetStructuralNodes("proj", 1, 90)
+	if err != nil {
+		t.Fatalf("GetStructuralNodes limit=1: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Errorf("want exactly 1 node with limit=1, got %d", len(nodes))
+	}
+	if !truncated {
+		t.Error("truncated should be true when result count > limit")
+	}
+}
+
+func TestGetStructuralNodes_DoesNotLog(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer s.Close()
+
+	hub := mustAddNode(t, s, "Hub", "proj")
+	linker := mustAddNode(t, s, "Linker", "proj")
+	if _, err := s.AddEdge(linker.ID, hub.ID, "connects_to", ""); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	if _, _, err = s.GetStructuralNodes("proj", 10, 90); err != nil {
+		t.Fatalf("GetStructuralNodes: %v", err)
+	}
+
+	var count int
+	s.DB().QueryRow(`SELECT COUNT(*) FROM significance_log`).Scan(&count)
+	if count != 0 {
+		t.Errorf("GetStructuralNodes must not write to significance_log, got %d rows", count)
+	}
+}

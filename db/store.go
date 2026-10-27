@@ -46,6 +46,23 @@ func New(path string) (*Store, error) {
 	if err := store.migrate(); err != nil {
 		return nil, err
 	}
+
+	// One-time VACUUM triggered by migration v17 (bulk significance_log delete).
+	// Fires only on the upgrade that applies v17; subsequent opens skip it because
+	// the applied_at timestamp is then hours/days old.
+	var v17AppliedAt time.Time
+	if err := db.QueryRow(
+		`SELECT applied_at FROM schema_migrations WHERE version = 17`,
+	).Scan(&v17AppliedAt); err == nil && time.Since(v17AppliedAt) < time.Minute {
+		db.Exec(`VACUUM`) //nolint:errcheck
+	}
+
+	// Startup retention prune: delete non-trust significance_log rows older than
+	// 30 days. Trust rows are kept indefinitely (LastTrustScores depends on them).
+	// With orient no longer writing non-trust rows this is a no-op in steady state,
+	// but caps the table if any other path writes structural/uncurated/potentially_stale.
+	db.Exec(`DELETE FROM significance_log WHERE rank_type != 'trust' AND called_at < datetime('now', '-30 days')`) //nolint:errcheck
+
 	if err := os.Chmod(path, 0600); err != nil {
 		log.Printf("[memoryweb] chmod %s: %v", path, err)
 	}

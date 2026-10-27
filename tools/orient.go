@@ -206,12 +206,12 @@ func (hnd *Handler) orientWithTopic(domain, topic string, digest bool) (*ToolRes
 	}
 
 	// Compute load_bearing_low_trust from domain's significant nodes (same as non-topic path).
-	sigResult, err := hnd.store.GetSignificance(domain, orientSignificantCap, 90, nil, nil, 0)
+	structuralNodes, _, err := hnd.store.GetStructuralNodes(domain, orientSignificantCap, 90)
 	if err != nil {
 		return nil, err
 	}
-	sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
-	for i, scoredNode := range sigResult.Structural {
+	sigEntries := make([]scoredLeanEntry, len(structuralNodes))
+	for i, scoredNode := range structuralNodes {
 		sigEntries[i] = scoredLeanEntry{
 			leanEntry:       toLeanEntry(scoredNode.Node),
 			ImportanceScore: scoredNode.ImportanceScore,
@@ -384,12 +384,12 @@ func (hnd *Handler) buildDomainEntry(domain, topic string, digest bool) (orientD
 		}
 		entry.RelevantResultsTruncated = relevantTrunc
 	} else {
-		sigResult, err := hnd.store.GetSignificance(domain, orientSignificantCap, 90, nil, nil, 0)
+		structuralNodes, structuralTrunc, err := hnd.store.GetStructuralNodes(domain, orientSignificantCap, 90)
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
-		sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
-		for i, scoredNode := range sigResult.Structural {
+		sigEntries := make([]scoredLeanEntry, len(structuralNodes))
+		for i, scoredNode := range structuralNodes {
 			sigEntries[i] = scoredLeanEntry{
 				leanEntry:       toLeanEntry(scoredNode.Node),
 				ImportanceScore: scoredNode.ImportanceScore,
@@ -411,7 +411,7 @@ func (hnd *Handler) buildDomainEntry(domain, topic string, digest bool) (orientD
 		if err != nil {
 			return orientDomainEntry{}, err
 		}
-		entry.SignificantResultsTruncated = sigResult.StructuralResultsTruncated
+		entry.SignificantResultsTruncated = structuralTrunc
 	}
 
 	return entry, nil
@@ -483,7 +483,7 @@ func (hnd *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 	staleCount, _ := hnd.store.CountStaleDrift(params.Domain)
 
 	// Step 2: fetch significant nodes (structurally load-bearing, recency-weighted inbound degree).
-	sigResult, err := hnd.store.GetSignificance(params.Domain, orientSignificantCap, 90, nil, nil, 0)
+	structuralNodes, structuralTrunc, err := hnd.store.GetStructuralNodes(params.Domain, orientSignificantCap, 90)
 	if err != nil {
 		return nil, err
 	}
@@ -508,8 +508,8 @@ func (hnd *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	sigEntries := make([]scoredLeanEntry, len(sigResult.Structural))
-	for i, scoredNode := range sigResult.Structural {
+	sigEntries := make([]scoredLeanEntry, len(structuralNodes))
+	for i, scoredNode := range structuralNodes {
 		sigEntries[i] = scoredLeanEntry{
 			leanEntry:       toLeanEntry(scoredNode.Node),
 			ImportanceScore: scoredNode.ImportanceScore,
@@ -574,7 +574,7 @@ func (hnd *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 		Significant:         significantField,
 		Recent:              recentField,
 		orientSectionTruncation: orientSectionTruncation{
-			SignificantResultsTruncated:   sigResult.StructuralResultsTruncated,
+			SignificantResultsTruncated:   structuralTrunc,
 			RecentResultsTruncated:        recentTrunc,
 			DeclaredSpineResultsTruncated: spineTrunc,
 			RulesResultsTruncated:         rulesTrunc,

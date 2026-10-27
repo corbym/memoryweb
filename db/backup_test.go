@@ -1,9 +1,11 @@
 package db_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -147,6 +149,124 @@ func TestBackup_RejectsUnsafeDestination(t *testing.T) {
 		t.Errorf("Backup with a safe destination should succeed, got: %v", err)
 	}
 }
+
+// ── migration v17 ─────────────────────────────────────────────────────────────
+
+// TestMigration17_IndexesCorrect verifies that migration v17 drops the two
+// unused indexes and creates the composite trust-lookup index.
+func TestMigration17_IndexesCorrect(t *testing.T) {
+	s := newStore(t)
+	rawDB := s.DB()
+
+	for _, idx := range []string{"idx_significance_log_trust_lookup"} {
+		var count int
+		rawDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&count)
+		if count == 0 {
+			t.Errorf("expected index %q to exist after migration v17", idx)
+		}
+	}
+	for _, idx := range []string{"idx_significance_log_domain", "idx_significance_log_call_id"} {
+		var count int
+		rawDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&count)
+		if count != 0 {
+			t.Errorf("expected index %q to be dropped by migration v17, but it still exists", idx)
+		}
+	}
+}
+
+// TestStartupRetentionPrune_RemovesOldNonTrustRows verifies that non-trust rows
+// older than 30 days are deleted on store open, while recent non-trust rows
+// (< 30 days) survive.
+func TestStartupRetentionPrune_RemovesOldNonTrustRows(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+
+	old := time.Now().Add(-31 * 24 * time.Hour).UTC()
+	for i, rankType := range []string{"structural", "uncurated", "potentially_stale"} {
+		if _, err := s.DB().Exec(
+			`INSERT INTO significance_log
+			 (id, call_id, called_at, domain, limit_n, node_id, node_label, rank_type, score)
+			 VALUES (?, 'c1', ?, 'dom', 10, 'n1', 'N', ?, NULL)`,
+			fmt.Sprintf("old-%d", i), old, rankType,
+		); err != nil {
+			t.Fatalf("insert old row: %v", err)
+		}
+	}
+
+	recent := time.Now().Add(-1 * 24 * time.Hour).UTC()
+	if _, err := s.DB().Exec(
+		`INSERT INTO significance_log
+		 (id, call_id, called_at, domain, limit_n, node_id, node_label, rank_type, score)
+		 VALUES ('recent-structural', 'c2', ?, 'dom', 10, 'n1', 'N', 'structural', NULL)`,
+		recent,
+	); err != nil {
+		t.Fatalf("insert recent row: %v", err)
+	}
+	s.Close()
+
+	s2, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New reopen: %v", err)
+	}
+	defer s2.Close()
+
+	var nonTrustCount int
+	s2.DB().QueryRow(`SELECT COUNT(*) FROM significance_log WHERE rank_type != 'trust'`).Scan(&nonTrustCount)
+	if nonTrustCount != 1 {
+		t.Errorf("after retention prune: want 1 recent non-trust row, got %d", nonTrustCount)
+	}
+
+	var oldCount int
+	s2.DB().QueryRow(`SELECT COUNT(*) FROM significance_log WHERE called_at < datetime('now', '-30 days')`).Scan(&oldCount)
+	if oldCount != 0 {
+		t.Errorf("after retention prune: want 0 old rows, got %d", oldCount)
+	}
+}
+
+// TestStartupRetentionPrune_KeepsTrustRows verifies that trust rows of any age
+// survive the startup retention prune.
+func TestStartupRetentionPrune_KeepsTrustRows(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	s, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+
+	old := time.Now().Add(-60 * 24 * time.Hour).UTC()
+	score := 0.8
+	for i := 0; i < 3; i++ {
+		if _, err := s.DB().Exec(
+			`INSERT INTO significance_log
+			 (id, call_id, called_at, domain, limit_n, node_id, node_label, rank_type, score)
+			 VALUES (?, 'c1', ?, 'dom', 10, ?, 'N', 'trust', ?)`,
+			fmt.Sprintf("trust-%d", i), old, fmt.Sprintf("node-%d", i), score,
+		); err != nil {
+			t.Fatalf("insert trust row: %v", err)
+		}
+	}
+	s.Close()
+
+	s2, err := db.New(dbPath)
+	if err != nil {
+		t.Fatalf("db.New reopen: %v", err)
+	}
+	defer s2.Close()
+
+	var count int
+	s2.DB().QueryRow(`SELECT COUNT(*) FROM significance_log WHERE rank_type = 'trust'`).Scan(&count)
+	if count != 3 {
+		t.Errorf("old trust rows must survive prune: want 3, got %d", count)
+	}
+}
+
+// ── Close / compile-time assertions ──────────────────────────────────────────
 
 // Close must surface its error to callers (checkpoint + close), and a healthy
 // close closes cleanly. The compile-time assertion guarantees the signature

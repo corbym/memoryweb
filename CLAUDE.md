@@ -106,6 +106,7 @@ Current migrations:
 | 14 | edges: add verdict TEXT column |
 | 15 | Add config key-value table |
 | 16 | Add `node_label_embeddings` and `node_whymatters_embeddings` virtual tables for per-field embeddings |
+| 17 | significance_log: delete non-trust rows, drop `idx_significance_log_domain` + `idx_significance_log_call_id`, add `idx_significance_log_trust_lookup(node_id, rank_type, called_at)` |
 
 ---
 

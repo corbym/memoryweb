@@ -1933,6 +1933,40 @@ func TestOrient_Topic_LoadBearingLowTrustNonZero(t *testing.T) {
 	}
 }
 
+// TestOrient_DoesNotWriteSignificanceLog: orient must not write to
+// significance_log. The structural query runs for load_bearing_low_trust, but
+// logging those results was the primary driver of DB bloat (32k rows/month).
+func TestOrient_DoesNotWriteSignificanceLog(t *testing.T) {
+	dbPath, _, h := newEnvWithPath(t)
+	disableOllama(t)
+
+	hub := addNode(t, h, "Hub node", "sig-log-test", nil)
+	for i := 0; i < 3; i++ {
+		l := addNode(t, h, fmt.Sprintf("Linker %d", i), "sig-log-test", nil)
+		call(t, h, "connect", map[string]any{
+			"from_memory": l, "to_memory": hub,
+			"relationship": "connects_to", "narrative": "links to hub",
+		})
+	}
+
+	// Exercise all three orient paths that call GetSignificance.
+	call(t, h, "orient", map[string]any{"domain": "sig-log-test"})
+	call(t, h, "orient", map[string]any{"domain": "sig-log-test", "topic": "hub"})
+	call(t, h, "orient", map[string]any{"domains": []string{"sig-log-test"}})
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer rawDB.Close()
+
+	var count int
+	rawDB.QueryRow(`SELECT COUNT(*) FROM significance_log`).Scan(&count)
+	if count != 0 {
+		t.Errorf("orient must not write to significance_log; got %d rows", count)
+	}
+}
+
 // TestOrient_RememberViaAliasVisibleOnOrient: filing with an alias domain name
 // must store the canonical domain so orient(domain=alias) finds the memory.
 func TestOrient_RememberViaAliasVisibleOnOrient(t *testing.T) {

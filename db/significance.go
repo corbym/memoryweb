@@ -234,6 +234,78 @@ func (st *Store) GetSignificance(domain string, limit int, recencyWindowDays int
 	return res, nil
 }
 
+// ── GetStructuralNodes ────────────────────────────────────────────────────────
+
+// GetStructuralNodes returns the structural (recency-weighted inbound-degree)
+// top-N nodes for a domain without running the declared/potentially_stale
+// queries and without writing to significance_log. It is the orient-internal
+// path: orient only uses structural results and must not contribute to log bloat.
+// Returns (nodes, truncated, error). truncated is true when the result was
+// capped at limit.
+func (st *Store) GetStructuralNodes(domain string, limit, recencyWindowDays int) ([]ScoredNode, bool, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	conds := []string{
+		"n.domain = ?",
+		"n.archived_at IS NULL",
+		"n2.archived_at IS NULL",
+		"(julianday('now') - julianday(n2.updated_at)) <= ?",
+	}
+	args := []interface{}{domain, recencyWindowDays, limit + 1}
+	rows, err := st.db.Query(
+		`SELECT n.id, n.label, n.description, n.why_matters, n.tags, n.domain,
+		        n.created_at, n.updated_at, n.occurred_at, n.archived_at, n.node_kind,
+		        SUM(1.0 / (1.0 + (julianday('now') - julianday(n2.updated_at)))) AS importance_score
+		 FROM edges e
+		 JOIN nodes n  ON e.to_node   = n.id
+		 JOIN nodes n2 ON e.from_node = n2.id
+		 WHERE `+strings.Join(conds, " AND ")+`
+		 GROUP BY n.id
+		 ORDER BY importance_score DESC
+		 LIMIT ?`,
+		args...,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("GetStructuralNodes: %w", err)
+	}
+	defer rows.Close()
+
+	var nodes []ScoredNode
+	for rows.Next() {
+		var sn ScoredNode
+		var tagsNull, description, whyMatters sql.NullString
+		var occurredAt, archivedAt sql.NullTime
+		var nodeKind string
+		if err := rows.Scan(
+			&sn.ID, &sn.Label, &description, &whyMatters, &tagsNull, &sn.Domain,
+			&sn.CreatedAt, &sn.UpdatedAt, &occurredAt, &archivedAt, &nodeKind,
+			&sn.ImportanceScore,
+		); err != nil {
+			return nil, false, fmt.Errorf("GetStructuralNodes scan: %w", err)
+		}
+		sn.Description = description.String
+		sn.WhyMatters = whyMatters.String
+		sn.Tags = tagsNull.String
+		sn.OccurredAt = nullTimeToPtr(occurredAt)
+		sn.ArchivedAt = nullTimeToPtr(archivedAt)
+		sn.NodeKind = nodeKind
+		nodes = append(nodes, sn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("GetStructuralNodes rows: %w", err)
+	}
+
+	truncated := len(nodes) > limit
+	if truncated {
+		nodes = nodes[:limit]
+	}
+	if nodes == nil {
+		nodes = []ScoredNode{}
+	}
+	return nodes, truncated, nil
+}
+
 // ── significance: memory_id mode ─────────────────────────────────────────────
 
 // getSignificanceByNodeIDs runs dual-signal importance analysis scoped to a

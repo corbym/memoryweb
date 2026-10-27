@@ -269,6 +269,30 @@ CREATE INDEX IF NOT EXISTS idx_significance_log_call_id ON significance_log(call
 			return nil
 		},
 	},
+	{
+		version: 17,
+		desc:    "significance_log: delete non-trust rows, drop unused indexes, add trust-lookup composite index",
+		up: func(tx *sql.Tx) error {
+			stmts := []string{
+				// One-time bulk cleanup: remove all historical structural/uncurated/potentially_stale
+				// rows that were never read back. Only rank_type='trust' rows are used in production
+				// (by LastTrustScores for trust-delta hints in orient digest mode).
+				`DELETE FROM significance_log WHERE rank_type != 'trust'`,
+				`DROP INDEX IF EXISTS idx_significance_log_domain`,
+				`DROP INDEX IF EXISTS idx_significance_log_call_id`,
+				// Composite index matching LastTrustScores:
+				// WHERE node_id IN (...) AND rank_type = 'trust', ORDER BY called_at DESC.
+				`CREATE INDEX IF NOT EXISTS idx_significance_log_trust_lookup
+				    ON significance_log(node_id, rank_type, called_at)`,
+			}
+			for _, stmt := range stmts {
+				if _, err := tx.Exec(stmt); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // migrate creates the schema_migrations tracking table (if needed) then applies
