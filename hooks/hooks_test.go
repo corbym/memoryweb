@@ -1898,15 +1898,18 @@ func TestPostCompactHook_WithContextFile(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hook exited %d; output:\n%s", code, out)
 	}
-	if !strings.Contains(out, `"additionalContext"`) {
-		t.Errorf("expected additionalContext; got:\n%s", out)
+	// PostCompact has no hookSpecificOutput support; context must arrive via systemMessage.
+	if !strings.Contains(out, `"systemMessage"`) {
+		t.Errorf("expected systemMessage; got:\n%s", out)
 	}
-	wantHookSpecificOutput(t, out, "PostCompact")
+	if strings.Contains(out, `"hookSpecificOutput"`) {
+		t.Errorf("PostCompact must not use hookSpecificOutput (rejected by Claude Code); got:\n%s", out)
+	}
 	if !strings.Contains(out, "deep-game") {
-		t.Errorf("expected domain 'deep-game' in additionalContext; got:\n%s", out)
+		t.Errorf("expected domain 'deep-game' in systemMessage; got:\n%s", out)
 	}
 	if !strings.Contains(out, "orient") {
-		t.Errorf("expected 'orient' in additionalContext; got:\n%s", out)
+		t.Errorf("expected 'orient' in systemMessage; got:\n%s", out)
 	}
 }
 
@@ -1925,12 +1928,12 @@ func TestPostCompactHook_NoContextFile(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hook exited %d; output:\n%s", code, out)
 	}
-	if !strings.Contains(out, `"additionalContext"`) {
-		t.Errorf("expected additionalContext even without ctx file; got:\n%s", out)
+	if !strings.Contains(out, `"systemMessage"`) {
+		t.Errorf("expected systemMessage even without ctx file; got:\n%s", out)
 	}
 	// Without a ctx file, orient hint should be generic orient().
 	if !strings.Contains(out, "orient()") {
-		t.Errorf("expected generic 'orient()' hint in additionalContext; got:\n%s", out)
+		t.Errorf("expected generic 'orient()' hint in systemMessage; got:\n%s", out)
 	}
 }
 
@@ -1955,10 +1958,50 @@ func TestPostCompactHook_TopicHint(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hook exited %d; output:\n%s", code, out)
 	}
-	wantHookSpecificOutput(t, out, "PostCompact")
+	if !strings.Contains(out, `"systemMessage"`) {
+		t.Errorf("expected systemMessage; got:\n%s", out)
+	}
+	if strings.Contains(out, `"hookSpecificOutput"`) {
+		t.Errorf("PostCompact must not use hookSpecificOutput (rejected by Claude Code); got:\n%s", out)
+	}
 	// The hint must carry the topic, not stop at domain.
 	if !strings.Contains(out, `orient(domain=\"deep-game\", topic=\"schema migration\")`) {
 		t.Errorf("expected orient(domain, topic) hint; got:\n%s", out)
+	}
+}
+
+// TestPostCompactHook_DomainNotDoubled guards against the grep pipeline emitting
+// two lines when the ctx_file has duplicate domain entries (e.g. from a race
+// between two UPS hook invocations), which caused domain="binder\nbinder".
+func TestPostCompactHook_DomainNotDoubled(t *testing.T) {
+	stateDir := t.TempDir()
+	projectsDir := t.TempDir()
+	home := t.TempDir()
+	sessionID := "postcompact-domain-double"
+	writeConfig(t, home, map[string]interface{}{"reinject_on_compact": true})
+
+	// Two identical JSON lines — simulates a race-duplicated ctx file.
+	ctxFile := filepath.Join(stateDir, "mw_orient_ctx_"+sessionID+".json")
+	content := `{"domain":"binder"}` + "\n" + `{"domain":"binder"}` + "\n"
+	if err := os.WriteFile(ctxFile, []byte(content), 0644); err != nil {
+		t.Fatalf("write ctx file: %v", err)
+	}
+
+	out, code := runHookExtra(t,
+		filepath.Join(hooksDir(t), "memoryweb_postcompact_hook.sh"),
+		sessionID, stateDir, projectsDir,
+		"HOME="+home,
+		"MEMORYWEB_BIN=/nonexistent/memoryweb-test",
+	)
+	if code != 0 {
+		t.Fatalf("hook exited %d; output:\n%s", code, out)
+	}
+	// The orient hint must name the domain exactly once, not "binder\nbinder".
+	if strings.Contains(out, `binder\nbinder`) {
+		t.Errorf("domain must not be doubled; got:\n%s", out)
+	}
+	if !strings.Contains(out, `orient(domain=\"binder\")`) {
+		t.Errorf("expected orient(domain=\"binder\") hint; got:\n%s", out)
 	}
 }
 
@@ -1979,8 +2022,8 @@ func TestPostCompactHook_OptionDisabled(t *testing.T) {
 	if !strings.Contains(out, `"continue":true`) {
 		t.Errorf("expected continue:true when option disabled; got:\n%s", out)
 	}
-	if strings.Contains(out, `"additionalContext"`) {
-		t.Errorf("expected no additionalContext when option disabled; got:\n%s", out)
+	if strings.Contains(out, `"systemMessage"`) {
+		t.Errorf("expected no systemMessage when option disabled; got:\n%s", out)
 	}
 }
 

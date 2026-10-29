@@ -329,7 +329,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.61.0)
+## What's implemented (v1.62.0)
 
 All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
@@ -358,6 +358,9 @@ Key implemented features:
 - Stats v1.59: correct per-node orphan counting (parses remember/connect results); per-process `.current.<pid>` crash-recovery files with PID-liveness check; SIGINT now calls `os.Exit(0)` instead of `os.Stdin.Close()`; stats files default to DB folder; client defaults to "unknown"; `stats rebuild` sub-command; hook scripts use `~/.memoryweb/.memoryweb.db` default
 - dream_injection option (v1.60.0): new `dream_injection` boolean config key (default `true`); when `false`, both the Stop and PreCompact hooks skip the `memoryweb dream` subprocess entirely and use the plain filing prompt — avoids latency and token cost when the digest is not useful
 - audit(mode=conflicts) O(N²) fix (v1.61.0): replaced SQL self-join over node_embeddings with per-node KNN queries; fixes MCP bridge timeouts at ~1,100 live nodes; regression test at N=1,000 within 20 s
+- significance_log bloat fix (v1.62.0): orient no longer writes to significance_log; migration v17 cleanup removes non-trust rows and rebuilds the index for the trust-only lookup path
+- Go 1.26.10 (v1.62.0): security bump for GO-2026-6809
+- PostCompact hook fixes (v1.62.0): (1) replaced invalid hookSpecificOutput.hookEventName="PostCompact" with top-level systemMessage — PostCompact has no hookSpecificOutput support so every compaction silently dropped the reinject context; (2) added head -1 guard to domain extraction to prevent "binder\nbinder" doubling when ctx_file has duplicate domain entries
 
 ---
 

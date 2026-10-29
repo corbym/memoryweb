@@ -39,7 +39,7 @@ domain=""
 topic=""
 if [ -f "${ctx_file}" ]; then
   domain=$(grep -o '"domain"[[:space:]]*:[[:space:]]*"[^"]*"' "${ctx_file}" 2>/dev/null \
-    | grep -o '"[^"]*"$' | tr -d '"' || true)
+    | head -1 | grep -o '"[^"]*"$' | tr -d '"' || true)
   topic=$(grep -o '"topic"[[:space:]]*:[[:space:]]*"[^"]*"' "${ctx_file}" 2>/dev/null \
     | grep -o '"[^"]*"$' | tr -d '"' || true)
 fi
@@ -72,4 +72,4 @@ else
 fi
 
 memoryweb_json_escape "${additional}"
-printf '{"hookSpecificOutput":{"hookEventName":"PostCompact","additionalContext":"%s"}}\n' "${_esc}"
+printf '{"systemMessage":"%s"}\n' "${_esc}"
