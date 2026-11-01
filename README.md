@@ -93,7 +93,7 @@ Override with `MEMORYWEB_DB=/path/to/your.db`
 
 ## Tools
 
-18 MCP tools (v1.56.1). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
+18 MCP tools (v1.64.0). Retired names (`recent`, `restore`, `trace`, `alias`, `rename_domain`, and others) return hard-cut migration errors — see [docs/memoryweb-skill.md](docs/memoryweb-skill.md) for replacements.
 
 ### Filing memories
 
@@ -289,6 +289,25 @@ memoryweb backup --db /path/to/your.db /path/to/snapshot.db
 - Refuses to overwrite an existing destination
 
 > **Backup safety.** Do not back up by copying the live database *folder* (e.g. via a cloud-sync client). In WAL mode the recent data lives in the `-wal` sidecar until checkpointed; a folder copy can capture the `.db` and `-wal` at different instants, and recombining a mismatched pair corrupts the database. Always back up the output of `memoryweb backup` (or `sqlite3 source.db ".backup dest.db"`), and only sync that standalone file. memoryweb checkpoints the WAL into the main file on clean shutdown, but a snapshot is the only safe way to capture a *running* instance.
+
+The `import` subcommand merges a source database into a destination database, preserving node IDs, all timestamps, and every relationship type string verbatim. Embeddings are not imported — run `memoryweb backfill` afterwards to regenerate them.
+
+```bash
+memoryweb import --src /path/to/source.db --dst /path/to/dest.db
+memoryweb import --src source.db --dst dest.db --dry-run          # report without writing
+memoryweb import --src source.db --dst dest.db --on-conflict skip  # skip ID conflicts instead of erroring
+memoryweb import --src source.db --dst dest.db --skip-archived     # exclude archived nodes
+memoryweb import --src source.db --dst dest.db --include-audit-log # copy audit_log rows too
+memoryweb import --src source.db --dst dest.db --report out.json   # write structured JSON report
+```
+
+The source is opened **read-only** — nothing is ever written to it. The destination has any pending migrations applied automatically before the first write. Column probing lets newer binaries import from databases created by any earlier memoryweb version.
+
+**Conflict handling (same ID, different label or domain):**
+- `--on-conflict error` (default): stops immediately on the first conflict
+- `--on-conflict skip`: records the conflict in the report and continues
+
+**Idempotency:** a node with the same ID, label, and domain as one already in the destination is silently skipped. Re-running an interrupted import is safe.
 
 The `check-for-updates` subcommand checks GitHub for a newer release:
 
