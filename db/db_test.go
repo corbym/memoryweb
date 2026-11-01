@@ -24,6 +24,13 @@ func newStore(t *testing.T) *db.Store {
 	return s
 }
 
+// newStoreAt opens (or creates) a store at a specific path without registering
+// a Cleanup — callers are responsible for calling Close themselves.
+func newStoreAt(t *testing.T, path string) (*db.Store, error) {
+	t.Helper()
+	return db.New(path)
+}
+
 func mustAddNode(t *testing.T, s *db.Store, label, domain string) *db.Node {
 	t.Helper()
 	n, err := s.AddNode(label, "desc", "why", domain, nil, "", "")

@@ -20,3 +20,9 @@
 |-------|-------|--------|------|
 | [STORY-005](./epic-003-deferred/story-005.md) | Add occurred_at to embedding text for date-query recall | deferred | feature |
 | [STORY-006](./epic-003-deferred/story-006.md) | HTTP MCP Bridge — memoryweb serve subcommand | deferred | feature |
+
+## EPIC-004: CLI & Database Tooling — `draft`
+
+| Story | Title | Status | Type |
+|-------|-------|--------|------|
+| [STORY-008](./epic-004-cli-database-tooling/story-008.md) | memoryweb import — cross-database merge CLI command | done | feature |

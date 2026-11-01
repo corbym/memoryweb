@@ -76,6 +76,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, "  backfill       Generate embeddings for nodes that are missing one (--force clears all tables and rebuilds)")
 			fmt.Fprintln(os.Stdout, "  merge-domains  Merge all nodes from one domain into another")
 			fmt.Fprintln(os.Stdout, "  backup         Write a consistent standalone snapshot of the database")
+			fmt.Fprintln(os.Stdout, "  import         Merge one database into another (preserves IDs and timestamps)")
 			fmt.Fprintln(os.Stdout, "  purge          Hard-delete archived nodes (requires --confirm or --dry-run)")
 			fmt.Fprintln(os.Stdout, "  stats          Manage stats files (dedupe)")
 			fmt.Fprintln(os.Stdout, "  version        Print the version and exit")
@@ -112,6 +113,9 @@ func main() {
 		case "backup":
 			backupCmd()
 			return
+		case "import":
+			importCmd()
+			return
 		case "purge":
 			purgeCmd()
 			return
@@ -120,7 +124,7 @@ func main() {
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "memoryweb: unknown subcommand %q\n\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "Subcommands: setup, install-skill, options, doctor, dream, search, backfill, merge-domains, backup, purge, stats, version")
+			fmt.Fprintln(os.Stderr, "Subcommands: setup, install-skill, options, doctor, dream, search, backfill, merge-domains, backup, import, purge, stats, version")
 			fmt.Fprintln(os.Stderr, "Run 'memoryweb --help' for usage.")
 			os.Exit(1)
 		}
@@ -1595,6 +1599,84 @@ func backupCmd() {
 		os.Exit(1)
 	}
 	fmt.Printf("backup written to %s\n", rest[0])
+}
+
+// importCmd implements the "memoryweb import" subcommand.
+func importCmd() {
+	flags := flag.NewFlagSet("import", flag.ExitOnError)
+	flags.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: memoryweb import --src <source.db> --dst <target.db> [flags]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Merges the source database into the target, preserving all node IDs,")
+		fmt.Fprintln(os.Stderr, "timestamps, and relationship types. Target content is never overwritten.")
+		fmt.Fprintln(os.Stderr, "Re-running the same import is safe (idempotent).")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "After import, regenerate embeddings with:")
+		fmt.Fprintln(os.Stderr, "  memoryweb backfill --db <target.db>")
+		fmt.Fprintln(os.Stderr, "")
+		flags.PrintDefaults()
+	}
+	srcFlag := flags.String("src", "", "source database path (required)")
+	dstFlag := flags.String("dst", "", "destination database path (required)")
+	dryRun := flags.Bool("dry-run", false, "report what would be imported without writing")
+	reportPath := flags.String("report", "", "write a JSON summary to this file")
+	skipArchived := flags.Bool("skip-archived", false, "exclude archived nodes (and their edges)")
+	includeAuditLog := flags.Bool("include-audit-log", false, "import audit_log rows for imported nodes")
+	onConflict := flags.String("on-conflict", "error", `how to handle ID conflicts: "error" (default) or "skip"`)
+	batchSize := flags.Int("batch-size", 500, "nodes/edges per transaction")
+	flags.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError handles the error
+
+	if *srcFlag == "" || *dstFlag == "" {
+		fmt.Fprintln(os.Stderr, "error: --src and --dst are required")
+		flags.Usage()
+		os.Exit(1)
+	}
+	if *onConflict != "error" && *onConflict != "skip" {
+		fmt.Fprintf(os.Stderr, "error: --on-conflict must be \"error\" or \"skip\", got %q\n", *onConflict)
+		os.Exit(1)
+	}
+
+	opts := db.ImportOptions{
+		SkipArchived:    *skipArchived,
+		IncludeAuditLog: *includeAuditLog,
+		OnConflict:      *onConflict,
+		BatchSize:       *batchSize,
+		DryRun:          *dryRun,
+	}
+
+	report, err := db.ImportDB(*srcFlag, *dstFlag, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *dryRun {
+		fmt.Println("[dry-run] no changes written")
+	}
+	fmt.Printf("nodes: %d imported, %d skipped, %d conflicts\n",
+		report.ImportedNodes, len(report.SkippedNodes), len(report.ConflictNodes))
+	fmt.Printf("edges: %d imported, %d skipped\n",
+		report.ImportedEdges, len(report.SkippedEdges))
+	if report.HasSourceEmbeddings {
+		fmt.Printf("note: source had embeddings — run to regenerate: memoryweb backfill --db %s\n", *dstFlag)
+	}
+
+	if *reportPath != "" {
+		if err := writeImportReport(report, *reportPath); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing report: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("report written to %s\n", *reportPath)
+	}
+}
+
+// writeImportReport marshals report as indented JSON and writes it to path.
+func writeImportReport(report *db.ImportReport, path string) error {
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal report: %w", err)
+	}
+	return os.WriteFile(path, append(data, '\n'), 0600)
 }
 
 // runMergeDomains performs or previews the domain merge. Separated from
