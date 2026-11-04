@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
@@ -26,7 +29,8 @@ type ollamaEmbedResponse struct {
 
 const defaultEmbeddingModel = "snowflake-arctic-embed"
 const embeddingDim = 1024
-const ollamaEndpoint = "http://localhost:11434/api/embed"
+const defaultOllamaHost = "http://localhost:11434"
+const ollamaEmbedPath = "/api/embed"
 
 // ollamaHTTPClient is a shared HTTP client with a timeout for Ollama requests.
 // Prevents a hung Ollama process from blocking the calling goroutine forever.
@@ -49,17 +53,76 @@ func embeddingModel() string {
 // EmbeddingModel is the exported form of embeddingModel, used by main.go subcommands.
 func EmbeddingModel() string { return embeddingModel() }
 
+// ollamaHost resolves the base URL (scheme://host:port, no path) for the
+// Ollama server. It honours OLLAMA_HOST, the ecosystem-standard variable
+// read by the ollama CLI and official client libraries, which may be given
+// bare ("host:port", as the ollama CLI itself accepts) or as a full URL.
+// Falls back to the compiled-in localhost default when unset.
+//
+// This is deliberately lower precedence than MEMORYWEB_OLLAMA_ENDPOINT in
+// embed() below: that variable already overrides the full endpoint (and its
+// "disabled" test sentinel) for every caller, and must keep doing so even
+// when OLLAMA_HOST happens to be set in the environment — otherwise an
+// ambient OLLAMA_HOST (set by the ollama CLI, a shell profile, or a CI
+// container) would silently defeat test isolation that relies on
+// MEMORYWEB_OLLAMA_ENDPOINT=disabled.
+func ollamaHost() string {
+	if host := os.Getenv("OLLAMA_HOST"); host != "" {
+		return normalizeOllamaHost(host)
+	}
+	return defaultOllamaHost
+}
+
+// OllamaHost is the exported form of ollamaHost, used by main.go's setup and
+// doctor subcommands so they probe the same address the embedding client
+// resolves to.
+func OllamaHost() string { return ollamaHost() }
+
+// normalizeOllamaHost parses v into a canonical "scheme://host:port" form.
+// Adds an "http://" scheme when none is present (OLLAMA_HOST may be given
+// bare, as the ollama CLI itself accepts), defaults the port to 11434 when
+// absent (matching the ollama CLI/server's own default — a bare hostname
+// otherwise silently resolves to port 80), and normalizes the scheme to
+// lowercase so callers that match on "http://"/"https://" (e.g.
+// ollamaDialAddr) always succeed regardless of input case. Falls back to
+// defaultOllamaHost for an empty, whitespace-only, or unparseable value.
+func normalizeOllamaHost(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return defaultOllamaHost
+	}
+	if !strings.Contains(v, "://") {
+		v = "http://" + v
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Host == "" {
+		return defaultOllamaHost
+	}
+	scheme := u.Scheme
+	if scheme != "http" && scheme != "https" {
+		scheme = "http"
+	}
+	host := u.Host
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		host = net.JoinHostPort(host, "11434")
+	}
+	return scheme + "://" + host + strings.TrimRight(u.Path, "/")
+}
+
 // embed calls the local Ollama instance to generate an embedding for the
 // given text using the model returned by embeddingModel() (default:
 // snowflake-arctic-embed; override: MEMORYWEB_EMBED_MODEL env var). Returns
 // nil if Ollama is not running or the model is unavailable — callers must
 // treat nil as a signal to fall back to literal LIKE search.
 //
-// The endpoint may be overridden by MEMORYWEB_OLLAMA_ENDPOINT. Set it to
-// "disabled" to make embed always fail, which is useful in tests that
-// exercise LIKE search behaviour in isolation from Ollama.
+// The default endpoint is built from ollamaHost() (http://localhost:11434
+// unless OLLAMA_HOST says otherwise) plus /api/embed. MEMORYWEB_OLLAMA_ENDPOINT
+// overrides the full endpoint when set, taking priority over OLLAMA_HOST —
+// see ollamaHost's doc comment for why. Set it to "disabled" to make embed
+// always fail, which is useful in tests that exercise LIKE search behaviour
+// in isolation from Ollama.
 func embed(text string) ([]float32, error) {
-	endpoint := ollamaEndpoint
+	endpoint := ollamaHost() + ollamaEmbedPath
 	if envEndpoint := os.Getenv("MEMORYWEB_OLLAMA_ENDPOINT"); envEndpoint != "" {
 		if envEndpoint == "disabled" {
 			return nil, fmt.Errorf("embedding disabled by MEMORYWEB_OLLAMA_ENDPOINT")

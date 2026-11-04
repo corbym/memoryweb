@@ -921,15 +921,29 @@ func setupOllama(out io.Writer, in *bufio.Reader, dryRun bool) error {
 }
 
 // setupStartOllama ensures the Ollama server is running. It checks whether
-// localhost:11434 is already accepting connections; if not, it starts
-// "ollama serve" as a detached background process and polls until ready.
-// Returns a non-nil error if the server never becomes ready.
+// the resolved Ollama address (db.OllamaHost — localhost:11434 unless
+// OLLAMA_HOST says otherwise) is already accepting connections; if not, it
+// starts "ollama serve" as a detached background process and polls until
+// ready. Returns a non-nil error if the server never becomes ready.
 func setupStartOllama(out io.Writer, dryRun bool) error {
-	conn, err := net.DialTimeout("tcp", "localhost:11434", time.Second)
-	if err == nil {
-		conn.Close()
+	if ollamaTCPReachable(time.Second) {
 		fmt.Fprintln(out, "Ollama: server already running.")
 		return nil
+	}
+
+	// A configured, unreachable OLLAMA_HOST (e.g. a container or remote host
+	// that isn't up yet) can never be satisfied by spawning a local "ollama
+	// serve" — that starts a different server than the one configured, and
+	// the user's own target is still down. Fail fast instead of leaving an
+	// orphaned/misleading local process behind. No OLLAMA_HOST set means the
+	// default local target, which the fallback below is meant to start.
+	if os.Getenv("OLLAMA_HOST") != "" {
+		addr := db.OllamaHost()
+		if dryRun {
+			fmt.Fprintf(out, "[dry-run] OLLAMA_HOST is set to %s, which is not reachable — would not spawn a local server for a configured target; start Ollama there.\n", addr)
+			return nil
+		}
+		return fmt.Errorf("OLLAMA_HOST is set to %s, which is not reachable — start Ollama there; memoryweb will not spawn a local server for a configured target", addr)
 	}
 
 	if dryRun {
@@ -948,7 +962,7 @@ func setupStartOllama(out io.Writer, dryRun bool) error {
 
 	// Poll until the HTTP API responds, up to 30 seconds.
 	client := &http.Client{Timeout: 2 * time.Second}
-	if waitForOllamaReady(client, "http://localhost:11434/api/tags", time.Now().Add(30*time.Second)) {
+	if waitForOllamaReady(client, db.OllamaHost()+"/api/tags", time.Now().Add(30*time.Second)) {
 		fmt.Fprintln(out, "started.")
 		return nil
 	}
@@ -968,6 +982,28 @@ func waitForOllamaReady(client *http.Client, url string, deadline time.Time) boo
 		time.Sleep(500 * time.Millisecond)
 	}
 	return false
+}
+
+// ollamaDialAddr returns host:port suitable for net.Dial, derived from
+// db.OllamaHost() with any scheme stripped.
+func ollamaDialAddr() string {
+	addr := db.OllamaHost()
+	addr = strings.TrimPrefix(addr, "https://")
+	addr = strings.TrimPrefix(addr, "http://")
+	return addr
+}
+
+// ollamaTCPReachable reports whether the resolved Ollama address (see
+// db.OllamaHost, which honours OLLAMA_HOST) accepts a TCP connection within
+// timeout. Shared by setupStartOllama and runDoctor's "Ollama server" check
+// so both resolve the address the same way the embedding client does.
+func ollamaTCPReachable(timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", ollamaDialAddr(), timeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // setupReadYN reads one line from in and returns true if the answer is "y".
@@ -1289,13 +1325,12 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 
 	ollamaServerOK := false
 	if ollamaBinOK {
-		conn, err := net.DialTimeout("tcp", "localhost:11434", time.Second)
-		if err != nil {
-			add("Ollama server", "fail", "not reachable on localhost:11434 — run: ollama serve")
-		} else {
-			conn.Close()
-			add("Ollama server", "ok", "reachable on localhost:11434")
+		addr := db.OllamaHost()
+		if ollamaTCPReachable(time.Second) {
+			add("Ollama server", "ok", fmt.Sprintf("reachable on %s", addr))
 			ollamaServerOK = true
+		} else {
+			add("Ollama server", "fail", fmt.Sprintf("not reachable on %s — run: ollama serve", addr))
 		}
 	} else {
 		add("Ollama server", "warn", "skipped (Ollama binary not found)")

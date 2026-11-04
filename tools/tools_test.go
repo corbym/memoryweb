@@ -3,7 +3,6 @@ package tools_test
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,17 +16,13 @@ import (
 // ── test helpers ──────────────────────────────────────────────────────────────
 
 // ollamaRunning returns true when the Ollama server is reachable and the
-// configured embedding model is available. The base URL is taken from the
-// OLLAMA_HOST environment variable when set, so it works in both local
-// development and CI environments. Tests that exercise LIKE search should call
+// configured embedding model is available. The base URL is db.OllamaHost(),
+// which reads OLLAMA_HOST when set, so it works in both local development
+// and CI environments. Tests that exercise LIKE search should call
 // disableOllama(t) instead.
 func ollamaRunning(t *testing.T) bool {
 	t.Helper()
-	base := os.Getenv("OLLAMA_HOST")
-	if base == "" {
-		base = "http://localhost:11434"
-	}
-	resp, err := http.Get(base + "/api/tags")
+	resp, err := http.Get(db.OllamaHost() + "/api/tags")
 	if err != nil {
 		return false
 	}

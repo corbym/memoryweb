@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -180,6 +182,142 @@ func TestWaitForOllamaReady_UnreachableExpiredDeadline(t *testing.T) {
 	}
 	if since := time.Since(start); since > 3*time.Second {
 		t.Errorf("expired deadline must return immediately; took %v", since)
+	}
+}
+
+// ── OLLAMA_HOST resolution tests (issue #39) ──────────────────────────────────
+//
+// These use a real net.Listen on an ephemeral port rather than asserting on
+// "already running" / "reachable" text, because this dev environment (and
+// many others) has a real Ollama server on the default localhost:11434 — a
+// test that only checks the outcome would pass against the old, unfixed code
+// too, since the old code would also reach that real server. Asserting that
+// OUR listener was actually dialed is the only way to prove OLLAMA_HOST was
+// consulted at all.
+
+// TestOllamaDialAddr_StripsScheme verifies ollamaDialAddr strips the scheme
+// from db.OllamaHost()'s result, since net.Dial rejects a scheme-prefixed
+// address.
+func TestOllamaDialAddr_StripsScheme(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "http://example.test:1234")
+	if got := ollamaDialAddr(); got != "example.test:1234" {
+		t.Errorf("got %q, want %q", got, "example.test:1234")
+	}
+}
+
+// TestOllamaTCPReachable_UsesOllamaHost proves ollamaTCPReachable dials the
+// OLLAMA_HOST-configured address rather than only ever checking the
+// compiled-in localhost:11434 default.
+func TestOllamaTCPReachable_UsesOllamaHost(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	dialed := make(chan struct{}, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err == nil {
+			conn.Close()
+			dialed <- struct{}{}
+		}
+	}()
+
+	t.Setenv("OLLAMA_HOST", ln.Addr().String())
+
+	if !ollamaTCPReachable(2 * time.Second) {
+		t.Error("expected ollamaTCPReachable to report true for the OLLAMA_HOST-configured listener")
+	}
+	select {
+	case <-dialed:
+	case <-time.After(2 * time.Second):
+		t.Error("ollamaTCPReachable did not actually dial the OLLAMA_HOST-configured address")
+	}
+}
+
+// TestOllamaTCPReachable_UnreachableWhenOllamaHostDown verifies a closed
+// OLLAMA_HOST target is reported unreachable rather than falling back to the
+// default address (which may well have a real Ollama instance behind it).
+func TestOllamaTCPReachable_UnreachableWhenOllamaHostDown(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close() // closed immediately so the port refuses connections
+
+	t.Setenv("OLLAMA_HOST", addr)
+
+	if ollamaTCPReachable(500 * time.Millisecond) {
+		t.Error("expected ollamaTCPReachable to report false for a closed OLLAMA_HOST target")
+	}
+}
+
+// TestSetupStartOllama_AlreadyRunning_UsesOllamaHost verifies setupStartOllama
+// checks the OLLAMA_HOST-configured address for "already running" instead of
+// only ever checking the compiled-in localhost:11434 default.
+func TestSetupStartOllama_AlreadyRunning_UsesOllamaHost(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	dialed := make(chan struct{}, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err == nil {
+			conn.Close()
+			dialed <- struct{}{}
+		}
+	}()
+
+	t.Setenv("OLLAMA_HOST", ln.Addr().String())
+
+	var buf bytes.Buffer
+	if err := setupStartOllama(&buf, false); err != nil {
+		t.Fatalf("setupStartOllama: %v", err)
+	}
+	if !strings.Contains(buf.String(), "already running") {
+		t.Errorf("expected %q, got: %q", "already running", buf.String())
+	}
+	select {
+	case <-dialed:
+	case <-time.After(2 * time.Second):
+		t.Error("setupStartOllama did not dial the OLLAMA_HOST-configured address")
+	}
+}
+
+// TestSetupStartOllama_OllamaHostSetButUnreachable_DoesNotSpawnLocal verifies
+// that when OLLAMA_HOST is explicitly set to an unreachable address,
+// setupStartOllama fails fast with an error instead of falling through to
+// spawn a local "ollama serve" — which could never satisfy a configured
+// remote/container target, and would leave an orphaned or failing local
+// process behind. Code-review regression test for issue #39.
+func TestSetupStartOllama_OllamaHostSetButUnreachable_DoesNotSpawnLocal(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close() // closed immediately so it refuses connections
+
+	t.Setenv("OLLAMA_HOST", addr)
+
+	var buf bytes.Buffer
+	start := time.Now()
+	err = setupStartOllama(&buf, false)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error when OLLAMA_HOST is set but unreachable")
+	}
+	if !strings.Contains(err.Error(), "OLLAMA_HOST") {
+		t.Errorf("expected error to mention OLLAMA_HOST; got: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("expected setupStartOllama to fail fast instead of spawning+polling a local server; took %v", elapsed)
 	}
 }
 
@@ -416,6 +554,46 @@ func TestRunDoctor_UpdateCheck_DevBuild(t *testing.T) {
 
 	if !strings.Contains(out, "dev build") {
 		t.Errorf("expected 'dev build' in update check line; got:\n%s", out)
+	}
+}
+
+// TestRunDoctor_OllamaServerCheck_UsesOllamaHost verifies the doctor "Ollama
+// server" check reports reachability against OLLAMA_HOST rather than only
+// ever checking localhost:11434. Regression test for issue #39.
+func TestRunDoctor_OllamaServerCheck_UsesOllamaHost(t *testing.T) {
+	if _, err := exec.LookPath("ollama"); err != nil {
+		t.Skip("ollama binary not on PATH; doctor skips the server check without it")
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	t.Setenv("OLLAMA_HOST", ln.Addr().String())
+
+	store, dbPath := newTestStore(t)
+	home := t.TempDir()
+
+	var buf bytes.Buffer
+	runDoctor(store, &buf, dbPath, home, false)
+	out := buf.String()
+
+	if !strings.Contains(out, "[✓] Ollama server:") {
+		t.Errorf("expected Ollama server check to pass via OLLAMA_HOST; got:\n%s", out)
+	}
+	if !strings.Contains(out, ln.Addr().String()) {
+		t.Errorf("expected doctor output to mention the resolved OLLAMA_HOST address %q; got:\n%s", ln.Addr().String(), out)
 	}
 }
 

@@ -41,9 +41,10 @@ func call(t *testing.T, h *tools.Handler, toolName string, arguments any) *tools
 	return raw.(*tools.ToolResult)
 }
 
-// isOllamaAvailable probes localhost:11434 to detect a running Ollama instance.
+// isOllamaAvailable probes the resolved Ollama address (db.OllamaHost, which
+// honours OLLAMA_HOST) to detect a running instance.
 func isOllamaAvailable() bool {
-	resp, err := http.Get("http://localhost:11434/api/tags")
+	resp, err := http.Get(db.OllamaHost() + "/api/tags")
 	if err != nil {
 		return false
 	}

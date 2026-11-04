@@ -744,3 +744,89 @@ func TestBackfillEmbeddings_NoAutoClearWhenModelUnchanged(t *testing.T) {
 		t.Errorf("expected embedding preserved when model unchanged; got %d rows", embCount)
 	}
 }
+
+// ── OLLAMA_HOST resolution tests (issue #39) ──────────────────────────────────
+
+// TestOllamaHost_Default verifies OllamaHost() falls back to the compiled-in
+// localhost default when OLLAMA_HOST is unset.
+func TestOllamaHost_Default(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "")
+	if got := db.OllamaHost(); got != "http://localhost:11434" {
+		t.Errorf("got %q, want %q", got, "http://localhost:11434")
+	}
+}
+
+// TestOllamaHost_Normalizes verifies OLLAMA_HOST values are normalized: a
+// bare "host:port" (the form the ollama CLI itself accepts, per its own
+// docs) gets an http:// scheme added, and an already-schemed value keeps its
+// scheme with any trailing slash trimmed.
+func TestOllamaHost_Normalizes(t *testing.T) {
+	cases := map[string]string{
+		"127.0.0.1:11434":          "http://127.0.0.1:11434",
+		"http://127.0.0.1:11434":   "http://127.0.0.1:11434",
+		"http://127.0.0.1:11434/":  "http://127.0.0.1:11434",
+		"https://remote-host:1234": "https://remote-host:1234",
+		// Bare hostname with no port must default to :11434, the same as the
+		// ollama CLI/server itself — code-review finding for issue #39.
+		"myollamabox": "http://myollamabox:11434",
+		// An existing scheme of any case must be normalized to lowercase so
+		// ollamaDialAddr's scheme-strip always matches — code-review finding.
+		"HTTP://myhost:1234": "http://myhost:1234",
+		// Whitespace-only must fall back to the default, not normalize down
+		// to a malformed "http:" — code-review finding.
+		" ": "http://localhost:11434",
+	}
+	for env, want := range cases {
+		t.Setenv("OLLAMA_HOST", env)
+		if got := db.OllamaHost(); got != want {
+			t.Errorf("OLLAMA_HOST=%q: got %q, want %q", env, got, want)
+		}
+	}
+}
+
+// TestEmbed_DefaultEndpoint_UsesOllamaHostWhenSet verifies that embed()'s
+// default endpoint (used when MEMORYWEB_OLLAMA_ENDPOINT is unset) is built
+// from OLLAMA_HOST, the ecosystem-standard variable honoured by the ollama
+// CLI and official client libraries, not just the compiled-in
+// http://localhost:11434 default.
+func TestEmbed_DefaultEndpoint_UsesOllamaHostWhenSet(t *testing.T) {
+	var count atomic.Int32
+	srv := fakeEmbedServer(t, &count)
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", strings.TrimPrefix(srv.URL, "http://"))
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "")
+
+	vec, err := db.Embed("hello")
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if len(vec) != 1024 {
+		t.Errorf("expected a 1024-dim embedding, got %d", len(vec))
+	}
+	if count.Load() != 1 {
+		t.Errorf("expected the OLLAMA_HOST-configured server to receive 1 request, got %d", count.Load())
+	}
+}
+
+// TestEmbed_MemorywebOllamaEndpointOverridesOllamaHost guards the precedence
+// decision for issue #39: MEMORYWEB_OLLAMA_ENDPOINT (including its
+// "disabled" test sentinel) must keep winning over OLLAMA_HOST. Flipping
+// this order would let an ambient OLLAMA_HOST — set by the ollama CLI, a
+// shell profile, or a CI container, exactly the environments this issue is
+// about — silently defeat every test that calls disableOllama(t)/sets
+// MEMORYWEB_OLLAMA_ENDPOINT=disabled to isolate LIKE-search behaviour from a
+// real Ollama instance.
+func TestEmbed_MemorywebOllamaEndpointOverridesOllamaHost(t *testing.T) {
+	var count atomic.Int32
+	srv := fakeEmbedServer(t, &count)
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", strings.TrimPrefix(srv.URL, "http://"))
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", "disabled")
+
+	if _, err := db.Embed("hello"); err == nil {
+		t.Error("expected embedding to stay disabled when MEMORYWEB_OLLAMA_ENDPOINT=disabled, even with OLLAMA_HOST set")
+	}
+	if count.Load() != 0 {
+		t.Errorf("expected the OLLAMA_HOST-configured server to receive 0 requests, got %d", count.Load())
+	}
+}
