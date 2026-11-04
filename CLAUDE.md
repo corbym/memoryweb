@@ -329,7 +329,7 @@ The manual `mv` pattern is superseded — use Homebrew.
 
 ---
 
-## What's implemented (v1.64.0)
+## What's implemented (v1.65.0)
 
 All 18 MCP tools are live. See the tools table in AGENTS.md for the full list.
 
@@ -362,6 +362,7 @@ Key implemented features:
 - Go 1.26.10 (v1.62.0): security bump for GO-2026-6809
 - PostCompact hook fixes (v1.63.0): (1) replaced invalid hookSpecificOutput.hookEventName="PostCompact" with top-level systemMessage — PostCompact has no hookSpecificOutput support so every compaction silently dropped the reinject context; (2) added head -1 guard to domain extraction to prevent "binder\nbinder" doubling when ctx_file has duplicate domain entries
 - import CLI command (v1.64.0): `memoryweb import --src A.db --dst B.db` merges two databases with preserved IDs/timestamps/relationship types; column-probing handles older schemas; batched transactions (default 500); dry-run, conflict handling (error/skip), --skip-archived, --include-audit-log, --report flags; all node/edge existence checks are batched IN-clause queries (O(1) round-trips); same-file guard uses os.SameFile for correctness on case-insensitive filesystems
+- OLLAMA_HOST support (v1.65.0, fixes #39): embed()'s default endpoint, `setup`'s readiness probe, and `doctor`'s "Ollama server" check all resolve through `db.OllamaHost()`, which honours the ecosystem-standard `OLLAMA_HOST` (bare `host:port` or full URL; defaults the port to 11434 and normalizes scheme case) with `MEMORYWEB_OLLAMA_ENDPOINT` kept at higher precedence so its `disabled` test sentinel still works regardless of an ambient `OLLAMA_HOST`; `setup` fails fast instead of spawning a local `ollama serve` when a configured `OLLAMA_HOST` is unreachable, rather than starting an unrelated local server
 
 ---
 

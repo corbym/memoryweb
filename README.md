@@ -227,6 +227,20 @@ memoryweb tracks which model was used for the last backfill. When `MEMORYWEB_EMB
 
 **Checking the configured model:** `memoryweb doctor` reports the active model under "Ollama model".
 
+#### Ollama endpoint
+
+By default memoryweb talks to Ollama at `http://localhost:11434`. For a non-default deployment (Ollama in a container, on another host, or on a different port), set `OLLAMA_HOST` — the same environment variable the `ollama` CLI and official client libraries use:
+
+```bash
+export OLLAMA_HOST=192.168.1.50:11434   # bare host:port is accepted, same as the ollama CLI
+# or
+export OLLAMA_HOST=http://192.168.1.50:11434
+```
+
+This is honoured by `backfill` (including its `--force` preflight check), `doctor`, `setup`, and the MCP server's own semantic search.
+
+`MEMORYWEB_OLLAMA_ENDPOINT` is a separate, memoryweb-specific override that takes priority over `OLLAMA_HOST`. It replaces the *entire* embed request URL rather than just the host, and it accepts the special value `disabled` to turn embeddings off entirely (used by memoryweb's own test suite to exercise LIKE-search fallback in isolation). Most deployments only need `OLLAMA_HOST`.
+
 The `setup` subcommand installs hooks into `~/.claude/settings.json`, detects Claude Desktop and offers to configure it automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for the configured embedding model and pulls it if missing.
 
 ```bash

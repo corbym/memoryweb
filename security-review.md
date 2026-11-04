@@ -220,11 +220,13 @@ Applies to: `searchHandler`, `historyHandler` (Timeline and `order=modified`), `
 
 ---
 
-## F-8 — `MEMORYWEB_OLLAMA_ENDPOINT` is unvalidated  *(Low)*
+## F-8 — `MEMORYWEB_OLLAMA_ENDPOINT` (and `OLLAMA_HOST`) is unvalidated  *(Low)*
 
-**Location:** `db/db.go:155-167`
+**Location:** `db/embeddings.go` — `ollamaHost()`/`embed()` (was `db/db.go:155-167` before the file split; see `db-go-and-tools-go-split-into-co-5e018a28` in memoryweb-meta)
 
 The env var lets the user redirect embedding traffic, including the full content of every node label, description, and why-it-matters field, to an arbitrary URL. Env vars are user-controlled, so this is not a privilege boundary — but it is a silent data-exfiltration channel that is easy to set by accident (e.g. inheriting from a shell rc or a misconfigured launchd plist) or via prompt-injected setup instructions.
+
+As of the fix for [issue #39](https://github.com/corbym/memoryweb/issues/39), `OLLAMA_HOST` (the ecosystem-standard variable also honoured by the `ollama` CLI) is consulted as a lower-precedence default for the same embed endpoint, plus the TCP reachability checks in `setup`/`doctor`. It carries the same unvalidated-redirect risk as `MEMORYWEB_OLLAMA_ENDPOINT` and should be covered by the same recommendation below.
 
 **Recommendation.**
 - Refuse non-`http://localhost`/`http://127.0.0.1` endpoints unless an explicit `MEMORYWEB_ALLOW_REMOTE_EMBED=1` is also set, **and** log a one-line warning to stderr at startup whenever the override is in effect.
