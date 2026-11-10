@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/corbym/memoryweb/stats"
 )
@@ -376,11 +377,14 @@ func TestTrend_DeduplicatesSessionID(t *testing.T) {
 	jsonPath := filepath.Join(dir, "stats.jsonl")
 
 	// session "aabbccdd" appears three times (9→10→20 nodes); "eeff0011" once.
+	// Use relative dates so these sessions always fall within the 30-day window.
+	ts1 := time.Now().UTC().AddDate(0, 0, -10).Format("2006-01-02") + "T10:00:00Z"
+	ts2 := time.Now().UTC().AddDate(0, 0, -9).Format("2006-01-02") + "T10:00:00Z"
 	dupe := strings.Join([]string{
-		`{"session_id":"aabbccdd","start_ts":"2026-10-05T10:00:00Z","wkd":3.0,"type":"filing","nodes":9,"edges":2,"orphans":7,"transient":0,"ratio":0.0,"burst":false}`,
-		`{"session_id":"aabbccdd","start_ts":"2026-10-05T10:00:00Z","wkd":8.0,"type":"filing","nodes":10,"edges":3,"orphans":7,"transient":0,"ratio":0.1,"burst":false}`,
-		`{"session_id":"aabbccdd","start_ts":"2026-10-05T10:00:00Z","wkd":12.0,"type":"filing","nodes":20,"edges":8,"orphans":12,"transient":0,"ratio":0.3,"burst":false}`,
-		`{"session_id":"eeff0011","start_ts":"2026-10-06T10:00:00Z","wkd":15.0,"type":"filing","nodes":5,"edges":5,"orphans":0,"transient":0,"ratio":0.5,"burst":false}`,
+		`{"session_id":"aabbccdd","start_ts":"` + ts1 + `","wkd":3.0,"type":"filing","nodes":9,"edges":2,"orphans":7,"transient":0,"ratio":0.0,"burst":false}`,
+		`{"session_id":"aabbccdd","start_ts":"` + ts1 + `","wkd":8.0,"type":"filing","nodes":10,"edges":3,"orphans":7,"transient":0,"ratio":0.1,"burst":false}`,
+		`{"session_id":"aabbccdd","start_ts":"` + ts1 + `","wkd":12.0,"type":"filing","nodes":20,"edges":8,"orphans":12,"transient":0,"ratio":0.3,"burst":false}`,
+		`{"session_id":"eeff0011","start_ts":"` + ts2 + `","wkd":15.0,"type":"filing","nodes":5,"edges":5,"orphans":0,"transient":0,"ratio":0.5,"burst":false}`,
 	}, "\n") + "\n"
 	os.WriteFile(jsonPath, []byte(dupe), 0644)
 
