@@ -160,16 +160,18 @@ func TestEmbedTextForNode_MatchesRememberConcatenation(t *testing.T) {
 }
 
 // fakeEmbedServer starts a httptest server that returns a fake 1024-dim embedding
-// and counts requests. Caller must call Close() on the server.
+// and counts requests. The server is registered for cleanup via t.Cleanup.
 func fakeEmbedServer(t *testing.T, requestCount *atomic.Int32) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		embedding := make([]float32, 1024)
 		resp := map[string]any{"embeddings": []any{embedding}}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 func TestUpdateNode_LabelChangeTriggersReEmbed(t *testing.T) {
@@ -828,5 +830,138 @@ func TestEmbed_MemorywebOllamaEndpointOverridesOllamaHost(t *testing.T) {
 	}
 	if count.Load() != 0 {
 		t.Errorf("expected the OLLAMA_HOST-configured server to receive 0 requests, got %d", count.Load())
+	}
+}
+
+// ── MEMORYWEB_OLLAMA_API_KEY / OLLAMA_API_KEY tests (issue #40) ──────────────
+
+// authCapturingServer starts a fake Ollama server that captures the Authorization
+// header value from each request. The server is registered for cleanup via t.Cleanup.
+func authCapturingServer(t *testing.T, gotAuth *string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*gotAuth = r.Header.Get("Authorization")
+		embedding := make([]float32, 1024)
+		resp := map[string]any{"embeddings": []any{embedding}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestEmbed_SendsAuthorizationHeader_MemorywebAPIKey verifies that embed()
+// sends Authorization: Bearer when MEMORYWEB_OLLAMA_API_KEY is set.
+func TestEmbed_SendsAuthorizationHeader_MemorywebAPIKey(t *testing.T) {
+	var gotAuth string
+	srv := authCapturingServer(t, &gotAuth)
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+	t.Setenv("MEMORYWEB_OLLAMA_API_KEY", "mw-secret")
+	t.Setenv("OLLAMA_API_KEY", "")
+
+	if _, err := db.Embed("hello"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if want := "Bearer mw-secret"; gotAuth != want {
+		t.Errorf("Authorization: got %q, want %q", gotAuth, want)
+	}
+}
+
+// TestEmbed_SendsAuthorizationHeader_EcosystemAPIKey verifies that embed()
+// falls back to the ecosystem-standard OLLAMA_API_KEY when
+// MEMORYWEB_OLLAMA_API_KEY is not set, mirroring the OLLAMA_HOST/
+// MEMORYWEB_OLLAMA_ENDPOINT precedence convention.
+func TestEmbed_SendsAuthorizationHeader_EcosystemAPIKey(t *testing.T) {
+	var gotAuth string
+	srv := authCapturingServer(t, &gotAuth)
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+	// MEMORYWEB_OLLAMA_API_KEY intentionally not set — falls through to OLLAMA_API_KEY.
+	t.Setenv("OLLAMA_API_KEY", "ecosystem-secret")
+
+	if _, err := db.Embed("hello"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if want := "Bearer ecosystem-secret"; gotAuth != want {
+		t.Errorf("Authorization: got %q, want %q", gotAuth, want)
+	}
+}
+
+// TestEmbed_MemorywebAPIKeyOverridesEcosystemAPIKey verifies that
+// MEMORYWEB_OLLAMA_API_KEY takes precedence over OLLAMA_API_KEY.
+func TestEmbed_MemorywebAPIKeyOverridesEcosystemAPIKey(t *testing.T) {
+	var gotAuth string
+	srv := authCapturingServer(t, &gotAuth)
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+	t.Setenv("MEMORYWEB_OLLAMA_API_KEY", "mw-wins")
+	t.Setenv("OLLAMA_API_KEY", "ecosystem-loses")
+
+	if _, err := db.Embed("hello"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if want := "Bearer mw-wins"; gotAuth != want {
+		t.Errorf("Authorization: got %q, want %q (MEMORYWEB_OLLAMA_API_KEY should win)", gotAuth, want)
+	}
+}
+
+// TestEmbed_MemorywebAPIKeyEmptyString_SuppressesEcosystemFallback is the
+// regression test for the ambient-OLLAMA_API_KEY regression. When a user has
+// OLLAMA_API_KEY set in their shell profile for an unrelated tool (LiteLLM,
+// an OpenAI-compatible proxy, etc.) and their local Ollama requires no auth,
+// setting MEMORYWEB_OLLAMA_API_KEY="" must prevent that ambient key from being
+// sent — without it they'd get a 401 on every embed() call and silent LIKE
+// fallback.
+func TestEmbed_MemorywebAPIKeyEmptyString_SuppressesEcosystemFallback(t *testing.T) {
+	var gotAuth string
+	srv := authCapturingServer(t, &gotAuth)
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+	t.Setenv("MEMORYWEB_OLLAMA_API_KEY", "") // explicit empty — must suppress fallback
+	t.Setenv("OLLAMA_API_KEY", "ambient-key-for-other-tool")
+
+	if _, err := db.Embed("hello"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("MEMORYWEB_OLLAMA_API_KEY=\"\" should suppress OLLAMA_API_KEY fallback; got Authorization: %q", gotAuth)
+	}
+}
+
+// TestEmbed_NoAuthorizationHeader_WhenBothAPIKeysUnset verifies that no
+// Authorization header is sent when neither API key env var is set, preserving
+// the existing behaviour for unauthenticated Ollama instances.
+func TestEmbed_NoAuthorizationHeader_WhenBothAPIKeysUnset(t *testing.T) {
+	var gotAuth string
+	srv := authCapturingServer(t, &gotAuth)
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+	// Neither var set — t.Setenv with "" would set them to empty string rather
+	// than leaving them unset. Unset them explicitly to test the true unset path.
+	t.Setenv("MEMORYWEB_OLLAMA_API_KEY", "")
+	t.Setenv("OLLAMA_API_KEY", "")
+
+	if _, err := db.Embed("hello"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("expected no Authorization header when both API key vars empty; got %q", gotAuth)
+	}
+}
+
+// TestEmbed_Returns401Error verifies that embed() returns a descriptive error
+// when the gateway returns 401, so callers and log output make clear that auth
+// is misconfigured rather than Ollama being down.
+func TestEmbed_Returns401Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("MEMORYWEB_OLLAMA_ENDPOINT", srv.URL)
+	t.Setenv("MEMORYWEB_OLLAMA_API_KEY", "")
+	t.Setenv("OLLAMA_API_KEY", "")
+
+	_, err := db.Embed("hello")
+	if err == nil {
+		t.Fatal("expected error for 401 response; got nil")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("error should mention status 401; got: %v", err)
 	}
 }

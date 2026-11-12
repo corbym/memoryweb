@@ -50,6 +50,28 @@ func embeddingModel() string {
 	return defaultEmbeddingModel
 }
 
+// ollamaAPIKey returns the API key for authenticating to a gateway-fronted or
+// auth-enabled Ollama server. MEMORYWEB_OLLAMA_API_KEY takes precedence over
+// the ecosystem-standard OLLAMA_API_KEY (read by the official Ollama client
+// and honoured by the Ollama server when it has built-in auth enabled) —
+// keeping the same precedence convention as MEMORYWEB_OLLAMA_ENDPOINT vs
+// OLLAMA_HOST. Returns "" when neither is set — no Authorization header is sent.
+//
+// Opt-out: setting MEMORYWEB_OLLAMA_API_KEY="" explicitly suppresses the
+// OLLAMA_API_KEY fallback, so an ambient OLLAMA_API_KEY (set for LiteLLM,
+// an OpenAI-compatible proxy, or any other tool that shares the name) cannot
+// accidentally inject auth headers into an unauthenticated local Ollama.
+func ollamaAPIKey() string {
+	if key, ok := os.LookupEnv("MEMORYWEB_OLLAMA_API_KEY"); ok {
+		// Explicitly set (even to "") — do not fall through to OLLAMA_API_KEY.
+		return key
+	}
+	return os.Getenv("OLLAMA_API_KEY")
+}
+
+// OllamaAPIKey is the exported form of ollamaAPIKey, for use in tests and diagnostics.
+func OllamaAPIKey() string { return ollamaAPIKey() }
+
 // EmbeddingModel is the exported form of embeddingModel, used by main.go subcommands.
 func EmbeddingModel() string { return embeddingModel() }
 
@@ -133,7 +155,15 @@ func embed(text string) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := ollamaHTTPClient.Post(endpoint, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := ollamaAPIKey(); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := ollamaHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

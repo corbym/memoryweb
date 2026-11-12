@@ -241,6 +241,18 @@ This is honoured by `backfill` (including its `--force` preflight check), `docto
 
 `MEMORYWEB_OLLAMA_ENDPOINT` is a separate, memoryweb-specific override that takes priority over `OLLAMA_HOST`. It replaces the *entire* embed request URL rather than just the host, and it accepts the special value `disabled` to turn embeddings off entirely (used by memoryweb's own test suite to exercise LIKE-search fallback in isolation). Most deployments only need `OLLAMA_HOST`.
 
+#### Ollama authentication
+
+For Ollama deployments behind an authenticating gateway (reverse proxy requiring Bearer auth, LiteLLM, managed Ollama services that issue API keys), set `OLLAMA_API_KEY` — the same variable the official Ollama client reads when the server has built-in auth enabled:
+
+```bash
+export OLLAMA_API_KEY=your-api-key
+```
+
+`MEMORYWEB_OLLAMA_API_KEY` is a memoryweb-specific override that takes priority over `OLLAMA_API_KEY`, following the same precedence convention as `MEMORYWEB_OLLAMA_ENDPOINT` vs `OLLAMA_HOST`. Setting `MEMORYWEB_OLLAMA_API_KEY=""` explicitly suppresses the `OLLAMA_API_KEY` fallback — useful when `OLLAMA_API_KEY` is set in your shell profile for an unrelated tool (LiteLLM, an OpenAI-compatible proxy, etc.) and your local Ollama requires no auth.
+
+`memoryweb doctor` reports whether an API key is configured under "Ollama auth".
+
 The `setup` subcommand installs hooks into `~/.claude/settings.json`, detects Claude Desktop and offers to configure it automatically, and configures Ollama for semantic search. If Ollama is not installed, `setup` will ask whether to install it automatically via `https://ollama.com/install.sh` (Linux and macOS only — on Windows you must install Ollama manually before running setup). If Ollama is already installed but the server is not running, `setup` starts it automatically. Finally it checks for the configured embedding model and pulls it if missing.
 
 ```bash

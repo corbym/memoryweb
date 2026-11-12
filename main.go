@@ -1336,6 +1336,12 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 		add("Ollama server", "warn", "skipped (Ollama binary not found)")
 	}
 
+	if key := db.OllamaAPIKey(); key != "" {
+		add("Ollama auth", "ok", "API key set (Bearer token will be sent)")
+	} else {
+		add("Ollama auth", "ok", "no API key (unauthenticated — set MEMORYWEB_OLLAMA_API_KEY or OLLAMA_API_KEY for gateway auth)")
+	}
+
 	if ollamaServerOK {
 		listOut, err := exec.Command("ollama", "list").Output()
 		model := db.EmbeddingModel()
