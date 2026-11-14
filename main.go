@@ -496,8 +496,17 @@ func runBackfill(store *db.Store, out io.Writer, quiet bool) error {
 		case n > 0:
 			fmt.Fprintf(out, "Backfilled %d node(s).\n", n)
 		case progressFired:
-			// Candidates existed but all embeds failed — Ollama is likely down.
-			fmt.Fprintln(out, "No embeddings stored — is Ollama running? Run: ollama serve")
+			// Candidates existed but all embeds failed. Name the resolved
+			// endpoint so a remote OLLAMA_HOST setup isn't told to "ollama serve"
+			// locally, and distinguish a reachable server (model/auth problem)
+			// from an unreachable one.
+			if ollamaTCPReachable(2 * time.Second) {
+				fmt.Fprintf(out, "No embeddings stored — server reachable on %s; check the embedding model (%s) and gateway auth (MEMORYWEB_OLLAMA_API_KEY / OLLAMA_API_KEY); pull the model with: ollama pull %s\n",
+					db.OllamaHost(), db.EmbeddingModel(), db.EmbeddingModel())
+			} else {
+				fmt.Fprintf(out, "No embeddings stored — Ollama not reachable on %s; check OLLAMA_HOST and the network (local serving: ollama serve)\n",
+					db.OllamaHost())
+			}
 		default:
 			fmt.Fprintln(out, "All embeddings are up to date.")
 		}
@@ -1006,6 +1015,46 @@ func ollamaTCPReachable(timeout time.Duration) bool {
 	return true
 }
 
+// ollamaModelNames fetches the model list over HTTP (GET /api/tags) with the
+// configured Bearer key when one is set (db.OllamaAPIKey), the same way the
+// embedding client reaches a remote or gateway-fronted OLLAMA_HOST. It replaces
+// shelling out to a local `ollama list` — which cannot exist when Ollama runs
+// on another host — so doctor's model check works for remote servers.
+func ollamaModelNames(timeout time.Duration) ([]string, error) {
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest(http.MethodGet, db.OllamaHost()+"/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	if key := db.OllamaAPIKey(); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("ollama /api/tags: 401 Unauthorized — set MEMORYWEB_OLLAMA_API_KEY or OLLAMA_API_KEY")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama /api/tags: status %s", resp.Status)
+	}
+	var payload struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(payload.Models))
+	for _, m := range payload.Models {
+		names = append(names, m.Name)
+	}
+	return names, nil
+}
+
 // setupReadYN reads one line from in and returns true if the answer is "y".
 // Returns false on EOF or any other input.
 func setupReadYN(in *bufio.Reader) bool {
@@ -1315,25 +1364,35 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 	}
 
 	// ── 3–5. Ollama ───────────────────────────────────────────────────────────
-	ollamaBinOK := false
-	if _, err := exec.LookPath("ollama"); err != nil {
-		add("Ollama binary", "fail", "not found in PATH — install from https://ollama.com/download")
+	// Probe the server FIRST over the network (db.OllamaHost honours OLLAMA_HOST):
+	// a remote or gateway-fronted Ollama needs no local binary, and gating the
+	// server check on the binary hid reachable remote servers behind
+	// "not found in PATH". The model check goes over HTTP /api/tags with the
+	// Bearer key when one is configured, so auth-fronted gateways work too.
+	remoteConfigured := os.Getenv("OLLAMA_HOST") != ""
+	_, binErr := exec.LookPath("ollama")
+	ollamaBinOK := binErr == nil
+
+	ollamaServerOK := ollamaTCPReachable(2 * time.Second)
+	if ollamaServerOK {
+		add("Ollama server", "ok", fmt.Sprintf("reachable on %s", db.OllamaHost()))
 	} else {
-		add("Ollama binary", "ok", "found")
-		ollamaBinOK = true
+		hint := "run: ollama serve"
+		if remoteConfigured {
+			hint = fmt.Sprintf("check OLLAMA_HOST (%s) and the network", db.OllamaHost())
+		}
+		add("Ollama server", "fail", fmt.Sprintf("not reachable on %s — %s", db.OllamaHost(), hint))
 	}
 
-	ollamaServerOK := false
-	if ollamaBinOK {
-		addr := db.OllamaHost()
-		if ollamaTCPReachable(time.Second) {
-			add("Ollama server", "ok", fmt.Sprintf("reachable on %s", addr))
-			ollamaServerOK = true
-		} else {
-			add("Ollama server", "fail", fmt.Sprintf("not reachable on %s — run: ollama serve", addr))
-		}
-	} else {
-		add("Ollama server", "warn", "skipped (Ollama binary not found)")
+	switch {
+	case ollamaBinOK:
+		add("Ollama binary", "ok", "found")
+	case remoteConfigured && ollamaServerOK:
+		add("Ollama binary", "ok", fmt.Sprintf("not needed (remote OLLAMA_HOST %s)", db.OllamaHost()))
+	case remoteConfigured:
+		add("Ollama binary", "warn", "not found in PATH (only needed to serve locally) — https://ollama.com/download")
+	default:
+		add("Ollama binary", "warn", "not found in PATH — install from https://ollama.com/download")
 	}
 
 	if key := db.OllamaAPIKey(); key != "" {
@@ -1343,12 +1402,11 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 	}
 
 	if ollamaServerOK {
-		listOut, err := exec.Command("ollama", "list").Output()
 		model := db.EmbeddingModel()
-		if err != nil || !strings.Contains(string(listOut), model) {
-			add("Ollama model", "fail", model+" not found — run: ollama pull "+model)
-		} else {
+		if names, err := ollamaModelNames(2 * time.Second); err == nil && strings.Contains(strings.Join(names, "\n"), model) {
 			add("Ollama model", "ok", model+" ready")
+		} else {
+			add("Ollama model", "fail", model+" not found — run: ollama pull "+model)
 		}
 	} else {
 		add("Ollama model", "warn", "skipped (Ollama server not available)")
