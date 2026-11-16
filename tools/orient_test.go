@@ -1081,6 +1081,41 @@ func TestOrient_NoDomain_ReturnsCrossDomainSnapshot(t *testing.T) {
 	}
 }
 
+// TestOrient_TopicWithoutDomain_ReturnsError: orient(topic=X) with no domain
+// and no domains array must return a tool error — the topic must not be silently dropped.
+func TestOrient_TopicWithoutDomain_ReturnsError(t *testing.T) {
+	_, h := newEnv(t)
+
+	tr := call(t, h, "orient", map[string]any{
+		"topic": "some-topic",
+	})
+	mustError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "some-topic") {
+		t.Errorf("error message must include the dropped topic name; got: %s", body)
+	}
+	if !strings.Contains(body, "domain") {
+		t.Errorf("error message must suggest passing domain=X; got: %s", body)
+	}
+	if !strings.Contains(body, "domains()") {
+		t.Errorf("error message must suggest calling domains() first; got: %s", body)
+	}
+}
+
+// TestOrient_NoDomain_NoTopic_CrossDomainUnchanged: orient() with no topic and
+// no domain must continue returning the cross-domain bootstrap snapshot.
+func TestOrient_NoDomain_NoTopic_CrossDomainUnchanged(t *testing.T) {
+	_, h := newEnv(t)
+	addNode(t, h, "NodeX", "dom-nochange", nil)
+
+	tr := call(t, h, "orient", map[string]any{})
+	mustNotError(t, tr)
+	body := text(t, tr)
+	if !strings.Contains(body, "cross_domain_snapshot") {
+		t.Errorf("expected cross_domain_snapshot; got: %s", body)
+	}
+}
+
 func TestOrient_CrossDomain_LifecycleStateOnRecent(t *testing.T) {
 	_, h := newEnv(t)
 	issue := addNode(t, h, "cross domain lifecycle issue", "orient-cross-lc", map[string]any{

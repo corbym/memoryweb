@@ -220,22 +220,25 @@ Two different operations move memories between domains; don't confuse them:
   node. Creating a new domain may return
   `possible_misdomain`, `suggested_domain`, and `suggested_memory_id` when
   workspace KNN finds a closer existing domain — requires Ollama embeddings
-  and sqlite-vec; absent when embeddings are unavailable.
+  and sqlite-vec; absent when embeddings are unavailable. `remember`/`revise`
+  may also return `label_nudge` when the supplied label exceeds 120 chars,
+  since it will be truncated in all lean/digest output — shorten the label or
+  use `recall(id)` to retrieve the full value.
 - `audit(mode=kind_coverage)` returns per-kind counts, legacy
   decision/standing dominance, and lean `migration_candidates` (`id`, `label`,
   truncated `why_matters`) — decision nodes whose text suggests a different
-  `node_kind`. Call `recall(id)` before acting on content. Candidate-surfacing
-  only; never auto-revise.
+  `node_kind`, plus any node whose label exceeds 120 chars. Call `recall(id)`
+  before acting on content. Candidate-surfacing only; never auto-revise.
 
 ### Lean output — `recall(id)` before acting on content
 
 `orient`, `search`, `history`, `significance`, `audit` all return
-**lean** entries: `id`, `label`, and a truncated `why_matters` excerpt —
-never the full `description`. When graph state warrants it, entries also carry
-`lifecycle_state` (`contested`, `resolved`, or `superseded`); digest lines append
-the same token as a `(state)` suffix after any date. Treat these as an index, not the content.
-Before quoting, citing, or acting on what a memory actually says, call
-`recall(id)` for the full node plus its `edges` array.
+**lean** entries: `id`, a soft-truncated `label` (120 chars), and a truncated
+`why_matters` excerpt — never the full `description`. When graph state warrants it,
+entries also carry `lifecycle_state` (`contested`, `resolved`, or `superseded`);
+digest lines append the same token as a `(state)` suffix after any date.
+Treat these as an index, not the content. Before quoting, citing, or acting on
+what a memory actually says, call `recall(id)` for the full node plus its `edges` array.
 
 ### List truncation — `results_truncated`
 
@@ -259,7 +262,8 @@ complete.
 | `orient()` (no domain) | `{domains, results_truncated}` — each domain entry has `recent_results_truncated`; pass `limit` to raise per-domain recent cap (default 5). With `digest=true`, each domain entry's `recent` becomes `[]string` lines of the form `[id] label (updated_at)` instead of JSON objects. |
 
 Per-node excerpt truncation uses `truncated` on lean entries — distinct from
-list-level `results_truncated`.
+list-level `results_truncated`. `truncated=true` when **either** `label` (> 120 runes)
+or `why_matters` (> 150 runes) was cut; `recall(id)` always returns the full label.
 
 ### Search notes
 
@@ -306,6 +310,7 @@ migrations from the 21-tool surface:
 | `orient(domain=X)` | Full view: `rules`, `declared_spine`, `significant`/`relevant`, `recent` |
 | `orient(domains=[...])` | Same, for 1–5 domains in one call |
 | `orient(domain=X, topic=Y)` | `relevant` semantically matched to a known session purpose |
+| `orient(topic=Y)` without `domain` | **Error** — topic requires a domain; call `domains()` first to discover it |
 | `domains()` | List active domains and aliases |
 | `domains(action=add_alias\|remove_alias\|resolve\|rename)` | Domain alias admin and in-place domain rename |
 | `search(query=...)` | Find by vocabulary in stored labels/descriptions/tags |

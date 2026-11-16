@@ -439,6 +439,12 @@ func (hnd *Handler) summariseDomain(args json.RawMessage) (*ToolResult, error) {
 
 	// No domain and no domains → cross-domain bootstrap.
 	if params.Domain == "" && len(params.Domains) == 0 {
+		if params.Topic != "" {
+			return errorResult(fmt.Sprintf(
+				"orient: topic %q requires a domain — pass domain=X alongside topic, or omit topic for the cross-domain bootstrap snapshot; call domains() first if you do not know the domain name",
+				params.Topic,
+			)), nil
+		}
 		return hnd.orientCrossDomain(params.Limit, params.Digest)
 	}
 
