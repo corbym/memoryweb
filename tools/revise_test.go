@@ -1004,3 +1004,44 @@ func TestRevise_NoOp_StillReturnsEnvelope(t *testing.T) {
 		t.Error("no-op revise: expected suggested_connections field in response")
 	}
 }
+
+func TestRevise_LabelNudge_WhenLabelExceeds120Chars(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "original label", "proj", nil)
+	longLabel := strings.Repeat("y", 121)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":    id,
+		"label": longLabel,
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		LabelNudge string `json:"label_nudge"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	if resp.LabelNudge == "" {
+		t.Error("label_nudge must be present when revised label exceeds 120 chars")
+	}
+}
+
+func TestRevise_NoLabelNudge_WhenLabelUnder120Chars(t *testing.T) {
+	_, h := newEnv(t)
+	id := addNode(t, h, "original label", "proj", nil)
+
+	tr := call(t, h, "revise", map[string]any{
+		"id":    id,
+		"label": "short revised label",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		LabelNudge string `json:"label_nudge"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse revise response: %v", err)
+	}
+	if resp.LabelNudge != "" {
+		t.Errorf("label_nudge must be absent when revised label is within 120 chars; got %q", resp.LabelNudge)
+	}
+}

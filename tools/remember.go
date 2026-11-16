@@ -101,6 +101,7 @@ func (hnd *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		SkippedConnections   []skippedConnection `json:"skipped_connections,omitempty"`
 		OrphanWarning        string              `json:"orphan_warning,omitempty"`
 		TrustNudge           string              `json:"trust_nudge,omitempty"`
+		LabelNudge           string              `json:"label_nudge,omitempty"`
 		PossibleMisdomain    bool                `json:"possible_misdomain,omitempty"`
 		SuggestedDomain      string              `json:"suggested_domain,omitempty"`
 		SuggestedMemoryID    string              `json:"suggested_memory_id,omitempty"`
@@ -111,6 +112,7 @@ func (hnd *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		SkippedConnections:   skipped,
 		OrphanWarning:        orphanWarning,
 		TrustNudge:           extras.TrustNudge,
+		LabelNudge:           labelNudge(params.Label),
 	}
 	if misdomain != nil {
 		resp.PossibleMisdomain = true
@@ -251,6 +253,7 @@ func (hnd *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
 		SkippedConnections   []skippedConnection `json:"skipped_connections,omitempty"`
 		TrustNudge           string              `json:"trust_nudge,omitempty"`
+		LabelNudge           string              `json:"label_nudge,omitempty"`
 		PossibleMisdomain    bool                `json:"possible_misdomain,omitempty"`
 		SuggestedDomain      string              `json:"suggested_domain,omitempty"`
 		SuggestedMemoryID    string              `json:"suggested_memory_id,omitempty"`
@@ -272,6 +275,7 @@ func (hnd *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 			SuggestedConnections: suggestions,
 			SkippedConnections:   skipped,
 			TrustNudge:           extras.TrustNudge,
+			LabelNudge:           labelNudge(nodeList[i].Label),
 			PossibleMisdomain:    extras.PossibleMisdomain,
 			SuggestedDomain:      extras.SuggestedDomain,
 			SuggestedMemoryID:    extras.SuggestedMemoryID,

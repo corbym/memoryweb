@@ -1285,6 +1285,31 @@ func TestFindKindCoverage_WhyMattersPattern(t *testing.T) {
 	}
 }
 
+func TestFindKindCoverage_LongLabelIncluded(t *testing.T) {
+	s := newStore(t)
+	domain := "kind-cov-long-label"
+	// A finding node (not 'decision') with a label > 120 chars — must appear in
+	// migration_candidates because length(label) > 120.
+	longLabel := strings.Repeat("a", 121)
+	n, err := s.AddNode(longLabel, "", "", domain, nil, "", "finding")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	result, err := s.FindKindCoverage(domain, 10, nil, nil)
+	if err != nil {
+		t.Fatalf("FindKindCoverage: %v", err)
+	}
+	found := false
+	for _, c := range result.MigrationCandidates {
+		if c.ID == n.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("node with 121-char label must appear in migration_candidates; got %d candidates", len(result.MigrationCandidates))
+	}
+}
+
 // TestFindDrift_ConnectedStale verifies Rule 9: a live node whose every edge
 // endpoint has been archived is surfaced with reason "connected-stale".
 func TestFindDrift_ConnectedStale(t *testing.T) {

@@ -62,6 +62,43 @@ func TestAddNode_InvalidOccurredAt(t *testing.T) {
 	}
 }
 
+func TestAddNode_LabelNudge_WhenLabelExceeds120Chars(t *testing.T) {
+	_, h := newEnv(t)
+	longLabel := strings.Repeat("x", 121)
+	tr := call(t, h, "remember", map[string]any{
+		"label":  longLabel,
+		"domain": "nudge-label-test",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		LabelNudge string `json:"label_nudge"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+	if resp.LabelNudge == "" {
+		t.Error("label_nudge must be present when label exceeds 120 chars")
+	}
+}
+
+func TestAddNode_NoLabelNudge_WhenLabelUnder120Chars(t *testing.T) {
+	_, h := newEnv(t)
+	tr := call(t, h, "remember", map[string]any{
+		"label":  "short label",
+		"domain": "no-nudge-label-test",
+	})
+	mustNotError(t, tr)
+	var resp struct {
+		LabelNudge string `json:"label_nudge"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse remember response: %v", err)
+	}
+	if resp.LabelNudge != "" {
+		t.Errorf("label_nudge must be absent when label is within 120 chars; got %q", resp.LabelNudge)
+	}
+}
+
 func TestAddNode_EmptyLabel_StillCreatesNode(t *testing.T) {
 	// The tool doesn't validate required fields itself; that's the MCP layer.
 	// An empty label is passed through — test that it doesn't panic.

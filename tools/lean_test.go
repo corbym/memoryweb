@@ -235,6 +235,32 @@ func descriptionFor(t *testing.T, h *tools.Handler, toolName string) string {
 	return ""
 }
 
+// TestRecall_ReturnsFullLabelUntruncated: recall must return the full stored
+// label even when it exceeds 120 chars (the lean output budget).
+func TestRecall_ReturnsFullLabelUntruncated(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	longLabel := "recall-full-label " + strings.Repeat("x", 110) // 128 runes
+	id := addNode(t, h, longLabel, "recall-full", nil)
+
+	tr := call(t, h, "recall", map[string]any{"id": id})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Node struct {
+			Label string `json:"label"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse recall response: %v", err)
+	}
+	if resp.Node.Label != longLabel {
+		t.Errorf("recall must return full label: got %q (len %d), want %q (len %d)",
+			resp.Node.Label, utf8.RuneCountInString(resp.Node.Label),
+			longLabel, utf8.RuneCountInString(longLabel))
+	}
+}
+
 func TestListTools_SearchDescriptionTruncationDisclosure(t *testing.T) {
 	_, h := newEnv(t)
 	if !strings.Contains(descriptionFor(t, h, "search"), "recall(id)") {
@@ -404,6 +430,72 @@ func TestSearch_LeanFormat_WhyMattersMultiByteTruncated(t *testing.T) {
 	}
 	if !strings.HasSuffix(why, "...") {
 		t.Errorf("hard-cut why_matters should end with '...'; got: %q", why)
+	}
+}
+
+// TestSearch_LeanFormat_LabelTruncated: a label > 120 runes must be cut to 120
+// runes + "..." and set truncated=true.
+func TestSearch_LeanFormat_LabelTruncated(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	longLabel := "label-trunc-search " + strings.Repeat("x", 110) // 129 runes total
+	addNode(t, h, longLabel, "label-trunc-search", nil)
+
+	tr := call(t, h, "search", map[string]any{"query": "label-trunc-search", "domain": "label-trunc-search"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Label     string `json:"label"`
+			Truncated bool   `json:"truncated"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected at least one search result")
+	}
+	const maxRunes = 123 // 120 + len("...")
+	if n := utf8.RuneCountInString(resp.Nodes[0].Label); n > maxRunes {
+		t.Errorf("label: got %d runes, want at most %d", n, maxRunes)
+	}
+	if !strings.HasSuffix(resp.Nodes[0].Label, "...") {
+		t.Errorf("truncated label must end with '...'; got %q", resp.Nodes[0].Label)
+	}
+	if !resp.Nodes[0].Truncated {
+		t.Error("truncated must be true when label was cut")
+	}
+}
+
+// TestSearch_LeanFormat_LabelAtLimit: a label of exactly 120 runes must pass
+// through intact and not set truncated.
+func TestSearch_LeanFormat_LabelAtLimit(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	exactLabel := strings.Repeat("a", 120)
+	addNode(t, h, exactLabel, "label-at-limit", nil)
+
+	tr := call(t, h, "search", map[string]any{"query": exactLabel[:20], "domain": "label-at-limit"})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			Label     string `json:"label"`
+			Truncated bool   `json:"truncated"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse search response: %v", err)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatal("expected at least one search result")
+	}
+	if resp.Nodes[0].Label != exactLabel {
+		t.Errorf("label at limit must pass through intact; got %q (len %d runes)", resp.Nodes[0].Label, utf8.RuneCountInString(resp.Nodes[0].Label))
+	}
+	if resp.Nodes[0].Truncated {
+		t.Error("truncated must be false when label is exactly 120 runes")
 	}
 }
 

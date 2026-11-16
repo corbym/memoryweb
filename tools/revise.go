@@ -175,18 +175,24 @@ func (hnd *Handler) updateNodeSingle(args json.RawMessage) (*ToolResult, error) 
 		duplicates = []db.Node{}
 	}
 
+	var reviseLabelNudge string
+	if params.Label != nil {
+		reviseLabelNudge = labelNudge(*params.Label)
+	}
 	resp := struct {
 		Node                 *db.Node            `json:"node"`
 		Connections          []reviseConnection  `json:"connections"`
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
 		PossibleDuplicates   []db.Node           `json:"possible_duplicates,omitempty"`
 		TrustNudge           string              `json:"trust_nudge,omitempty"`
+		LabelNudge           string              `json:"label_nudge,omitempty"`
 	}{
 		Node:                 node,
 		Connections:          connections,
 		SuggestedConnections: suggestions,
 		PossibleDuplicates:   duplicates,
 		TrustNudge:           trustNudge,
+		LabelNudge:           reviseLabelNudge,
 	}
 	b, err := marshalResponseIndent(resp)
 	if err != nil {
@@ -291,6 +297,7 @@ func (hnd *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error)
 		Connections          []reviseConnection  `json:"connections"`
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
 		TrustNudge           string              `json:"trust_nudge,omitempty"`
+		LabelNudge           string              `json:"label_nudge,omitempty"`
 	}
 	updated := make([]updatedEntry, len(nodes))
 	for i, node := range nodes {
@@ -323,11 +330,16 @@ func (hnd *Handler) updateNodesBatch(items json.RawMessage) (*ToolResult, error)
 			suggestions = []db.EdgeSuggestion{}
 		}
 
+		var batchLabelNudge string
+		if updateList[i].Label != nil {
+			batchLabelNudge = labelNudge(*updateList[i].Label)
+		}
 		updated[i] = updatedEntry{
 			Node:                 node,
 			Connections:          connections,
 			SuggestedConnections: suggestions,
 			TrustNudge:           trustNudge,
+			LabelNudge:           batchLabelNudge,
 		}
 	}
 	resp := struct {

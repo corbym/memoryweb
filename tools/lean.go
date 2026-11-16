@@ -3,9 +3,14 @@ package tools
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/corbym/memoryweb/db"
 )
+
+// labelBudget is the rune limit applied to labels in all lean/digest output.
+// Keep this in sync with the SQL labelBudget constant in db/audit.go.
+const labelBudget = 120
 
 // leanSearchNode and leanEdge strip search results down to the lean-entry
 // contract: id, label, why_matters (truncated), occurred_at where set, and
@@ -55,6 +60,21 @@ func toLeanSearchResult(r *db.SearchResult) leanSearchResult {
 	}
 }
 
+func truncateLabel(s string) (string, bool) {
+	runes := []rune(s)
+	if len(runes) <= labelBudget {
+		return s, false
+	}
+	return string(runes[:labelBudget]) + "...", true
+}
+
+func labelNudge(label string) string {
+	if utf8.RuneCountInString(label) > labelBudget {
+		return "label exceeds 120 chars — it will be truncated in lean/digest output; use recall(id) for the full label"
+	}
+	return ""
+}
+
 func truncateWhy(s string) (string, bool) {
 	const limit = 150
 	if len(s) <= limit {
@@ -94,8 +114,9 @@ type leanEntry struct {
 }
 
 func toLeanEntry(node db.Node) leanEntry {
-	why, truncated := truncateWhy(node.WhyMatters)
-	entry := leanEntry{ID: node.ID, Label: node.Label, WhyMatters: why, Truncated: truncated}
+	label, labelTrunc := truncateLabel(node.Label)
+	why, whyTrunc := truncateWhy(node.WhyMatters)
+	entry := leanEntry{ID: node.ID, Label: label, WhyMatters: why, Truncated: labelTrunc || whyTrunc}
 	if node.OccurredAt != nil {
 		date := node.OccurredAt.Format("2006-01-02")
 		entry.OccurredAt = &date

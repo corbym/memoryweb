@@ -27,6 +27,10 @@ type ConflictCandidate struct {
 // pairs are only surfaced when very semantically close.
 const conflictsDomainThreshold = 0.3
 
+// labelBudget is the rune limit for labels in lean/digest output. Must match
+// the labelBudget constant in tools/lean.go.
+const labelBudget = 120
+
 // FindConflictCandidates returns pairs of live nodes whose embedding distance
 // is below CandidateSimilarityFloor, excluding pairs that already have a
 // contradicts edge between them. Same-domain pairs are preferred; cross-domain
@@ -993,7 +997,7 @@ func (st *Store) FindKindCoverage(domain string, limit int, tags, nodeKinds []st
 	}
 
 	candidateConds := append([]string{}, conds...)
-	candidateConds = append(candidateConds, "node_kind = 'decision'", kindMigrationPatternSQL())
+	candidateConds = append(candidateConds, fmt.Sprintf("((node_kind = 'decision' AND %s) OR length(label) > %d)", kindMigrationPatternSQL(), labelBudget))
 	candidateArgs := append([]interface{}{}, args...)
 	candidateArgs = append(candidateArgs, limit+1)
 	candidateQ := `SELECT id, label, description, why_matters, domain, created_at, updated_at, occurred_at, archived_at, tags, node_kind
