@@ -268,13 +268,6 @@ func (st *Store) MergeDomains(sourceDomain, targetDomain string, dryRun bool) (*
 	}, nil
 }
 
-func (st *Store) DomainExists(domain string) (bool, error) {
-	domain = st.ResolveAlias(domain)
-	var count int
-	err := st.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE domain = ? AND archived_at IS NULL`, domain).Scan(&count)
-	return count > 0, err
-}
-
 func (st *Store) ListDomains() ([]string, error) {
 	domains, _, err := st.ListDomainsLimited(0)
 	return domains, err

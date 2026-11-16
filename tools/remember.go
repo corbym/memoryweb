@@ -58,16 +58,12 @@ func (hnd *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 	if params.NodeKind == "" {
 		params.NodeKind = "decision"
 	}
-	domainExists, err := hnd.store.DomainExists(params.Domain)
-	if err != nil {
-		return nil, err
-	}
 	node, err := hnd.store.AddNode(params.Label, params.Description, params.WhyMatters, params.Domain, occurredAt, params.Tags, params.NodeKind)
 	if err != nil {
 		return nil, err
 	}
 
-	extras := hnd.rememberFilingExtras(node, params.RelatedTo, domainExists)
+	extras := hnd.rememberFilingExtras(node, params.RelatedTo)
 
 	skipped := processRelatedTo(hnd, node.ID, params.RelatedTo)
 
@@ -239,15 +235,6 @@ func (hnd *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	domains := make([]string, len(nodeList))
-	for i, nodeItem := range nodeList {
-		domains[i] = nodeItem.Domain
-	}
-	domainSnap, err := hnd.snapshotDomainExistence(domains)
-	if err != nil {
-		return nil, err
-	}
-
 	type entry struct {
 		Node                 *db.Node            `json:"node"`
 		SuggestedConnections []db.EdgeSuggestion `json:"suggested_connections"`
@@ -265,7 +252,7 @@ func (hnd *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		if suggestions == nil {
 			suggestions = []db.EdgeSuggestion{}
 		}
-		extras := hnd.rememberFilingExtras(node, nodeList[i].RelatedTo, domainSnap[hnd.store.ResolveAlias(nodeList[i].Domain)])
+		extras := hnd.rememberFilingExtras(node, nodeList[i].RelatedTo)
 		skipped := processRelatedTo(hnd, node.ID, nodeList[i].RelatedTo)
 		if len(nodeList[i].RelatedTo) > 0 && len(skipped) < len(nodeList[i].RelatedTo) {
 			anyConnected = true
@@ -339,13 +326,13 @@ type misdomainFlag struct {
 	SuggestedMemoryID string
 }
 
-func (hnd *Handler) checkNewDomainMisdomain(node *db.Node) (*misdomainFlag, error) {
+func (hnd *Handler) checkMisdomainCandidate(node *db.Node) (*misdomainFlag, error) {
 	candidate, err := hnd.store.FindMisdomainCandidate(node.ID, node.Domain)
 	if err != nil || candidate == nil {
 		return nil, err
 	}
 	reason := fmt.Sprintf("suggested domain %q (anchor %s)", candidate.SuggestedDomain, candidate.SuggestedMemoryID)
-	if err := hnd.store.LogDomainCreationFlagged(node.ID, node.Label, reason); err != nil {
+	if err := hnd.store.LogMisdomainFlagged(node.ID, node.Label, reason); err != nil {
 		return nil, err
 	}
 	return &misdomainFlag{

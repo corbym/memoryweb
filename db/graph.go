@@ -881,7 +881,7 @@ func (st *Store) neighbourhoodIDs(nodeID string, depth int) ([]string, string, e
 }
 
 // MisdomainCandidate is the top workspace KNN match suggesting a different domain
-// for a newly-created domain's first memory.
+// for a filing into any domain.
 type MisdomainCandidate struct {
 	SuggestedDomain   string
 	SuggestedMemoryID string

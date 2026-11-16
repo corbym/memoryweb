@@ -502,11 +502,11 @@ func TestRemember_PossibleMisdomainWithEmbeddings(t *testing.T) {
 	}
 	defer rawDB.Close()
 	var flagged int
-	if err := rawDB.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'domain_creation_flagged'`).Scan(&flagged); err != nil {
+	if err := rawDB.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'misdomain_flagged'`).Scan(&flagged); err != nil {
 		t.Fatalf("audit_log: %v", err)
 	}
 	if flagged == 0 {
-		t.Error("expected domain_creation_flagged audit row")
+		t.Error("expected misdomain_flagged audit row")
 	}
 }
 
@@ -577,9 +577,9 @@ func TestAudit_KindCoverageTruncation(t *testing.T) {
 }
 
 // CR-06 regression: writing to an alias of an existing domain must not raise a
-// false possible_misdomain warning. Store.DomainExists resolves aliases internally
-// (db/domains.go) and snapshotDomainExistence keys the snapshot by the resolved
-// canonical name, so alias-targeted writes are treated as an existing domain.
+// false possible_misdomain warning. When Ollama is disabled, FindMisdomainCandidate
+// returns nil immediately (no embedding), so no misdomain flag is produced.
+// The alias resolves correctly through Store.ResolveAlias before KNN lookup.
 func TestRemember_Batch_AliasDomain_NoFalseMisdomain(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)

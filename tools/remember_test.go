@@ -1243,6 +1243,186 @@ func TestRememberAll_IsUnknownTool(t *testing.T) {
 // TestRevise_BatchViaItems_UpdatesMultiple: calling revise with an items array
 // must update all entries and return an updated array response.
 
+// ── misdomain check on existing-domain filings (STORY-011) ──────────────────
+
+// TestRemember_PossibleMisdomain_ExistingDomain: filing into an existing domain
+// whose nearest neighbours are overwhelmingly in a different domain must surface
+// possible_misdomain=true (AC-STORY-011-0d2b73be).
+func TestRemember_PossibleMisdomain_ExistingDomain(t *testing.T) {
+	shared := makeDenseVectorTools(99)
+	withFakeEmbeddingsTools(t, map[string][]float32{
+		"marker-011-exist-a": shared,
+		"marker-011-exist-b": shared,
+	})
+
+	_, store, h := newEnvWithPath(t)
+	canonicalDomain := "story011-canonical"
+	wrongDomain := "story011-wrong-existing"
+
+	addNode(t, h, "Anchor marker-011-exist-a", canonicalDomain, nil)
+	// Seed wrongDomain so it already exists before the test filing.
+	addNode(t, h, "Existing node in wrong domain", wrongDomain, nil)
+	if _, err := store.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	tr := call(t, h, "remember", map[string]any{
+		"label":       "New node marker-011-exist-b",
+		"domain":      wrongDomain,
+		"why_matters": "should be in canonical domain",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		PossibleMisdomain bool   `json:"possible_misdomain"`
+		SuggestedDomain   string `json:"suggested_domain"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !resp.PossibleMisdomain {
+		t.Errorf("expected possible_misdomain=true for existing-domain mis-filing; got:\n%s", text(t, tr))
+	}
+	if resp.SuggestedDomain != canonicalDomain {
+		t.Errorf("SuggestedDomain: got %q want %q", resp.SuggestedDomain, canonicalDomain)
+	}
+}
+
+// TestRemember_NoPossibleMisdomain_CorrectDomain: filing into the correct
+// existing domain must not produce possible_misdomain (AC-STORY-011-3c81b0fa).
+func TestRemember_NoPossibleMisdomain_CorrectDomain(t *testing.T) {
+	shared := makeDenseVectorTools(101)
+	withFakeEmbeddingsTools(t, map[string][]float32{
+		"marker-011-correct-a": shared,
+		"marker-011-correct-b": shared,
+	})
+
+	_, store, h := newEnvWithPath(t)
+	domain := "story011-correct"
+
+	addNode(t, h, "Anchor marker-011-correct-a", domain, nil)
+	if _, err := store.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	tr := call(t, h, "remember", map[string]any{
+		"label":       "New node marker-011-correct-b",
+		"domain":      domain,
+		"why_matters": "in the right place",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		PossibleMisdomain bool `json:"possible_misdomain"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.PossibleMisdomain {
+		t.Errorf("expected possible_misdomain=false for correct-domain filing; got:\n%s", text(t, tr))
+	}
+}
+
+// TestRemember_PossibleMisdomain_BatchExistingDomain: batch path must surface
+// possible_misdomain per node when filed into an existing wrong domain
+// (AC-STORY-011-e7f31b8b).
+func TestRemember_PossibleMisdomain_BatchExistingDomain(t *testing.T) {
+	shared := makeDenseVectorTools(103)
+	withFakeEmbeddingsTools(t, map[string][]float32{
+		"marker-011-batch-a": shared,
+		"marker-011-batch-b": shared,
+	})
+
+	_, store, h := newEnvWithPath(t)
+	canonicalDomain := "story011-batch-canonical"
+	wrongDomain := "story011-batch-wrong"
+
+	addNode(t, h, "Anchor marker-011-batch-a", canonicalDomain, nil)
+	addNode(t, h, "Existing seed in wrong domain", wrongDomain, nil)
+	if _, err := store.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{{
+			"label":       "Batch node marker-011-batch-b",
+			"domain":      wrongDomain,
+			"why_matters": "should be in canonical domain",
+		}},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			PossibleMisdomain bool   `json:"possible_misdomain"`
+			SuggestedDomain   string `json:"suggested_domain"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(resp.Nodes) != 1 {
+		t.Fatalf("expected 1 node in batch response, got %d", len(resp.Nodes))
+	}
+	if !resp.Nodes[0].PossibleMisdomain {
+		t.Errorf("expected possible_misdomain=true in batch response; got:\n%s", text(t, tr))
+	}
+	if resp.Nodes[0].SuggestedDomain != canonicalDomain {
+		t.Errorf("batch SuggestedDomain: got %q want %q", resp.Nodes[0].SuggestedDomain, canonicalDomain)
+	}
+}
+
+// TestRemember_MisdomainFlagged_AuditLog_ExistingDomain: the audit log must
+// record action="misdomain_flagged" for both new-domain and existing-domain
+// misdomain filings (AC-STORY-011-003c5ea3).
+func TestRemember_MisdomainFlagged_AuditLog_ExistingDomain(t *testing.T) {
+	shared := makeDenseVectorTools(107)
+	withFakeEmbeddingsTools(t, map[string][]float32{
+		"marker-011-audit-a": shared,
+		"marker-011-audit-b": shared,
+		"marker-011-audit-c": shared,
+	})
+
+	dbPath, store, h := newEnvWithPath(t)
+	canonicalDomain := "story011-audit-canonical"
+	existingWrongDomain := "story011-audit-wrong-exist"
+	newWrongDomain := "story011-audit-wrong-new"
+
+	addNode(t, h, "Anchor marker-011-audit-a", canonicalDomain, nil)
+	addNode(t, h, "Existing seed", existingWrongDomain, nil)
+	if _, err := store.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	// Filing into existing-wrong domain must log misdomain_flagged.
+	mustNotError(t, call(t, h, "remember", map[string]any{
+		"label":       "New node marker-011-audit-b",
+		"domain":      existingWrongDomain,
+		"why_matters": "wrong existing domain",
+	}))
+
+	// Filing into brand-new wrong domain must also log misdomain_flagged.
+	mustNotError(t, call(t, h, "remember", map[string]any{
+		"label":       "New node marker-011-audit-c",
+		"domain":      newWrongDomain,
+		"why_matters": "wrong new domain",
+	}))
+
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer rawDB.Close()
+
+	var flagged int
+	if err := rawDB.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'misdomain_flagged'`).Scan(&flagged); err != nil {
+		t.Fatalf("audit_log query: %v", err)
+	}
+	if flagged < 2 {
+		t.Errorf("expected at least 2 misdomain_flagged audit rows, got %d", flagged)
+	}
+}
+
 func TestRemember_NodeKindStanding(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)

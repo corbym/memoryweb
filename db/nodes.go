@@ -534,12 +534,12 @@ func (st *Store) AddNodesBatch(inputs []NodeInput) ([]*Node, error) {
 	return nodes, nil
 }
 
-// LogDomainCreationFlagged records a domain_creation_flagged audit event when
-// remember() creates a new domain that KNN suggests may be mis-assigned.
-func (st *Store) LogDomainCreationFlagged(nodeID, nodeLabel, reason string) error {
+// LogMisdomainFlagged records a misdomain_flagged audit event when remember()
+// detects that KNN neighbours suggest the node may belong in a different domain.
+func (st *Store) LogMisdomainFlagged(nodeID, nodeLabel, reason string) error {
 	_, err := st.db.Exec(
 		`INSERT INTO audit_log (id, action, node_id, node_label, reason, actioned_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		"auditlog-"+shortID(), "domain_creation_flagged", nodeID, nodeLabel, reason, time.Now().UTC(),
+		"auditlog-"+shortID(), "misdomain_flagged", nodeID, nodeLabel, reason, time.Now().UTC(),
 	)
 	return err
 }

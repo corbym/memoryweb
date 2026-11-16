@@ -354,11 +354,11 @@ func TestFindMisdomainCandidate_CrossDomainMatch(t *testing.T) {
 	}
 }
 
-func TestLogDomainCreationFlagged_WritesAuditRow(t *testing.T) {
+func TestLogMisdomainFlagged_WritesAuditRow(t *testing.T) {
 	dbPath, s := newStoreAtPath(t)
 	n := mustAddNode(t, s, "new domain seed", "fresh-domain")
-	if err := s.LogDomainCreationFlagged(n.ID, n.Label, "suggested domain \"other\""); err != nil {
-		t.Fatalf("LogDomainCreationFlagged: %v", err)
+	if err := s.LogMisdomainFlagged(n.ID, n.Label, "suggested domain \"other\""); err != nil {
+		t.Fatalf("LogMisdomainFlagged: %v", err)
 	}
 	rawDB, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -369,7 +369,7 @@ func TestLogDomainCreationFlagged_WritesAuditRow(t *testing.T) {
 	if err := rawDB.QueryRow(`SELECT action FROM audit_log WHERE node_id = ?`, n.ID).Scan(&action); err != nil {
 		t.Fatalf("query audit_log: %v", err)
 	}
-	if action != "domain_creation_flagged" {
+	if action != "misdomain_flagged" {
 		t.Errorf("action: got %q", action)
 	}
 }

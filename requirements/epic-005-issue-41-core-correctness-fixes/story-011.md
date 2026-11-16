@@ -17,11 +17,11 @@ Refs: tools/remember_extras.go:17 (rememberFilingExtras), tools/remember_extras.
 
 ## Acceptance criteria
 
-- [ ] AC-STORY-011-0d2b73be: remember returns possible_misdomain=true when a node is filed into an existing domain whose nearest neighbours are overwhelmingly in a different domain
-- [ ] AC-STORY-011-3c81b0fa: remember does not return possible_misdomain=true when filed into the correct domain
-- [ ] AC-STORY-011-e7f31b8b: Batch remember (items array) surfaces possible_misdomain per node using the same check
-- [ ] AC-STORY-011-003c5ea3: The audit log records a misdomain flag event for both new-domain and existing-domain filings
-- [ ] AC-STORY-011-3ca50722: go test ./... green
+- [x] AC-STORY-011-0d2b73be: remember returns possible_misdomain=true when a node is filed into an existing domain whose nearest neighbours are overwhelmingly in a different domain
+- [x] AC-STORY-011-3c81b0fa: remember does not return possible_misdomain=true when filed into the correct domain
+- [x] AC-STORY-011-e7f31b8b: Batch remember (items array) surfaces possible_misdomain per node using the same check
+- [x] AC-STORY-011-003c5ea3: The audit log records a misdomain flag event for both new-domain and existing-domain filings
+- [x] AC-STORY-011-3ca50722: go test ./... green
 
 ## Notes
 
@@ -32,3 +32,16 @@ Dev notes:
 - Rename checkNewDomainMisdomain → checkMisdomainCandidate and LogDomainCreationFlagged → LogMisdomainFlagged (or add a reason parameter) so the audit log entry is accurate for both cases.
 - Batch path: addNodesBatch calls rememberFilingExtras per node via domainSnap — fix applies automatically once the guard is removed.
 - KNN threshold already lives in FindMisdomainCandidate (db/search.go) — no threshold change needed in this story.
+
+<!-- backlog-mcp: 2026-11-16T20:19:06Z -->
+Implementation complete. Changes:
+- tools/remember_extras.go: removed `if domainExisted { return out }` guard; renamed call to `checkMisdomainCandidate`; removed now-unused `snapshotDomainExistence` helper and `domainExisted` parameter
+- tools/remember.go: renamed `checkNewDomainMisdomain` → `checkMisdomainCandidate`; updated to call `store.LogMisdomainFlagged`; removed `domainExists` lookup from `addNodeSingle` and `domainSnap` block from `addNodesBatch`
+- db/nodes.go: renamed `LogDomainCreationFlagged` → `LogMisdomainFlagged`; action string changed from `domain_creation_flagged` → `misdomain_flagged`
+- db/graph_test.go: updated test to call `LogMisdomainFlagged` and check for `misdomain_flagged` action
+- tools/wave3_test.go: updated `TestRemember_PossibleMisdomainWithEmbeddings` to check for `misdomain_flagged`
+- tools/remember_test.go: added 4 new tests (AC-STORY-011-0d2b73be, 3c81b0fa, e7f31b8b, 003c5ea3)
+All tests green (`go test ./...`).
+
+<!-- backlog-mcp: 2026-11-16T20:27:50Z -->
+Removed the `if domainExisted { return out }` guard from `rememberFilingExtras`, making `FindMisdomainCandidate` run on every filing rather than only new-domain creation. Dropped the now-redundant `domainExisted` parameter and `snapshotDomainExistence` helper entirely. Renamed `checkNewDomainMisdomain` → `checkMisdomainCandidate` and `LogDomainCreationFlagged` → `LogMisdomainFlagged` (action string `domain_creation_flagged` → `misdomain_flagged`). Added 4 TDD tests covering all 5 ACs. Code review fixes: updated `docs/memoryweb-skill.md` to say "Any filing may return possible_misdomain" (was "new-domain creation"), fixed stale error message in wave3_test.go, updated CR-06 comment, fixed `MisdomainCandidate` doc comment, and removed dead `DomainExists` function. All tests green.
