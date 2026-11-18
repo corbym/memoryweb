@@ -12,7 +12,7 @@ Five bugs and design gaps filed by Fable 2 in GitHub issue #41. In priority orde
 - [ ] [STORY-012](story-012.md) — Staleness clock: measure transient and open-question rules from updated_at, not created_at
 - [ ] [STORY-013](story-013.md) — Hardcoded English keywords: move drift/placeholder keyword lists into config table
 - [ ] [STORY-014](story-014.md) — orient(topic=X) without domain runs workspace-wide semantic search
-- [ ] [STORY-015](story-015.md) — Misdomain check: implement majority-rule to suppress false positives on correctly filed memories
-- [ ] [STORY-016](story-016.md) — Misdomain check: exclude batch siblings from KNN check to prevent cross-item false flags
-- [ ] [STORY-017](story-017.md) — remember tool description still says "new domain" for misdomain fields
-- [ ] [STORY-018](story-018.md) — audit(mode=orphans, digest=true) returns wrong shape when no orphans
+- [x] [STORY-015](story-015.md) — Misdomain check: implement majority-rule to suppress false positives on correctly filed memories
+- [x] [STORY-016](story-016.md) — Misdomain check: exclude batch siblings from KNN check to prevent cross-item false flags
+- [x] [STORY-017](story-017.md) — remember tool description still says "new domain" for misdomain fields
+- [x] [STORY-018](story-018.md) — audit(mode=orphans, digest=true) returns wrong shape when no orphans

@@ -207,8 +207,8 @@ type auditArchivedResult struct {
 type auditStaleDigestResult struct {
 	Lines                 []string `json:"lines"`
 	ResultsTruncated      bool     `json:"results_truncated"`
-	PlaceholderLines      []string `json:"placeholder_lines"`
-	PlaceholdersTruncated bool     `json:"placeholders_truncated"`
+	PlaceholderLines      []string `json:"placeholder_lines,omitempty"`
+	PlaceholdersTruncated bool     `json:"placeholders_truncated,omitempty"`
 }
 
 // findConflictCandidates handles mode=conflicts: returns semantically adjacent

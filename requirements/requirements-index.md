@@ -37,7 +37,7 @@
 | [STORY-012](./epic-005-issue-41-core-correctness-fixes/story-012.md) | Staleness clock: measure transient and open-question rules from updated_at, not created_at | draft | bug |
 | [STORY-013](./epic-005-issue-41-core-correctness-fixes/story-013.md) | Hardcoded English keywords: move drift/placeholder keyword lists into config table | draft | bug |
 | [STORY-014](./epic-005-issue-41-core-correctness-fixes/story-014.md) | orient(topic=X) without domain runs workspace-wide semantic search | draft | feature |
-| [STORY-015](./epic-005-issue-41-core-correctness-fixes/story-015.md) | Misdomain check: implement majority-rule to suppress false positives on correctly filed memories | draft | bug |
-| [STORY-016](./epic-005-issue-41-core-correctness-fixes/story-016.md) | Misdomain check: exclude batch siblings from KNN check to prevent cross-item false flags | draft | bug |
-| [STORY-017](./epic-005-issue-41-core-correctness-fixes/story-017.md) | remember tool description still says "new domain" for misdomain fields | draft | bug |
-| [STORY-018](./epic-005-issue-41-core-correctness-fixes/story-018.md) | audit(mode=orphans, digest=true) returns wrong shape when no orphans | draft | bug |
+| [STORY-015](./epic-005-issue-41-core-correctness-fixes/story-015.md) | Misdomain check: implement majority-rule to suppress false positives on correctly filed memories | done | bug |
+| [STORY-016](./epic-005-issue-41-core-correctness-fixes/story-016.md) | Misdomain check: exclude batch siblings from KNN check to prevent cross-item false flags | done | bug |
+| [STORY-017](./epic-005-issue-41-core-correctness-fixes/story-017.md) | remember tool description still says "new domain" for misdomain fields | done | bug |
+| [STORY-018](./epic-005-issue-41-core-correctness-fixes/story-018.md) | audit(mode=orphans, digest=true) returns wrong shape when no orphans | done | bug |

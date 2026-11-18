@@ -11,7 +11,3 @@ When a story reaches `done`, remove it from the backlog and renumber.
 6. [STORY-005](epic-003-deferred/story-005.md) ([EPIC-003](epic-003-deferred/epic-003.md)) — Add occurred_at to embedding text for date-query recall *(deferred)*
 7. [STORY-006](epic-003-deferred/story-006.md) ([EPIC-003](epic-003-deferred/epic-003.md)) — HTTP MCP Bridge — memoryweb serve subcommand *(deferred)*
 8. [STORY-014](epic-005-issue-41-core-correctness-fixes/story-014.md) ([EPIC-005](epic-005-issue-41-core-correctness-fixes/epic-005.md)) — orient(topic=X) without domain runs workspace-wide semantic search
-9. [STORY-015](epic-005-issue-41-core-correctness-fixes/story-015.md) ([EPIC-005](epic-005-issue-41-core-correctness-fixes/epic-005.md)) — Misdomain check: implement majority-rule to suppress false positives on correctly filed memories
-10. [STORY-016](epic-005-issue-41-core-correctness-fixes/story-016.md) ([EPIC-005](epic-005-issue-41-core-correctness-fixes/epic-005.md)) — Misdomain check: exclude batch siblings from KNN check to prevent cross-item false flags
-11. [STORY-017](epic-005-issue-41-core-correctness-fixes/story-017.md) ([EPIC-005](epic-005-issue-41-core-correctness-fixes/epic-005.md)) — remember tool description still says "new domain" for misdomain fields
-12. [STORY-018](epic-005-issue-41-core-correctness-fixes/story-018.md) ([EPIC-005](epic-005-issue-41-core-correctness-fixes/epic-005.md)) — audit(mode=orphans, digest=true) returns wrong shape when no orphans

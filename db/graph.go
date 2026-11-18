@@ -928,10 +928,13 @@ func (st *Store) FindMisdomainCandidate(nodeID, requestedDomain string, excludeI
 	defer rows.Close()
 
 	// Majority rule: count in-floor neighbours per domain; record the nearest
-	// member ID for each (first seen = nearest since rows are ORDER BY dist ASC).
+	// member ID and distance for each (first seen = nearest, rows are ORDER BY
+	// dist ASC). nearestDist is used as a tiebreaker so the result is
+	// deterministic across Go's randomized map-iteration order.
 	type domainStat struct {
-		count     int
-		nearestID string
+		count       int
+		nearestID   string
+		nearestDist float64
 	}
 	stats := map[string]*domainStat{}
 	for rows.Next() {
@@ -944,7 +947,7 @@ func (st *Store) FindMisdomainCandidate(nodeID, requestedDomain string, excludeI
 			break
 		}
 		if _, ok := stats[domain]; !ok {
-			stats[domain] = &domainStat{nearestID: id}
+			stats[domain] = &domainStat{nearestID: id, nearestDist: dist}
 		}
 		stats[domain].count++
 	}
@@ -959,16 +962,20 @@ func (st *Store) FindMisdomainCandidate(nodeID, requestedDomain string, excludeI
 
 	// Flag only when another domain has STRICTLY MORE neighbours than the
 	// requested domain (ties resolve in favour of the requested domain).
+	// When two non-requested domains tie for count, pick the one whose nearest
+	// neighbour is closer (lower distance) for a deterministic result.
 	var bestDomain, bestID string
 	var bestCount int
+	var bestDist float64
 	for domain, s := range stats {
 		if domain == requestedDomain {
 			continue
 		}
-		if s.count > bestCount {
+		if s.count > bestCount || (s.count == bestCount && s.nearestDist < bestDist) {
 			bestCount = s.count
 			bestDomain = domain
 			bestID = s.nearestID
+			bestDist = s.nearestDist
 		}
 	}
 	if bestCount > requestedCount {
