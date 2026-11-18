@@ -34,4 +34,3 @@ Dev notes:
 - Rule 4 fix (db/audit.go:429): change the ageFilter constant's occurred_at-null branch from `(occurred_at IS NULL AND created_at < ?)` to `(occurred_at IS NULL AND COALESCE(updated_at, created_at) < ?)`.
 - The 7-day and 30-day cutoff constants remain unchanged in this story.
 - Deferred to a follow-up story: optional review_after column, revise(verified=true) clock-reset, configurable window durations.
-test

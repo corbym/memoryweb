@@ -14,7 +14,7 @@ type rememberFilingExtras struct {
 	SuggestedMemoryID string
 }
 
-func (hnd *Handler) rememberFilingExtras(node *db.Node, relatedTo []json.RawMessage) rememberFilingExtras {
+func (hnd *Handler) rememberFilingExtras(node *db.Node, relatedTo []json.RawMessage, excludeIDs []string) rememberFilingExtras {
 	var out rememberFilingExtras
 	nudge, err := hnd.trustNudgeForDependencies(dependencyIDsFromRelatedTo(relatedTo), node.ID)
 	if err != nil {
@@ -22,7 +22,7 @@ func (hnd *Handler) rememberFilingExtras(node *db.Node, relatedTo []json.RawMess
 	} else {
 		out.TrustNudge = nudge
 	}
-	flagged, err := hnd.checkMisdomainCandidate(node)
+	flagged, err := hnd.checkMisdomainCandidate(node, excludeIDs)
 	if err != nil {
 		log.Printf("[memoryweb] misdomain check for %s: %v", node.ID, err)
 		return out

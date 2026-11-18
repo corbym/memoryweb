@@ -888,10 +888,13 @@ type MisdomainCandidate struct {
 }
 
 // FindMisdomainCandidate runs workspace-wide KNN from nodeID's embedding with
-// only the similarity floor applied (no domain-affinity reranking). Returns nil
-// when no embedding exists, vec is unavailable, or no cross-domain match clears
-// the floor.
-func (st *Store) FindMisdomainCandidate(nodeID, requestedDomain string) (*MisdomainCandidate, error) {
+// only the similarity floor applied (no domain-affinity reranking). Returns a
+// candidate only when another domain holds a strict majority of the top-20
+// in-floor neighbours — ties stay with the requested domain (no flag). Pass
+// excludeIDs to skip batch siblings that were filed in the same call.
+// Returns nil when no embedding exists, vec is unavailable, or no other domain
+// beats the requested domain's neighbour count.
+func (st *Store) FindMisdomainCandidate(nodeID, requestedDomain string, excludeIDs []string) (*MisdomainCandidate, error) {
 	if !st.vecAvailable {
 		return nil, nil
 	}
@@ -903,18 +906,34 @@ func (st *Store) FindMisdomainCandidate(nodeID, requestedDomain string) (*Misdom
 	if len(blob) == 0 {
 		return nil, nil
 	}
+
+	// Build the NOT IN exclusion list: always exclude nodeID itself plus any
+	// caller-supplied sibling IDs (e.g. co-filed batch items).
+	excludeAll := append([]string{nodeID}, excludeIDs...)
+	ph, notInArgs := inClause(excludeAll)
+	queryArgs := []any{blob}
+	queryArgs = append(queryArgs, notInArgs...)
+
 	rows, err := st.db.Query(`
 		SELECT n.id, n.domain, vec_distance_cosine(e.embedding, ?) AS dist
 		FROM node_embeddings e
 		JOIN nodes n ON n.id = e.node_id
-		WHERE n.id != ?
+		WHERE n.id NOT IN (`+ph+`)
 		  AND n.archived_at IS NULL
 		ORDER BY dist ASC
-		LIMIT 20`, blob, nodeID)
+		LIMIT 20`, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+
+	// Majority rule: count in-floor neighbours per domain; record the nearest
+	// member ID for each (first seen = nearest since rows are ORDER BY dist ASC).
+	type domainStat struct {
+		count     int
+		nearestID string
+	}
+	stats := map[string]*domainStat{}
 	for rows.Next() {
 		var id, domain string
 		var dist float64
@@ -924,9 +943,36 @@ func (st *Store) FindMisdomainCandidate(nodeID, requestedDomain string) (*Misdom
 		if dist > CandidateSimilarityFloor {
 			break
 		}
-		if domain != requestedDomain {
-			return &MisdomainCandidate{SuggestedDomain: domain, SuggestedMemoryID: id}, nil
+		if _, ok := stats[domain]; !ok {
+			stats[domain] = &domainStat{nearestID: id}
+		}
+		stats[domain].count++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	requestedCount := 0
+	if s, ok := stats[requestedDomain]; ok {
+		requestedCount = s.count
+	}
+
+	// Flag only when another domain has STRICTLY MORE neighbours than the
+	// requested domain (ties resolve in favour of the requested domain).
+	var bestDomain, bestID string
+	var bestCount int
+	for domain, s := range stats {
+		if domain == requestedDomain {
+			continue
+		}
+		if s.count > bestCount {
+			bestCount = s.count
+			bestDomain = domain
+			bestID = s.nearestID
 		}
 	}
-	return nil, rows.Err()
+	if bestCount > requestedCount {
+		return &MisdomainCandidate{SuggestedDomain: bestDomain, SuggestedMemoryID: bestID}, nil
+	}
+	return nil, nil
 }

@@ -339,7 +339,7 @@ func TestFindMisdomainCandidate_CrossDomainMatch(t *testing.T) {
 		t.Fatalf("BackfillEmbeddings: %v", err)
 	}
 
-	candidate, err := s.FindMisdomainCandidate(newNode.ID, "brand-new-domain")
+	candidate, err := s.FindMisdomainCandidate(newNode.ID, "brand-new-domain", nil)
 	if err != nil {
 		t.Fatalf("FindMisdomainCandidate: %v", err)
 	}
@@ -351,6 +351,69 @@ func TestFindMisdomainCandidate_CrossDomainMatch(t *testing.T) {
 	}
 	if candidate.SuggestedMemoryID != anchor.ID {
 		t.Errorf("SuggestedMemoryID: got %q want %s", candidate.SuggestedMemoryID, anchor.ID)
+	}
+}
+
+// TestFindMisdomainCandidate_NilReturnedWhenMinority: when the requested domain
+// has strictly more KNN neighbours than any other domain, FindMisdomainCandidate
+// must return nil (majority rule — STORY-015).
+func TestFindMisdomainCandidate_NilReturnedWhenMinority(t *testing.T) {
+	s := newStore(t)
+	// 3 anchors in the majority (requested) domain.
+	for i := range 3 {
+		_ = i
+		s.AddNode("Anchor marker-maj-rule content", "d", "w", "canonical-domain", nil, "", "decision")
+	}
+	// 1 anchor in a different domain — minority.
+	s.AddNode("OtherAnchor marker-maj-rule content", "d", "w", "other-domain", nil, "", "decision")
+	// New node filed into canonical-domain (the majority).
+	newNode, _ := s.AddNode("New marker-maj-rule content", "d", "w", "canonical-domain", nil, "", "decision")
+
+	sharedVec := makeDenseVector(52)
+	withFakeEmbeddings(t, map[string][]float32{"marker-maj-rule": sharedVec})
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	candidate, err := s.FindMisdomainCandidate(newNode.ID, "canonical-domain", nil)
+	if err != nil {
+		t.Fatalf("FindMisdomainCandidate: %v", err)
+	}
+	if candidate != nil {
+		t.Errorf("expected nil when majority of KNN are in the requested domain; got %+v", candidate)
+	}
+}
+
+// TestFindMisdomainCandidate_ExcludeIDs_SuppressesFlag: when the only cross-domain
+// KNN anchor is passed in excludeIDs, FindMisdomainCandidate must return nil
+// (batch-sibling exclusion — STORY-016).
+func TestFindMisdomainCandidate_ExcludeIDs_SuppressesFlag(t *testing.T) {
+	s := newStore(t)
+	anchor, _ := s.AddNode("Anchor marker-excl-ids content", "d", "w", "canonical-domain", nil, "", "decision")
+	newNode, _ := s.AddNode("New marker-excl-ids content", "d", "w", "brand-new-domain", nil, "", "decision")
+
+	sharedVec := makeDenseVector(53)
+	withFakeEmbeddings(t, map[string][]float32{"marker-excl-ids": sharedVec})
+	if _, err := s.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	// Without exclusion the anchor is a cross-domain neighbour — should flag.
+	candidate, err := s.FindMisdomainCandidate(newNode.ID, "brand-new-domain", nil)
+	if err != nil {
+		t.Fatalf("FindMisdomainCandidate (no exclude): %v", err)
+	}
+	if candidate == nil {
+		t.Fatal("expected cross-domain candidate without exclusion")
+	}
+
+	// With anchor excluded: no in-floor neighbours remain → no flag.
+	candidate, err = s.FindMisdomainCandidate(newNode.ID, "brand-new-domain", []string{anchor.ID})
+	if err != nil {
+		t.Fatalf("FindMisdomainCandidate (with exclude): %v", err)
+	}
+	if candidate != nil {
+		t.Errorf("expected nil when cross-domain anchor is excluded; got %+v", candidate)
 	}
 }
 

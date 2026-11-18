@@ -338,6 +338,14 @@ func (hnd *Handler) findDisconnected(params auditArgs) (*ToolResult, error) {
 		return nil, err
 	}
 	if len(nodes) == 0 {
+		if params.Digest {
+			out := auditStaleDigestResult{Lines: []string{}, ResultsTruncated: false}
+			b, err := marshalResponseIndent(out)
+			if err != nil {
+				return nil, err
+			}
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: b}}}, nil
+		}
 		out := auditOrphansResult{Nodes: []db.Node{}, ResultsTruncated: false}
 		b, err := marshalResponseIndent(out)
 		if err != nil {

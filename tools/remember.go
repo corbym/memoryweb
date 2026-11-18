@@ -63,7 +63,7 @@ func (hnd *Handler) addNodeSingle(args json.RawMessage) (*ToolResult, error) {
 		return nil, err
 	}
 
-	extras := hnd.rememberFilingExtras(node, params.RelatedTo)
+	extras := hnd.rememberFilingExtras(node, params.RelatedTo, nil)
 
 	skipped := processRelatedTo(hnd, node.ID, params.RelatedTo)
 
@@ -245,6 +245,12 @@ func (hnd *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		SuggestedDomain      string              `json:"suggested_domain,omitempty"`
 		SuggestedMemoryID    string              `json:"suggested_memory_id,omitempty"`
 	}
+	// Collect all batch node IDs so each node's KNN check can exclude its siblings.
+	batchIDs := make([]string, len(nodes))
+	for i, n := range nodes {
+		batchIDs[i] = n.ID
+	}
+
 	result := make([]entry, len(nodes))
 	anyConnected := false
 	for i, node := range nodes {
@@ -252,7 +258,15 @@ func (hnd *Handler) addNodesBatch(items json.RawMessage) (*ToolResult, error) {
 		if suggestions == nil {
 			suggestions = []db.EdgeSuggestion{}
 		}
-		extras := hnd.rememberFilingExtras(node, nodeList[i].RelatedTo)
+		// Exclude all other batch members so a co-filed sibling cannot anchor a
+		// false-positive misdomain flag for this node.
+		siblingIDs := make([]string, 0, len(batchIDs)-1)
+		for _, id := range batchIDs {
+			if id != node.ID {
+				siblingIDs = append(siblingIDs, id)
+			}
+		}
+		extras := hnd.rememberFilingExtras(node, nodeList[i].RelatedTo, siblingIDs)
 		skipped := processRelatedTo(hnd, node.ID, nodeList[i].RelatedTo)
 		if len(nodeList[i].RelatedTo) > 0 && len(skipped) < len(nodeList[i].RelatedTo) {
 			anyConnected = true
@@ -326,8 +340,8 @@ type misdomainFlag struct {
 	SuggestedMemoryID string
 }
 
-func (hnd *Handler) checkMisdomainCandidate(node *db.Node) (*misdomainFlag, error) {
-	candidate, err := hnd.store.FindMisdomainCandidate(node.ID, node.Domain)
+func (hnd *Handler) checkMisdomainCandidate(node *db.Node, excludeIDs []string) (*misdomainFlag, error) {
+	candidate, err := hnd.store.FindMisdomainCandidate(node.ID, node.Domain, excludeIDs)
 	if err != nil || candidate == nil {
 		return nil, err
 	}

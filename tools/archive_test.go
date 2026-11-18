@@ -1662,3 +1662,32 @@ func TestAuditStale_PlaceholdersTruncated(t *testing.T) {
 		t.Error("expected placeholders_truncated=true when 3 placeholders exceed limit=2")
 	}
 }
+
+// TestAudit_OrphansDigestEmptyReturnsLinesShape: audit(mode=orphans, digest=true)
+// with no orphans must return the digest shape {lines:[], results_truncated:false}
+// not the nodes shape (STORY-018 fix).
+func TestAudit_OrphansDigestEmptyReturnsLinesShape(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	// No nodes → no orphans.
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "orphans",
+		"digest": true,
+	})
+	mustNotError(t, tr)
+
+	// lines must be present (even as an empty array) and nodes must be absent.
+	var resp struct {
+		Lines *[]string `json:"lines"`
+		Nodes *[]any    `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.Lines == nil {
+		t.Errorf("expected lines field in digest=true response; got:\n%s", text(t, tr))
+	}
+	if resp.Nodes != nil {
+		t.Errorf("unexpected nodes field in digest=true response; got:\n%s", text(t, tr))
+	}
+}

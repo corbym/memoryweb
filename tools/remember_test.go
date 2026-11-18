@@ -1423,6 +1423,87 @@ func TestRemember_MisdomainFlagged_AuditLog_ExistingDomain(t *testing.T) {
 	}
 }
 
+// ── majority-rule misdomain tests (STORY-015) ────────────────────────────────
+
+// TestRemember_NoPossibleMisdomain_MinorityCrossDomain: when 3 KNN neighbours
+// are in the requested domain and only 1 is in a different domain, the minority
+// must NOT trigger possible_misdomain (majority rule, STORY-015).
+func TestRemember_NoPossibleMisdomain_MinorityCrossDomain(t *testing.T) {
+	shared := makeDenseVectorTools(777)
+	withFakeEmbeddingsTools(t, map[string][]float32{
+		"marker-min-cross": shared,
+	})
+
+	_, store, h := newEnvWithPath(t)
+	correctDomain := "story015-correct"
+	wrongDomain := "story015-wrong"
+
+	// 3 anchors in the correct domain, 1 in a minority domain — all same embedding.
+	addNode(t, h, "Anchor1 marker-min-cross", correctDomain, nil)
+	addNode(t, h, "Anchor2 marker-min-cross", correctDomain, nil)
+	addNode(t, h, "Anchor3 marker-min-cross", correctDomain, nil)
+	addNode(t, h, "WrongAnchor marker-min-cross", wrongDomain, nil)
+	if _, err := store.BackfillEmbeddings(nil); err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+
+	tr := call(t, h, "remember", map[string]any{
+		"label":       "New node marker-min-cross",
+		"domain":      correctDomain,
+		"why_matters": "majority of neighbours are here",
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		PossibleMisdomain bool `json:"possible_misdomain"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.PossibleMisdomain {
+		t.Errorf("expected possible_misdomain=false when majority of KNN are in filed domain; got:\n%s", text(t, tr))
+	}
+}
+
+// ── batch sibling exclusion tests (STORY-016) ─────────────────────────────────
+
+// TestRemember_NoPossibleMisdomain_BatchSiblingsExcluded: two items filed in one
+// batch call with identical embeddings in different domains must not flag each
+// other as misdomain candidates (STORY-016).
+func TestRemember_NoPossibleMisdomain_BatchSiblingsExcluded(t *testing.T) {
+	shared := makeDenseVectorTools(888)
+	withFakeEmbeddingsTools(t, map[string][]float32{
+		"marker-sib-excl": shared,
+	})
+
+	_, _, h := newEnvWithPath(t)
+
+	tr := call(t, h, "remember", map[string]any{
+		"items": []map[string]any{
+			{"label": "Item A marker-sib-excl", "domain": "batch-sibling-a", "why_matters": "first"},
+			{"label": "Item B marker-sib-excl", "domain": "batch-sibling-b", "why_matters": "second"},
+		},
+	})
+	mustNotError(t, tr)
+
+	var resp struct {
+		Nodes []struct {
+			PossibleMisdomain bool `json:"possible_misdomain"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(text(t, tr)), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(resp.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes in batch response, got %d", len(resp.Nodes))
+	}
+	for i, n := range resp.Nodes {
+		if n.PossibleMisdomain {
+			t.Errorf("node %d: expected possible_misdomain=false (sibling excluded from KNN); got:\n%s", i, text(t, tr))
+		}
+	}
+}
+
 func TestRemember_NodeKindStanding(t *testing.T) {
 	disableOllama(t)
 	_, h := newEnv(t)

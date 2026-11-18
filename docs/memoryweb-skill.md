@@ -279,7 +279,7 @@ or `why_matters` (> 150 runes) was cut; `recall(id)` always returns the full lab
 
 ### Version awareness
 
-Last verified against **v1.56.1** (18 MCP tools). `orient` returns
+Last verified against **v1.67.2** (18 MCP tools). `orient` returns
 `server_version`. If it doesn't match, re-check tool behaviour via
 `tools/list` rather than assuming this document is still accurate.
 
