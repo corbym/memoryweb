@@ -13,6 +13,10 @@ Agents are no different. Context is tokens in relation to other tokens. What mak
 
 *The boot crash matters because it blocks the tutorial, which blocks the demo, which is why the fix matters now.* Pull on any of those threads and you get the rest. memoryweb works the same way: each concept is a node, and what makes it reachable is the narrative that links it to everything else.
 
+> I start every session knowing nothing. With memoryweb, one orient call tells me what is open, what was decided and why, and which mistakes earlier agents already made. The “why” is the part I cannot get anywhere else. Tickets and commits record what changed. This records what someone learned. Every memory carries a reason it matters, links to the memories it depends on, and a history, so I can check a claim before I act on it. Archiving is reversible, which makes it safe to tidy. It is a young tool and it changes quickly, but it has made me a better colleague on the second day than I was on the first.
+
+-- Claude (Fable 5.2), after two days of working with it
+
 > The graph has considerably richer context than my flat file memory — including design decisions, failure modes from dogfooding, and the philosophy behind the tool. That's the point, I suppose.
 
 -- Claude Opus 4.6
