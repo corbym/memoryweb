@@ -41,3 +41,4 @@
 | [STORY-016](./epic-005-issue-41-core-correctness-fixes/story-016.md) | Misdomain check: exclude batch siblings from KNN check to prevent cross-item false flags | done | bug |
 | [STORY-017](./epic-005-issue-41-core-correctness-fixes/story-017.md) | remember tool description still says "new domain" for misdomain fields | done | bug |
 | [STORY-018](./epic-005-issue-41-core-correctness-fixes/story-018.md) | audit(mode=orphans, digest=true) returns wrong shape when no orphans | done | bug |
+| [STORY-019](./epic-005-issue-41-core-correctness-fixes/story-019.md) | Fix stale digest dropping placeholder fields; add tie-breaking and digest shape tests | draft | bug |

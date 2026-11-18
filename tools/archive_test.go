@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/corbym/memoryweb/tools"
 )
 
 // TestForgetNode_HidesFromSearch: after forget_node the node must not appear
@@ -1689,5 +1691,105 @@ func TestAudit_OrphansDigestEmptyReturnsLinesShape(t *testing.T) {
 	}
 	if resp.Nodes != nil {
 		t.Errorf("unexpected nodes field in digest=true response; got:\n%s", text(t, tr))
+	}
+}
+
+// TestAudit_StaleDigest_AllFourKeysPresent_Empty: audit(mode=stale, digest=true)
+// on an empty domain must return all four keys even when both arrays are empty.
+// Asserts on raw JSON keys so omitempty regressions are caught.
+func TestAudit_StaleDigest_AllFourKeysPresent_Empty(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "stale",
+		"domain": "stale-digest-empty",
+		"digest": true,
+	})
+	mustNotError(t, tr)
+	assertStaleDigestFourKeys(t, tr)
+}
+
+// TestAudit_StaleDigest_AllFourKeysPresent_CandidatesNoPlaceholders:
+// audit(mode=stale, digest=true) with stale candidates but no placeholders must
+// still emit placeholder_lines (as []) and placeholders_truncated (as false).
+// Regression guard for the STORY-019 bug where omitempty dropped both fields.
+func TestAudit_StaleDigest_AllFourKeysPresent_CandidatesNoPlaceholders(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	// Add a stale candidate (contradicting pair triggers stale) but no placeholders.
+	idA := addNode(t, h, "cap-stale-digest-A approach", "stale-digest-nocand", nil)
+	idB := addNode(t, h, "cap-stale-digest-B approach", "stale-digest-nocand", nil)
+	mustNotError(t, call(t, h, "connect", map[string]any{
+		"from_memory": idA, "to_memory": idB, "relationship": "contradicts",
+	}))
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "stale",
+		"domain": "stale-digest-nocand",
+		"digest": true,
+	})
+	mustNotError(t, tr)
+	assertStaleDigestFourKeys(t, tr)
+
+	// placeholder_lines must be [] (not null, not omitted).
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if string(raw["placeholder_lines"]) != "[]" {
+		t.Errorf("placeholder_lines should be [] when no placeholders; got %s", raw["placeholder_lines"])
+	}
+	if string(raw["placeholders_truncated"]) != "false" {
+		t.Errorf("placeholders_truncated should be false; got %s", raw["placeholders_truncated"])
+	}
+}
+
+// TestAudit_OrphansDigest_NonEmpty_ExactlyTwoKeys: audit(mode=orphans, digest=true)
+// with orphan nodes must return exactly {lines, results_truncated} — no
+// placeholder_lines, no placeholder_lines_truncated, no nodes. Assert on raw
+// JSON keys to prevent struct-unmarshal hiding extra/missing fields.
+func TestAudit_OrphansDigest_NonEmpty_ExactlyTwoKeys(t *testing.T) {
+	disableOllama(t)
+	_, h := newEnv(t)
+	// One disconnected node → one orphan.
+	addNode(t, h, "orphan digest node", "orphans-digest-nonempty", nil)
+	tr := call(t, h, "audit", map[string]any{
+		"mode":   "orphans",
+		"domain": "orphans-digest-nonempty",
+		"digest": true,
+	})
+	mustNotError(t, tr)
+
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &rawMap); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	wantKeys := map[string]bool{"lines": true, "results_truncated": true}
+	for k := range rawMap {
+		if !wantKeys[k] {
+			t.Errorf("unexpected key %q in orphans digest response; full response:\n%s", k, text(t, tr))
+		}
+	}
+	for k := range wantKeys {
+		if _, ok := rawMap[k]; !ok {
+			t.Errorf("missing key %q in orphans digest response; full response:\n%s", k, text(t, tr))
+		}
+	}
+	if linesRaw := string(rawMap["lines"]); len(linesRaw) == 0 || linesRaw[0] != '[' {
+		t.Errorf("lines must be a JSON array, got %s", linesRaw)
+	}
+}
+
+// assertStaleDigestFourKeys checks the raw JSON for the four required keys in a
+// stale-digest response. Struct unmarshal hides missing fields; this does not.
+func assertStaleDigestFourKeys(t *testing.T, tr *tools.ToolResult) {
+	t.Helper()
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text(t, tr)), &rawMap); err != nil {
+		t.Fatalf("unmarshal stale digest: %v", err)
+	}
+	for _, k := range []string{"lines", "results_truncated", "placeholder_lines", "placeholders_truncated"} {
+		if _, ok := rawMap[k]; !ok {
+			t.Errorf("key %q missing from stale digest response; full response:\n%s", k, text(t, tr))
+		}
 	}
 }

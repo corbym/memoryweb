@@ -207,8 +207,13 @@ type auditArchivedResult struct {
 type auditStaleDigestResult struct {
 	Lines                 []string `json:"lines"`
 	ResultsTruncated      bool     `json:"results_truncated"`
-	PlaceholderLines      []string `json:"placeholder_lines,omitempty"`
-	PlaceholdersTruncated bool     `json:"placeholders_truncated,omitempty"`
+	PlaceholderLines      []string `json:"placeholder_lines"`
+	PlaceholdersTruncated bool     `json:"placeholders_truncated"`
+}
+
+type auditOrphansDigestResult struct {
+	Lines            []string `json:"lines"`
+	ResultsTruncated bool     `json:"results_truncated"`
 }
 
 // findConflictCandidates handles mode=conflicts: returns semantically adjacent
@@ -339,7 +344,7 @@ func (hnd *Handler) findDisconnected(params auditArgs) (*ToolResult, error) {
 	}
 	if len(nodes) == 0 {
 		if params.Digest {
-			out := auditStaleDigestResult{Lines: []string{}, ResultsTruncated: false}
+			out := auditOrphansDigestResult{Lines: []string{}, ResultsTruncated: false}
 			b, err := marshalResponseIndent(out)
 			if err != nil {
 				return nil, err
@@ -362,7 +367,10 @@ func (hnd *Handler) findDisconnected(params auditArgs) (*ToolResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		out := auditStaleDigestResult{
+		if lines == nil {
+			lines = []string{}
+		}
+		out := auditOrphansDigestResult{
 			Lines:            lines,
 			ResultsTruncated: resultsTruncated,
 		}

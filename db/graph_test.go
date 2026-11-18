@@ -417,6 +417,74 @@ func TestFindMisdomainCandidate_ExcludeIDs_SuppressesFlag(t *testing.T) {
 	}
 }
 
+// TestFindMisdomainCandidate_TieBreaking_Deterministic: when two non-requested
+// domains each have exactly the same number of in-floor KNN neighbours, the
+// domain whose nearest neighbour is closest (lower distance) must win — and the
+// result must be the same on every call (no map-order non-determinism).
+func TestFindMisdomainCandidate_TieBreaking_Deterministic(t *testing.T) {
+	s := newStore(t)
+	if !s.VecAvailable() {
+		t.Skip("sqlite-vec not available")
+	}
+	// Requested domain: 1 anchor — fewer than either rival.
+	reqAnchor, _ := s.AddNode("Requested anchor content", "d", "w", "tiebreak-req", nil, "", "decision")
+	// Domain A: 2 anchors — will get nearVec (identical to newNode) → cos_dist=0.
+	anchorA1, _ := s.AddNode("DomA1 anchor content", "d", "w", "tiebreak-a", nil, "", "decision")
+	anchorA2, _ := s.AddNode("DomA2 anchor content", "d", "w", "tiebreak-a", nil, "", "decision")
+	// Domain B: 2 anchors — will get domainBVec → cos_dist ≈ 0.293 (within floor 0.5).
+	anchorB1, _ := s.AddNode("DomB1 anchor content", "d", "w", "tiebreak-b", nil, "", "decision")
+	anchorB2, _ := s.AddNode("DomB2 anchor content", "d", "w", "tiebreak-b", nil, "", "decision")
+	// New node filed into requested domain.
+	newNode, _ := s.AddNode("New node content", "d", "w", "tiebreak-req", nil, "", "decision")
+
+	// nearVec (seed 55) for domain-a and newNode: cos_dist(nearVec, nearVec) = 0.
+	// domainBVec = nearVec + orthVec (seed 56): cos_dist ≈ 0.293, within floor 0.5.
+	//   Both rivals end up with count=2; requested has count=1. The tie-break must
+	//   pick domain-a (nearer first anchor, dist=0) over domain-b (dist≈0.293).
+	nearVec := makeDenseVector(55)
+	orthVec := makeDenseVector(56)
+	domainBVec := make([]float32, len(nearVec))
+	for i := range nearVec {
+		domainBVec[i] = nearVec[i] + orthVec[i]
+	}
+	// Use insertEmbeddingsDirect for precision: bypasses HTTP matching and assigns
+	// each vector to its node ID exactly, so distances are unambiguous.
+	insertEmbeddingsDirect(t, s, map[string][]float32{
+		reqAnchor.ID: nearVec,
+		anchorA1.ID:  nearVec,
+		anchorA2.ID:  nearVec,
+		anchorB1.ID:  domainBVec,
+		anchorB2.ID:  domainBVec,
+		newNode.ID:   nearVec,
+	})
+
+	// Run 20 times; Go's map iteration is random so non-determinism shows quickly.
+	// NOTE: We assert only SuggestedDomain stability, not SuggestedMemoryID — when
+	// two nodes in the winning domain have equal distances (both nearVec here), the
+	// specific node returned depends on SQLite row order, which is implementation-
+	// defined. The equal-nearestDist edge case (two rival domains at exactly dist=0)
+	// is not covered by this test; that case remains order-dependent.
+	var firstDomain string
+	for i := range 20 {
+		candidate, err := s.FindMisdomainCandidate(newNode.ID, "tiebreak-req", nil)
+		if err != nil {
+			t.Fatalf("FindMisdomainCandidate iter %d: %v", i, err)
+		}
+		if candidate == nil {
+			t.Fatalf("iter %d: expected misdomain candidate (count-a=2, count-b=2 > requested=1)", i)
+		}
+		if i == 0 {
+			firstDomain = candidate.SuggestedDomain
+			if firstDomain != "tiebreak-a" {
+				t.Errorf("tiebreak-a should win (nearer anchor %s); got domain=%q", anchorA1.ID, firstDomain)
+			}
+		} else if candidate.SuggestedDomain != firstDomain {
+			t.Errorf("non-deterministic tie-break: iter 0 gave domain=%s, iter %d gave domain=%s",
+				firstDomain, i, candidate.SuggestedDomain)
+		}
+	}
+}
+
 func TestLogMisdomainFlagged_WritesAuditRow(t *testing.T) {
 	dbPath, s := newStoreAtPath(t)
 	n := mustAddNode(t, s, "new domain seed", "fresh-domain")

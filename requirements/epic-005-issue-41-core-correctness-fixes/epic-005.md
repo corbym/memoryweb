@@ -16,3 +16,4 @@ Five bugs and design gaps filed by Fable 2 in GitHub issue #41. In priority orde
 - [x] [STORY-016](story-016.md) — Misdomain check: exclude batch siblings from KNN check to prevent cross-item false flags
 - [x] [STORY-017](story-017.md) — remember tool description still says "new domain" for misdomain fields
 - [x] [STORY-018](story-018.md) — audit(mode=orphans, digest=true) returns wrong shape when no orphans
+- [ ] [STORY-019](story-019.md) — Fix stale digest dropping placeholder fields; add tie-breaking and digest shape tests
