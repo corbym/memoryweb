@@ -1598,9 +1598,17 @@ func TestRunDoctor_AuthGatewayOllama(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// Seal the ambient environment: db.OllamaAPIKey gives an exported
+	// MEMORYWEB_OLLAMA_API_KEY precedence over OLLAMA_API_KEY, and LookupEnv
+	// treats an explicit empty string as set — so this suppresses any
+	// developer-machine key from leaking into the test (review note 2).
+	t.Setenv("MEMORYWEB_OLLAMA_API_KEY", "")
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
 	// Without the key the gateway 401s and the model check must fail loudly
 	// (not "skipped"): the server IS reachable, the credential is missing.
-	t.Setenv("OLLAMA_HOST", srv.URL)
+	// The 401 must surface as a credential failure — not as model-not-found
+	// guidance telling the user to pull a model that is present (review note 1).
 	t.Setenv("OLLAMA_API_KEY", "")
 	var buf bytes.Buffer
 	runDoctor(store, &buf, dbPath, home, false)
@@ -1611,9 +1619,30 @@ func TestRunDoctor_AuthGatewayOllama(t *testing.T) {
 	if !strings.Contains(out, "[✗] Ollama model:") {
 		t.Errorf("model check must fail on 401 without a key; got:\n%s", out)
 	}
+	if !strings.Contains(out, "authentication failed (401) — set MEMORYWEB_OLLAMA_API_KEY or OLLAMA_API_KEY") {
+		t.Errorf("401 must surface as a credential failure; got:\n%s", out)
+	}
+	if strings.Contains(out, "ollama pull") {
+		t.Errorf("401 must not fall through to the pull guidance (the model is present server-side); got:\n%s", out)
+	}
 
-	// With the key the same gateway answers and the model reads ready.
-	t.Setenv("OLLAMA_API_KEY", token)
+	// A wrong key fails the same way: the gateway refuses the credential,
+	// the model list is never reached. Carried via the override so the
+	// empty-string seal from the first phase stays in force.
+	t.Setenv("MEMORYWEB_OLLAMA_API_KEY", "definitely-not-"+token)
+	buf.Reset()
+	runDoctor(store, &buf, dbPath, home, false)
+	out = buf.String()
+	if !strings.Contains(out, "authentication failed (401)") {
+		t.Errorf("a wrong key must surface the credential failure; got:\n%s", out)
+	}
+	if strings.Contains(out, "ollama pull") {
+		t.Errorf("a wrong key must not fall through to the pull guidance; got:\n%s", out)
+	}
+
+	// With the key the same gateway answers and the model reads ready (the
+	// override carries it; OLLAMA_API_KEY stays sealed empty throughout).
+	t.Setenv("MEMORYWEB_OLLAMA_API_KEY", token)
 	buf.Reset()
 	runDoctor(store, &buf, dbPath, home, false)
 	out = buf.String()

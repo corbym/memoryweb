@@ -1015,6 +1015,12 @@ func ollamaTCPReachable(timeout time.Duration) bool {
 	return true
 }
 
+// errOllamaUnauthorized classifies 401 responses from Ollama so doctor can
+// surface a credential failure instead of the (misleading, in that case)
+// model-not-found guidance — the model is usually present server-side when
+// the gateway just refuses the key.
+var errOllamaUnauthorized = errors.New("ollama: unauthorized")
+
 // ollamaModelNames fetches the model list over HTTP (GET /api/tags) with the
 // configured Bearer key when one is set (db.OllamaAPIKey), the same way the
 // embedding client reaches a remote or gateway-fronted OLLAMA_HOST. It replaces
@@ -1035,7 +1041,7 @@ func ollamaModelNames(timeout time.Duration) ([]string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("ollama /api/tags: 401 Unauthorized — set MEMORYWEB_OLLAMA_API_KEY or OLLAMA_API_KEY")
+		return nil, fmt.Errorf("%w: /api/tags returned 401 Unauthorized — set MEMORYWEB_OLLAMA_API_KEY or OLLAMA_API_KEY", errOllamaUnauthorized)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("ollama /api/tags: status %s", resp.Status)
@@ -1405,6 +1411,8 @@ func runDoctor(store *db.Store, out io.Writer, dbPath, home string, jsonMode boo
 		model := db.EmbeddingModel()
 		if names, err := ollamaModelNames(2 * time.Second); err == nil && strings.Contains(strings.Join(names, "\n"), model) {
 			add("Ollama model", "ok", model+" ready")
+		} else if errors.Is(err, errOllamaUnauthorized) {
+			add("Ollama model", "fail", "authentication failed (401) — set MEMORYWEB_OLLAMA_API_KEY or OLLAMA_API_KEY")
 		} else {
 			add("Ollama model", "fail", model+" not found — run: ollama pull "+model)
 		}
